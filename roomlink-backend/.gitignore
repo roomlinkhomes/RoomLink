@@ -1,0 +1,36 @@
+# Node.js
+node_modules
+npm-debug.log
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables (secrets)
+.env
+*.env
+
+# Firebase service account key
+serviceAccountKey.json
+
+# Logs
+logs
+*.log
+*.out
+*.pid
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage
+*.lcov
+
+# Build outputs
+dist
+build
+
+# macOS / Windows system files
+.DS_Store
+Thumbs.db
