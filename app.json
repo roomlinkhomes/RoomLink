@@ -7,23 +7,63 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "scheme": "roomlink",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourname.roomlink",
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app needs access to your camera to take photos for property listings.",
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to upload property images."
+      }
     },
     "android": {
+      "package": "com.yourname.roomlink",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "https",
+              "host": "roomlink.app",
+              "pathPrefix": "/"
+            },
+            {
+              "scheme": "roomlink"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ef3b6bfd-9dba-4622-9075-642be841c6cc"
+      }
+    },
+    "plugins": [
+      "expo-web-browser"
+    ]
   }
 }

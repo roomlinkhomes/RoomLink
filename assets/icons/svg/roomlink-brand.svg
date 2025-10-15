@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Blue rounded square -->
+  <rect x="2" y="2" width="60" height="60" rx="12" ry="12" fill="#036dd6"/>
+  
+  <!-- Green link/roof overlay -->
+  <path d="M20 28 L32 16 L44 28" stroke="#3DDC84" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- House outline -->
+  <path d="M20 28 L32 18 L44 28 V48 H20 V28 Z" fill="none" stroke="#000" stroke-width="3" stroke-linejoin="round"/>
+  
+  <!-- Door -->
+  <rect x="28" y="36" width="8" height="12" fill="#000"/>
+</svg>
