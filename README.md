@@ -1,6 +1,6 @@
 # 🏠 RoomLink
 
-**RoomLink** is a modern Nigerian rental and housing platform designed to connect landlords, agents, tenants, and vendors in one seamless ecosystem.
+**RoomLink** is a modern Nigerian rental and housing platform designed to connect landlords, agents, tenants, and vendors in one seamless ecosystem.(Short and long term stay)
 
 Built with **React Native (Expo)** and **Node.js**, RoomLink focuses on simplifying property discovery, rental management, and vendor services with a user-friendly mobile experience.
 
