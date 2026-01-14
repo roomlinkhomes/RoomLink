@@ -1,76 +1,154 @@
-// component/VendorSearchHeader.jsx
-import React, { useState } from "react";
-import { View, TextInput as RNTextInput, TouchableOpacity, StyleSheet } from "react-native";
+// components/VendorSearchHeader.jsx — FIXED & MIRRORED from SearchHeader.jsx
+import React, { useState, useRef, useEffect } from "react";
+import {
+  View,
+  TextInput as RNTextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Animated,
+  Easing,
+  Dimensions,
+  Keyboard,
+  Platform,
+  StatusBar,
+} from "react-native";
+import { useNavigation, useRoute, useTheme } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation, useRoute } from "@react-navigation/native";
-import { useColorScheme } from "react-native";
-import { TextInput } from "react-native-paper";
+
+const { width } = Dimensions.get("window");
+const STATUS_BAR_HEIGHT = Platform.OS === "android" ? StatusBar.currentHeight || 24 : 0;
 
 export default function VendorSearchHeader() {
   const navigation = useNavigation();
   const route = useRoute();
-  const colorScheme = useColorScheme();
-  const isDarkMode = colorScheme === "dark";
+  const { dark } = useTheme();
 
-  const [query, setQuery] = useState(route.params?.query || "");
+  const initialQuery = route.params?.query || "";
+  const [query, setQuery] = useState(initialQuery);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const searchAnim = useRef(new Animated.Value(0)).current;
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (initialQuery) {
+      setSearchOpen(true);
+      searchAnim.setValue(1);
+      setQuery(initialQuery);
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, [initialQuery]);
 
   const handleChange = (text) => {
     setQuery(text);
-    navigation.setParams({ query: text });
+    navigation.setParams({ query: text || undefined });
   };
 
+  const toggleSearch = () => {
+    if (searchOpen) {
+      Keyboard.dismiss();
+      Animated.timing(searchAnim, {
+        toValue: 0,
+        duration: 250,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: false,
+      }).start(() => {
+        setSearchOpen(false);
+        setQuery("");
+        navigation.setParams({ query: undefined });
+      });
+    } else {
+      setSearchOpen(true);
+      Animated.timing(searchAnim, {
+        toValue: 1,
+        duration: 250,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: false,
+      }).start(() => {
+        inputRef.current?.focus();
+      });
+    }
+  };
+
+  const searchWidth = searchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, width - 160], // Same as reference: avoids notch + back arrow
+  });
+
+  const containerOpacity = searchAnim.interpolate({
+    inputRange: [0, 0.3],
+    outputRange: [0, 1],
+  });
+
   return (
-    <View style={styles.headerRow}>
-      {/* Back button */}
-      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
-        <Ionicons name="arrow-back" size={22} color={isDarkMode ? "#fff" : "#111"} />
-      </TouchableOpacity>
-
-      {/* Search box */}
-      <View style={[styles.searchBox, { backgroundColor: isDarkMode ? "#333" : "#f0f0f0" }]}>
-        {/* ✅ Same blue magnify icon as signup */}
-        <View style={styles.magnifyWrapper}>
-          <TextInput.Icon icon="magnify" color="#036dd6" size={22} />
-        </View>
-
+    <View style={[
+      styles.container,
+      { paddingTop: STATUS_BAR_HEIGHT } // Pushes everything below status bar/notch
+    ]}>
+      {/* Expanding search input – slides in from right */}
+      <Animated.View
+        style={[
+          styles.searchContainer,
+          {
+            width: searchWidth,
+            opacity: containerOpacity,
+            backgroundColor: dark ? "#222" : "#f8f8f8",
+            borderWidth: 1.5,
+            borderColor: "#000",
+          },
+        ]}
+      >
         <RNTextInput
+          ref={inputRef}
           placeholder="Search vendors..."
-          placeholderTextColor={isDarkMode ? "#aaa" : "gray"}
-          style={[styles.searchInput, { color: isDarkMode ? "#fff" : "#111" }]}
+          placeholderTextColor={dark ? "#aaa" : "#777"}
+          style={[styles.searchInput, { color: dark ? "#fff" : "#000" }]}
           value={query}
           onChangeText={handleChange}
-          autoFocus
+          autoFocus={false}
+          returnKeyType="search"
+          onSubmitEditing={() => Keyboard.dismiss()}
         />
-      </View>
+      </Animated.View>
+
+      {/* Search / Close icon */}
+      <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.iconArea}>
+        <Ionicons
+          name={searchOpen ? "close" : "search"}
+          size={26}
+          color={dark ? "#fff" : "#000"}
+        />
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerRow: {
+  container: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 10,
-    gap: 10,
+    justifyContent: "flex-end",
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    backgroundColor: "transparent",
   },
-  iconBtn: { padding: 6 },
-  searchBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    paddingHorizontal: 10,
-    borderRadius: 50,
-    height: 42,
-  },
-  magnifyWrapper: {
+  searchContainer: {
+    position: "absolute",
+    right: 70,                        // Same as reference: clears back arrow/notch
+    height: 44,
+    borderRadius: 22,
+    paddingHorizontal: 16,
     justifyContent: "center",
-    alignItems: "center",
-    marginRight: 10,
-    marginLeft: 15,
+    overflow: "hidden",
   },
   searchInput: {
-    flex: 1,
-    height: "100%",
     fontSize: 16,
+    height: "100%",
+    width: "100%",
+    paddingLeft: 8,
+  },
+  iconArea: {
+    padding: 1,
+    marginLeft: 12,
   },
 });

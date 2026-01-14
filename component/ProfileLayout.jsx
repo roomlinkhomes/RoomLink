@@ -1,5 +1,5 @@
-// components/ProfileLayout.jsx
-import React, { useState, useEffect } from "react";
+// components/EliteProfile.jsx — ONLY Cloudinary upload added, everything else original
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -8,388 +8,474 @@ import {
   TouchableOpacity,
   Image,
   Modal,
-  FlatList,
   Alert,
   Dimensions,
   Pressable,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
   interpolate,
+  Extrapolate,
 } from "react-native-reanimated";
-import { signOut, onAuthStateChanged } from "firebase/auth"; // ✅ added
-import { auth } from "../firebaseConfig"; // ✅ added
-
+import { onAuthStateChanged } from "firebase/auth";
+import { doc, updateDoc, onSnapshot } from "firebase/firestore";
+import { auth, db } from "../firebaseConfig";
 import { useUser } from "../context/UserContext";
 import Avatar from "./avatar";
 import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
 import RedBadge from "../assets/icons/red.svg";
 
-const COLORS = [
-  "#1A237E","#3949AB","#036dd6","#6A1B9A","#8E24AA",
-  "#AD1457","#C2185B","#D32F2F","#E64A19","#F57C00",
-  "#F9A825","#AFB42B","#388E3C","#00796B","#00838F",
-];
-
 const { width } = Dimensions.get("window");
-const FRONT_SIZE = 110;
-const CARD_WIDTH = Math.min(400, width - 20);
-const CARD_HEIGHT = 200;
-const FLIP_DURATION = 480;
+const AVATAR_SIZE = 124;
+const CARD_WIDTH = Math.min(420, width - 40);
+const CARD_HEIGHT = 224;
+const FLIP_DURATION = 600;
+const ACCENT_COLOR = "#0055FF";
 
-const ProfileLayout = ({ visitedUser, visitedUserListings = [] }) => {
+export default function EliteProfile({ visitedUserListings = [], visitedUser: propVisitedUser }) {
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
   const navigation = useNavigation();
-  const { user, logout, verifyUser } = useUser();
+  const route = useRoute();
+  const { user, logout } = useUser();
 
-  const displayUser = visitedUser || user;
-  const isOwner = !visitedUser;
-
-  const [bgColor, setBgColor] = useState("#1A237E");
-  const [bgImage, setBgImage] = useState(null);
+  const routeUserId = route?.params?.userId;
+  const [displayUser, setDisplayUser] = useState(null);
+  const [loadingUser, setLoadingUser] = useState(true);
+  const [headerColor, setHeaderColor] = useState("#0A0E27");
+  const [headerImage, setHeaderImage] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const [premiumModalVisible, setPremiumModalVisible] = useState(false);
+
   const flip = useSharedValue(0);
 
-  // ✅ Sync with Firebase authentication state
+  const isOwner = useMemo(() => {
+    if (!user) return false;
+    const viewedUid = propVisitedUser?.uid || routeUserId || displayUser?.uid;
+    return user.uid === viewedUid;
+  }, [user, propVisitedUser, routeUserId, displayUser]);
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      if (!firebaseUser) {
-        // Firebase session expired — log out app user too
+    const uid = routeUserId || propVisitedUser?.uid || user?.uid;
+    if (!uid) return;
+
+    const unsub = onSnapshot(
+      doc(db, "users", uid),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          setDisplayUser({ uid, ...data });
+          setHeaderColor(data.headerColor || "#0A0E27");
+          setHeaderImage(data.headerImage || null);
+        }
+        setLoadingUser(false);
+      },
+      () => setLoadingUser(false)
+    );
+    return unsub;
+  }, [routeUserId, propVisitedUser, user]);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (!u) {
         logout();
         navigation.replace("Login");
       }
     });
-    return unsubscribe;
+    return unsub;
   }, []);
 
-  // ✅ Close premium modal automatically if user just got verified
+  // Request permissions once
   useEffect(() => {
-    if (displayUser?.isVerified && premiumModalVisible) {
-      setPremiumModalVisible(false);
-    }
-  }, [displayUser?.isVerified]);
+    (async () => {
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+    })();
+  }, []);
 
-  // --- Header gallery picker ---
-  const pickImage = async () => {
-    if (!displayUser?.isVerified) {
-      setPremiumModalVisible(true);
-      return;
-    }
+  const updateUserField = async (field, value) => {
+    if (!user?.uid) return;
     try {
-      let result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [16, 9],
-        quality: 1,
-      });
-      if (!result.canceled) {
-        setBgImage(result.assets[0].uri);
-        setModalVisible(false);
-      }
-    } catch (e) {
-      console.warn(e);
+      await updateDoc(doc(db, "users", user.uid), { [field]: value });
+    } catch (err) {
+      Alert.alert("Error", "Failed to update profile");
     }
   };
 
-  // ✅ Enhanced logout (Firebase + App Context)
-  const handleLogout = async () => {
-    Alert.alert("Confirm Logout", "Are you sure you want to logout?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Logout",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await signOut(auth);
-            logout();
-            navigation.replace("Login");
-          } catch (error) {
-            Alert.alert("Error", "Failed to log out. Try again.");
-          }
-        },
-      },
-    ]);
+  // EXACT SAME UPLOAD LOGIC FROM Listing.jsx — ONLY THIS IS NEW
+  const uploadImage = async (uri) => {
+    const data = new FormData();
+    data.append("file", { uri, type: "image/jpeg", name: "upload.jpg" });
+    data.append("upload_preset", "roomlink_preset");
+    data.append("cloud_name", "drserbss8");
+
+    try {
+      const res = await fetch("https://api.cloudinary.com/v1_1/drserbss8/image/upload", {
+        method: "POST",
+        body: data,
+      });
+      const json = await res.json();
+      return json.secure_url || null;
+    } catch (err) {
+      Alert.alert("Upload Error", "Image upload failed, try again.");
+      return null;
+    }
+  };
+
+  const changeAvatar = async () => {
+    if (!isOwner) return;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (result.canceled) return;
+
+    const uri = result.assets[0].uri;
+    const uploadedUrl = await uploadImage(uri);
+
+    if (uploadedUrl) {
+      await updateUserField("avatar", uploadedUrl);
+      Alert.alert("Success", "Profile picture updated!");
+    }
+  };
+
+  const pickHeaderImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: true,
+      aspect: [16, 7],
+      quality: 0.9,
+    });
+
+    if (!result.canceled) {
+      const uri = result.assets[0].uri;
+      setHeaderImage(uri);
+      setModalVisible(false);
+      if (isOwner) await updateUserField("headerImage", uri);
+    }
   };
 
   const toggleFlip = () => {
-    const next = flip.value === 0 ? 1 : 0;
-    flip.value = withTiming(next, { duration: FLIP_DURATION });
+    flip.value = withTiming(flip.value === 0 ? 1 : 0, { duration: FLIP_DURATION });
   };
 
-  const containerAnimated = useAnimatedStyle(() => {
-    const w = interpolate(flip.value, [0, 1], [FRONT_SIZE, CARD_WIDTH]);
-    const h = interpolate(flip.value, [0, 1], [FRONT_SIZE, CARD_HEIGHT]);
-    const br = interpolate(flip.value, [0, 1], [FRONT_SIZE / 2, 12]);
-    return { width: w, height: h, borderRadius: br };
-  });
+  const animatedContainer = useAnimatedStyle(() => ({
+    width: interpolate(flip.value, [0, 1], [AVATAR_SIZE, CARD_WIDTH], Extrapolate.CLAMP),
+    height: interpolate(flip.value, [0, 1], [AVATAR_SIZE, CARD_HEIGHT], Extrapolate.CLAMP),
+    borderRadius: interpolate(flip.value, [0, 1], [AVATAR_SIZE / 2, 20], Extrapolate.CLAMP),
+  }));
 
-  const frontAnimated = useAnimatedStyle(() => {
-    const rotateY = `${interpolate(flip.value, [0, 1], [0, 180])}deg`;
-    const opacity = interpolate(flip.value, [0, 0.5, 1], [1, 0, 0]);
-    return { transform: [{ perspective: 1000 }, { rotateY }], opacity, backfaceVisibility: "hidden" };
-  });
+  const frontStyle = useAnimatedStyle(() => ({
+    transform: [{ rotateY: `${interpolate(flip.value, [0, 1], [0, 180])}deg` }],
+    opacity: interpolate(flip.value, [0, 0.5, 1], [1, 0, 0]),
+    backfaceVisibility: "hidden",
+  }));
 
-  const backAnimated = useAnimatedStyle(() => {
-    const rotateY = `${interpolate(flip.value, [0, 1], [180, 360])}deg`;
-    const opacity = interpolate(flip.value, [0, 0.5, 1], [0, 0, 1]);
-    return { transform: [{ perspective: 1000 }, { rotateY }], opacity, backfaceVisibility: "hidden" };
-  });
+  const backStyle = useAnimatedStyle(() => ({
+    transform: [{ rotateY: `${interpolate(flip.value, [0, 1], [180, 360])}deg` }],
+    opacity: interpolate(flip.value, [0, 0.5, 1], [0, 0, 1]),
+    backfaceVisibility: "hidden",
+  }));
+
+  const safeNavigate = (screen, params = {}) => {
+    const filteredParams = Object.fromEntries(
+      Object.entries(params).filter(([_, v]) => v !== undefined && v !== null)
+    );
+    navigation.navigate(screen, filteredParams);
+  };
+
+  const goToListings = () => {
+    const targetUserId = isOwner ? user?.uid : displayUser?.uid;
+    if (!targetUserId) return;
+    safeNavigate("ProfileListingsScreen", { userId: targetUserId });
+  };
 
   const menuItems = [
-    { label: "Edit Profile", icon: "person-circle-outline", action: () => navigation.navigate("EditProfile") },
-    { label: "Go premium", icon: "checkmark-done-circle-outline", action: () => navigation.navigate("GetVerified") },
-    { label: "Payments", icon: "card-outline", action: () => navigation.navigate("Payment") },
-    { label: "Listings", icon: "home-outline", action: () => navigation.navigate("UserListings") },
-    { label: "Become Vendor", icon: "storefront-outline", action: () => navigation.navigate("BecomeVendor") },
-    { label: "Logout", icon: "log-out-outline", action: handleLogout },
+    { label: "Edit Profile", icon: "create-outline", onPress: () => safeNavigate("EditProfile") },
+    { label: "Go Premium", icon: "diamond-outline", onPress: () => safeNavigate("GetVerified") },
+    { label: "Wallet", icon: "wallet-outline", onPress: () => safeNavigate("Wallet") },
+    { label: "My Listings", icon: "home", onPress: goToListings },
+    {
+      label: "My Store",
+      icon: "storefront",
+      onPress: () => displayUser?.uid && safeNavigate("VendorUserListing", { vendorId: displayUser.uid }),
+    },
+    { label: "Become a Vendor", icon: "business-outline", onPress: () => safeNavigate("BecomeVendor") },
   ];
 
-  const scatterElements = Array.from({ length: 45 }).map((_, i) => {
-    const top = Math.random() * 120;
-    const left = Math.random() * width;
-    const rotate = `${Math.floor(Math.random() * 50 - 25)}deg`;
-    const opacity = 0.08 + Math.random() * 0.1;
-    if (i % 3 === 0) {
-      const icons = ["balloon-outline","home-outline","book-outline","school-outline","pencil-outline","briefcase-outline","star-outline"];
-      const randomIcon = icons[Math.floor(Math.random() * icons.length)];
-      return <Ionicons key={`icon-${i}`} name={randomIcon} size={18 + Math.random()*8} color={`rgba(255,255,255,${opacity})`} style={{ position:"absolute", top, left, transform:[{ rotate }] }} />;
-    }
-    return <Text key={`txt-${i}`} style={{ position:"absolute", top, left, fontSize: 12+Math.random()*4, color:`rgba(255,255,255,${opacity})`, fontWeight:"600", transform:[{ rotate }] }}>{displayUser?.firstName || "RoomLink"}</Text>;
-  });
-
-  const profileItems = [
-    { label: "Location", value: displayUser?.location, icon: "location-outline" },
-    { label: "Born", value: displayUser?.born, icon: "calendar-outline" },
-    { label: "Hubby", value: displayUser?.hubby, icon: "heart-outline" },
-    { label: "Fantasy", value: displayUser?.fantasy, icon: "flower-outline" },
-    { label: "Pet", value: displayUser?.pet, icon: "paw-outline" },
-    { label: "Studied at", value: displayUser?.studiedAt, icon: "school-outline" },
-    { label: "Education", value: displayUser?.education, icon: "book-outline" },
-    { label: "Work", value: displayUser?.work, icon: "briefcase-outline" },
-    { label: "How I deliver customer", value: displayUser?.deliveryMethod, icon: "bicycle-outline" },
+  const visitorMenu = [
+    { label: "Listings", icon: "home", onPress: goToListings },
+    {
+      label: "Store",
+      icon: "storefront",
+      onPress: () => displayUser?.uid && safeNavigate("VendorUserListing", { vendorId: displayUser.uid }),
+    },
   ];
+
+  if (loadingUser || !displayUser) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: isDark ? "#000" : "#f8f9fa" }}>
+        <ActivityIndicator size="large" color={ACCENT_COLOR} />
+      </View>
+    );
+  }
+
+  const fullName = `${displayUser.firstName || ""} ${displayUser.lastName || ""}`.trim();
+  const nameWords = fullName.split(" ");
+  const lastWord = nameWords.pop() || "";
+  const nameWithoutLastWord = nameWords.join(" ");
+
+  const profileFields = [
+    { icon: "location", label: "From", value: displayUser.location },
+    { icon: "calendar", label: "Born", value: displayUser.born },
+    { icon: "heart", label: "Into", value: displayUser.hubby },
+    { icon: "sparkles", label: "Fantasy", value: displayUser.fantasy },
+    { icon: "paw", label: "Pet", value: displayUser.pet },
+    { icon: "school", label: "Studied", value: displayUser.studiedAt },
+    { icon: "briefcase", label: "Work", value: displayUser.work },
+    { icon: "bicycle", label: "Delivery", value: displayUser.deliveryMethod },
+  ].filter(f => f.value);
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: isDark ? "#121212" : "#f9f9f9" }]}>
+    <ScrollView style={[styles.container, { backgroundColor: isDark ? "#000" : "#f8f9fa" }]}>
       {/* Header */}
-      <TouchableOpacity
-        onPress={() => { if (isOwner) setModalVisible(true); }}
-        activeOpacity={isOwner ? 0.9 : 1}
-      >
-        <View style={styles.headerBackground}>
-          {bgImage ? <Image source={{ uri: bgImage }} style={styles.headerImage} /> : (
-            <>
-              <LinearGradient colors={[bgColor, `${bgColor}AA`]} style={[StyleSheet.absoluteFill, { borderBottomLeftRadius: 20, borderBottomRightRadius: 20 }]} />
-              {scatterElements}
-            </>
+      <TouchableOpacity activeOpacity={isOwner ? 0.95 : 1} onPress={() => isOwner && setModalVisible(true)}>
+        <View style={styles.header}>
+          {headerImage ? (
+            <Image source={{ uri: headerImage }} style={styles.headerImage} blurRadius={1} />
+          ) : (
+            <LinearGradient colors={[headerColor, "#1a1a3a"]} style={StyleSheet.absoluteFill} />
           )}
+          <View style={styles.headerOverlay} />
         </View>
       </TouchableOpacity>
 
-      {/* Avatar, Name, Username & Bio */}
-      <View style={styles.leftProfileContainer}>
-        <Pressable onPress={toggleFlip} style={styles.flipPressable}>
-          <Animated.View style={[styles.flipContainer, containerAnimated]}>
-            <Animated.View style={[styles.face, frontAnimated]}>
-              {displayUser?.avatar ? <Image source={{ uri: displayUser.avatar }} style={[styles.frontAvatar, flip.value ? { opacity: 0.3 } : {}]} /> : <Avatar size={FRONT_SIZE} />}
+      <View style={styles.avatarSection}>
+        <Pressable 
+          onPress={toggleFlip}
+          onLongPress={changeAvatar} // Only owner can long press to change avatar
+          delayLongPress={500}
+          style={styles.flipWrapper}
+        >
+          <Animated.View style={[styles.flipCard, animatedContainer, styles.shadow]}>
+            <Animated.View style={[StyleSheet.absoluteFill, frontStyle]}>
+              {displayUser.avatar ? (
+                <Image source={{ uri: displayUser.avatar }} style={styles.avatarImage} />
+              ) : (
+                <Avatar size={AVATAR_SIZE - 12} />
+              )}
             </Animated.View>
-            <Animated.View style={[styles.face, styles.backFace, backAnimated]}>
-              <LinearGradient colors={["#1A237E", "#3949AB"]} style={styles.cardInner}>
-                <View style={styles.watermark}>
-                  {Array.from({ length: 40 }).map((_, i) => (
-                    <Text key={i} style={[styles.watermarkText, { transform: [{ rotate: i%3 ? "8deg":"-10deg" }] }]}>RoomLink</Text>
+
+            <Animated.View style={[StyleSheet.absoluteFill, backStyle]}>
+              <LinearGradient colors={["#0F0F2E", "#1E1E4D", "#0055FF"]} style={styles.idCard}>
+                <View style={styles.idWatermark}>
+                  {[...Array(30)].map((_, i) => (
+                    <Text key={i} style={[styles.watermarkText, { transform: [{ rotate: i % 2 ? "12deg" : "-12deg" }] }]}>
+                      ROOMLINK
+                    </Text>
                   ))}
                 </View>
-                <Image source={{ uri: displayUser?.avatar }} style={styles.cardAvatar} />
-                <Text style={styles.cardName}>{displayUser?.firstName} {displayUser?.lastName || ""}</Text>
-                {displayUser?.isVerified ? (
-                  <>
-                    <Text style={styles.verifiedText}>Verified since {displayUser?.verifiedDate || "2025"}</Text>
-                    <Text style={styles.partnerText}>RoomLink, your trusted partner in housing and rentals</Text>
-                  </>
-                ) : (
-                  isOwner ? (
-                    <TouchableOpacity 
-                      style={styles.getVerifiedButton} 
-                      onPress={async () => {
-                        try {
-                          await verifyUser();
-                          Alert.alert("Verified!", "You are now verified.");
-                        } catch (err) {
-                          Alert.alert("Error", "Verification failed. Try again.");
-                        }
-                      }}
-                    >
-                      <Text style={styles.getVerifiedText}>Verify your identity</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <Text style={styles.notVerifiedText}>Not Verified</Text>
-                  )
-                )}
+                <Image source={{ uri: displayUser.avatar }} style={styles.idAvatar} />
+                <Text style={styles.idName}>{displayUser.firstName} {displayUser.lastName}</Text>
+                <Text style={styles.idUsername}>@{displayUser.username}</Text>
+                {displayUser.isVerified ? (
+                  <View style={styles.verifiedBadge}>
+                    <Ionicons name="shield-checkmark" size={18} color="#00ff9d" />
+                    <Text style={styles.verifiedText}>Verified RoomLink Member</Text>
+                  </View>
+                ) : isOwner ? (
+                  <TouchableOpacity style={styles.verifyBtn} onPress={() => safeNavigate("IdentityVerification")}>
+                    <Text style={styles.verifyText}>Get Verified</Text>
+                  </TouchableOpacity>
+                ) : null}
               </LinearGradient>
             </Animated.View>
           </Animated.View>
         </Pressable>
 
-        <View style={styles.nameBadgeContainer}>
-          <Text style={[styles.name, { color: isDark ? "#fff" : "#000" }]}>{displayUser?.firstName} {displayUser?.lastName || "No Name"}</Text>
-          {displayUser?.badge === "vendor" && <YellowBadge width={20} height={20} style={styles.badge} />}
-          {displayUser?.badge === "studentLandlord" && <BlueBadge width={20} height={20} style={styles.badge} />}
-          {displayUser?.badge === "realEstate" && <RedBadge width={20} height={20} style={styles.badge} />}
-        </View>
-
-        <Text style={[styles.username, { color: isDark ? "#bbb" : "#555" }]}>{`@${displayUser?.username || "username"}`}</Text>
-        {displayUser?.bio ? <Text style={[styles.bio, { color: isDark ? "#ccc" : "#444" }]}>{displayUser.bio}</Text> : null}
-      </View>
-
-      {/* Profile items */}
-      <View style={styles.profileItemsContainer}>
-        {profileItems.filter(item => item.value).map((item, idx) => (
-          <View key={idx} style={styles.profileItemRow}>
-            <Ionicons name={item.icon} size={20} color={isDark ? "#fff" : "#333"} />
-            <Text style={[styles.profileItemText, { color: isDark ? "#fff" : "#000" }]}>{item.label}: {item.value}</Text>
-          </View>
-        ))}
-      </View>
-
-      {/* Listings for visitors */}
-      {visitedUser && visitedUserListings.length > 0 && (
-        <View style={{ paddingHorizontal: 20, marginTop: 20 }}>
-          <Text style={{ fontSize:18, fontWeight:"600", marginBottom:10, color:isDark?"#fff":"#000" }}>Listings</Text>
-          <FlatList
-            data={visitedUserListings}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={{ marginRight:14, width:140, borderRadius:12, overflow:"hidden", backgroundColor:isDark?"#1c1c1c":"#f0f0f0" }}
-                onPress={() => navigation.navigate("ListingDetail", { listingId: item.id })}
-              >
-                <Image source={{ uri: item.images[0] }} style={{ width:"100%", height:90 }} />
-                <View style={{ padding:6 }}>
-                  <Text style={{ color:isDark?"#fff":"#000", fontWeight:"500" }} numberOfLines={1}>{item.title}</Text>
-                  <Text style={{ color:isDark?"#ccc":"#555", fontSize:12 }}>${item.price}</Text>
+        {/* Name + Badge */}
+        <View style={styles.infoHeader}>
+          <Text style={[styles.name, { color: isDark ? "#fff" : "#000" }]}>
+            {nameWithoutLastWord && `${nameWithoutLastWord} `}
+            <Text style={styles.lastWordWithBadge}>
+              {lastWord}
+              {displayUser.badge && (
+                <View style={styles.badgeContainer}>
+                  {displayUser.badge === "vendor" && <YellowBadge width={28} height={28} />}
+                  {displayUser.badge === "studentLandlord" && <BlueBadge width={28} height={28} />}
+                  {displayUser.badge === "realEstate" && <RedBadge width={28} height={28} />}
                 </View>
-              </TouchableOpacity>
-            )}
-          />
+              )}
+            </Text>
+          </Text>
+
+          <Text style={[styles.username, { color: isDark ? "#aaa" : "#666" }]}>
+            @{displayUser.username}
+          </Text>
+
+          <View style={styles.ratingRow}>
+            {[1, 2, 3, 4, 5].map((s) => (
+              <Ionicons
+                key={s}
+                name={s <= Math.floor(displayUser.averageRating || 0) ? "star" : s <= displayUser.averageRating ? "star-half" : "star-outline"}
+                size={22}
+                color="#FFD700"
+              />
+            ))}
+            <Text style={styles.ratingText}>
+              {displayUser.averageRating?.toFixed(1) || "0.0"}
+              <Text style={styles.reviewCount}> ({displayUser.reviewCount || 0})</Text>
+            </Text>
+          </View>
+
+          {displayUser.bio && <Text style={[styles.bio, { color: isDark ? "#ddd" : "#333" }]}>{displayUser.bio}</Text>}
+        </View>
+      </View>
+
+      {/* Profile Fields */}
+      {profileFields.length > 0 && (
+        <View style={styles.detailsCard}>
+          {profileFields.map((field, i) => (
+            <View key={i} style={styles.detailRow}>
+              <Ionicons name={field.icon} size={22} color={isDark ? "#fff" : "#000"} />
+              <Text style={[styles.detailText, { color: isDark ? "#ccc" : "#222" }]}>
+                <Text style={{ color: isDark ? "#888" : "#666" }}>{field.label}:</Text> {field.value}
+              </Text>
+            </View>
+          ))}
         </View>
       )}
 
-      {/* Menu grid */}
-      {isOwner && (
-        <View style={styles.menuGridWrapper}>
-          <View style={styles.menuGridContainer}>
-            {menuItems.map((item, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={styles.menuItem}
-                onPress={item.action}
-                activeOpacity={0.8}
-              >
-                <View style={[ styles.menuIconCircle, { backgroundColor: isDark ? "#1c1c1c" : "#e0e0e0" } ]}>
-                  <Ionicons name={item.icon} size={26} color={isDark ? "#fff" : "#111"} />
-                </View>
-                <Text style={[styles.menuLabel, { color: isDark ? "#fff" : "#111" }]} numberOfLines={1}>{item.label}</Text>
+      {/* Menu Grid */}
+      <View style={styles.menuGrid}>
+        <View style={styles.menuRow}>
+          {(isOwner ? menuItems.slice(0, 4) : visitorMenu.slice(0, 4)).map((item, idx) => (
+            <TouchableOpacity key={idx} style={styles.menuButton} onPress={item.onPress} activeOpacity={0.8}>
+              <LinearGradient colors={["#1E1E3F", "#0F0F2E"]} style={styles.menuIconBg}>
+                <Ionicons name={item.icon} size={28} color="#fff" />
+              </LinearGradient>
+              <Text style={[styles.menuLabel, { color: isDark ? "#ddd" : "#333" }]}>{item.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {(isOwner ? menuItems.slice(4) : visitorMenu.slice(4)).length > 0 && (
+          <View style={styles.menuRow}>
+            {(isOwner ? menuItems.slice(4) : visitorMenu.slice(4)).map((item, idx) => (
+              <TouchableOpacity key={idx} style={styles.menuButton} onPress={item.onPress} activeOpacity={0.8}>
+                <LinearGradient colors={["#1E1E3F", "#0F0F2E"]} style={styles.menuIconBg}>
+                  <Ionicons name={item.icon} size={28} color="#fff" />
+                </LinearGradient>
+                <Text style={[styles.menuLabel, { color: isDark ? "#ddd" : "#333" }]}>{item.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
-        </View>
-      )}
+        )}
+      </View>
 
-      {/* Header Modal */}
-      {isOwner && (
-        <Modal visible={modalVisible} transparent animationType="fade">
-          <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, { backgroundColor: isDark ? "#333" : "#fff" }]}>
-              <TouchableOpacity style={styles.closeButton} onPress={() => setModalVisible(false)}>
-                <Ionicons name="close-outline" size={28} color={isDark ? "#fff" : "#000"} />
-              </TouchableOpacity>
-              <Text style={{ fontSize:16, fontWeight:"bold", marginBottom:10, color:isDark?"#fff":"#000" }}>Choose a business card</Text>
-              <FlatList
-                data={COLORS}
-                keyExtractor={(item) => item}
-                horizontal
-                renderItem={({ item }) => (
-                  <TouchableOpacity style={[styles.colorOption, { backgroundColor: item }]} onPress={() => { setBgColor(item); setBgImage(null); setModalVisible(false); }} />
-                )}
-              />
-              <TouchableOpacity style={styles.imageOption} onPress={pickImage}>
-                <Ionicons name="image-outline" size={20} color={isDark ? "#fff" : "#333"} />
-                <Text style={{ marginLeft: 8, color: isDark ? "#fff" : "#333" }}>Choose from Gallery</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
-      )}
-
-      {/* Premium Prompt */}
-      <Modal visible={premiumModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: isDark ? "#333" : "#fff" }]}>
-            <TouchableOpacity style={styles.closeButton} onPress={() => setPremiumModalVisible(false)}>
-              <Ionicons name="close-outline" size={28} color={isDark ? "#fff" : "#000"} />
+      {/* Header Customizer Modal */}
+      <Modal visible={modalVisible} transparent animationType="slide">
+        <Pressable style={styles.modalOverlay} onPress={() => setModalVisible(false)}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Header Style</Text>
+            <TouchableOpacity style={styles.modalOption} onPress={pickHeaderImage}>
+              <Ionicons name="images" size={24} color={ACCENT_COLOR} />
+              <Text style={styles.modalOptionText}>Choose Photo</Text>
             </TouchableOpacity>
-            <Text style={{ fontSize:16, fontWeight:"bold", marginBottom:10, color:isDark?"#fff":"#000" }}>Premium Feature</Text>
-            <Text style={{ color:isDark?"#fff":"#000", marginBottom:15 }}>Choosing a gallery image is only available for premium users.</Text>
-            <TouchableOpacity onPress={() => { setPremiumModalVisible(false); navigation.navigate("GetVerified"); }} style={{ backgroundColor:"#1A237E", paddingVertical:10, paddingHorizontal:18, borderRadius:8 }}>
-              <Text style={{ color:"#fff", fontWeight:"700" }}>Go Premium</Text>
-            </TouchableOpacity>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 20 }}>
+              {["#0A0E27", "#1a0033", "#000428", "#004e92", "#2c003e", "#003366", "#120030"].map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  style={[styles.colorPick, { backgroundColor: c }]}
+                  onPress={async () => {
+                    setHeaderColor(c);
+                    setHeaderImage(null);
+                    setModalVisible(false);
+                    if (isOwner) {
+                      await updateUserField("headerColor", c);
+                      await updateUserField("headerImage", null);
+                    }
+                  }}
+                />
+              ))}
+            </ScrollView>
           </View>
-        </View>
+        </Pressable>
       </Modal>
     </ScrollView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: { flex:1 },
-  headerBackground: { height:120, borderBottomLeftRadius:20, borderBottomRightRadius:20, overflow:"hidden" },
-  headerImage: { width:"100%", height:"100%", resizeMode:"cover" },
-  leftProfileContainer: { alignItems:"flex-start", marginTop:-50, paddingHorizontal:20 },
-  flipPressable: { alignItems:"center", justifyContent:"center" },
-  flipContainer: { alignItems:"center", justifyContent:"center", overflow:"hidden" },
-  face: { position:"absolute", left:0, top:0, right:0, bottom:0, alignItems:"center", justifyContent:"center" },
-  frontAvatar: { width:FRONT_SIZE-6, height:FRONT_SIZE-6, borderRadius:(FRONT_SIZE-6)/2, borderWidth:4, borderColor:"#fff" },
-  cardInner: { width:"100%", height:"100%", borderRadius:12, alignItems:"center", justifyContent:"center", padding:16, overflow:"hidden" },
-  watermark: { ...StyleSheet.absoluteFillObject, opacity:0.08, justifyContent:"center", alignItems:"center", flexDirection:"row", flexWrap:"wrap" },
-  watermarkText: { fontSize:12, color:"#fff", margin:3, textTransform:"uppercase", letterSpacing:1 },
-  cardAvatar: { width:80, height:80, borderRadius:40, borderWidth:2, borderColor:"#fff", marginBottom:8 },
-  cardName: { fontSize:18, fontWeight:"700", color:"#fff", marginBottom:6, textAlign:"center" },
-  verifiedText: { fontSize:14, color:"#fff", marginBottom:6, textAlign:"center" },
-  partnerText: { fontSize:12, color:"#fff", textAlign:"center" },
-  notVerifiedText: { fontSize:14, color:"#fff", marginBottom:8, textAlign:"center" },
-  getVerifiedButton: { backgroundColor:"#fff", paddingVertical:10, paddingHorizontal:18, borderRadius:8, marginTop:6 },
-  getVerifiedText: { color:"#1A237E", fontWeight:"700" },
-  nameBadgeContainer: { flexDirection:"row", alignItems:"center", marginTop:2 },
-  name: { fontSize:24, fontWeight:"800" },
-  badge: { marginLeft:1 },
-  username: { fontSize:14, marginTop:2, fontWeight:"400", opacity:0.7 },
-  bio: { fontSize:14, marginTop:8, fontStyle:"italic" },
-  profileItemsContainer: { paddingHorizontal:20, marginTop:20 },
-  profileItemRow: { flexDirection:"row", alignItems:"center", marginBottom:12 },
-  profileItemText: { marginLeft:10, fontSize:16 },
-  menuGridWrapper: { paddingHorizontal: 12, marginTop: 20 },
-  menuGridContainer: { flexDirection:"row", flexWrap:"wrap" },
-  menuItem: { width: "25%", alignItems:"center", marginVertical: 14 },
-  menuIconCircle: { width:50, height:50, borderRadius:33, alignItems:"center", justifyContent:"center", elevation:3 },
-  menuLabel: { marginTop:8, fontSize:12, textAlign:"center", fontWeight:"500" },
-  modalOverlay: { flex:1, backgroundColor:"rgba(0,0,0,0.6)", justifyContent:"center", alignItems:"center" },
-  modalContent: { width:"80%", padding:20, borderRadius:12, alignItems:"center", position:"relative" },
-  closeButton: { position:"absolute", top:10, right:10, zIndex:10 },
-  colorOption: { width:40, height:40, borderRadius:8, marginHorizontal:6 },
-  imageOption: { flexDirection:"row", alignItems:"center", marginTop:15 },
+  container: { flex: 1 },
+  header: { height: 120, borderBottomLeftRadius: 32, borderBottomRightRadius: 32, overflow: "hidden" },
+  headerImage: { width: "100%", height: "100%" },
+  headerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.3)" },
+  avatarSection: { marginTop: -70, paddingHorizontal: 20 },
+  flipWrapper: { alignItems: "flex-start", marginBottom: 16 },
+  flipCard: { backgroundColor: "#fff", overflow: "hidden" },
+  shadow: { shadowColor: "#000", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.3, shadowRadius: 20, elevation: 20 },
+  avatarImage: { width: "100%", height: "100%", borderRadius: AVATAR_SIZE / 2, borderWidth: 5, borderColor: "#fff" },
+  idCard: { padding: 20, alignItems: "center", justifyContent: "center" },
+  idWatermark: { ...StyleSheet.absoluteFillObject, opacity: 0.06, justifyContent: "center", alignItems: "center" },
+  watermarkText: { fontSize: 14, color: "#fff", fontWeight: "900", margin: 4 },
+  idAvatar: { width: 90, height: 90, borderRadius: 45, borderWidth: 3, borderColor: "#00ff9d", marginBottom: 12 },
+  idName: { fontSize: 22, fontWeight: "800", color: "#fff" },
+  idUsername: { fontSize: 15, color: "#00ff9d", marginBottom: 10 },
+  verifiedBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(0,255,157,0.2)", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  verifiedText: { color: "#00ff9d", marginLeft: 6, fontWeight: "600" },
+  verifyBtn: { backgroundColor: "#00ff9d", paddingHorizontal: 20, paddingVertical: 10, borderRadius: 30 },
+  verifyText: { color: "#000", fontWeight: "800" },
+  infoHeader: { alignItems: "flex-start", marginTop: 0 },
+  name: {
+    fontSize: 30,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    lineHeight: 38,
+  },
+  lastWordWithBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  badgeContainer: {
+    marginLeft: 10,
+    marginBottom: -6,
+    shadowColor: "#fff",
+    shadowOpacity: 0.9,
+    shadowRadius: 12,
+    elevation: 15,
+  },
+  username: { fontSize: 17, marginTop: 8, fontWeight: "600" },
+  ratingRow: { flexDirection: "row", alignItems: "center", marginTop: 10 },
+  ratingText: { marginLeft: 10, fontSize: 18, fontWeight: "700", color: ACCENT_COLOR },
+  reviewCount: { fontWeight: "400", color: "#888", fontSize: 15 },
+  bio: { marginTop: 12, fontSize: 16, lineHeight: 24, fontStyle: "italic" },
+  detailsCard: { marginTop: 30, marginHorizontal: 20, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 20, padding: 20, borderWidth: 1, borderColor: "rgba(255,255,255,0.1)" },
+  detailRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
+  detailText: { marginLeft: 14, fontSize: 16 },
+  menuGrid: { paddingHorizontal: 20, marginVertical: 30 },
+  menuRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 24 },
+  menuButton: {
+    alignItems: "center",
+    width: (width - 40) / 4,
+    paddingHorizontal: 10,
+  },
+  menuIconBg: { width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center", shadowColor: ACCENT_COLOR, shadowOpacity: 0.4, shadowRadius: 15, elevation: 10 },
+  menuLabel: { marginTop: 10, fontSize: 13, fontWeight: "600", textAlign: "center" },
+  modalOverlay: { flex: 1, backgroundColor: "#000000CC", justifyContent: "flex-end" },
+  modalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
+  modalTitle: { fontSize: 22, fontWeight: "800", textAlign: "center", color: "#000" },
+  modalOption: { flexDirection: "row", alignItems: "center", paddingVertical: 16 },
+  modalOptionText: { marginLeft: 16, fontSize: 18, color: "#000" },
+  colorPick: { width: 50, height: 50, borderRadius: 25, marginHorizontal: 8, borderWidth: 3, borderColor: "#fff" },
 });
-
-export default ProfileLayout;

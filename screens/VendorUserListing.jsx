@@ -1,3 +1,4 @@
+// screens/VendorUserListing.jsx — Header EXACTLY like MyListing.jsx
 import React, { useEffect, useState } from "react";
 import {
   View,
@@ -12,15 +13,18 @@ import {
   Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
 import { useVendorListing } from "../context/ListingContext";
 
 const { width } = Dimensions.get("window");
 const CARD_WIDTH = width / 2 - 20;
 
 const VendorUserListing = ({ route }) => {
-  const { vendorListings, deleteVendorListing, addVendorListing } = useVendorListing();
+  const navigation = useNavigation();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
+
+  const { vendorListings, deleteVendorListing, addVendorListing } = useVendorListing();
 
   const loggedInVendor = route?.params?.vendorId || "vendor123";
   const [myListings, setMyListings] = useState([]);
@@ -72,68 +76,101 @@ const VendorUserListing = ({ route }) => {
     setSelectedListing(null);
   };
 
+  const handleCardPress = (item) => {
+    navigation.navigate("VendorListingDetails", { listing: item });
+  };
+
   const renderCard = ({ item }) => (
-    <View
-      style={[
-        styles.card,
-        {
-          backgroundColor: isDark ? "#2a2a2a" : "#fff",
-          borderColor: isDark ? "#444" : "#eee",
-        },
-      ]}
+    <TouchableOpacity
+      activeOpacity={0.8}
+      onPress={() => handleCardPress(item)}
+      style={{ marginBottom: 15 }}
     >
-      <View style={{ position: "relative" }}>
-        <Image source={{ uri: item.images?.[0] || "" }} style={styles.image} />
+      <View
+        style={[
+          styles.card,
+          {
+            backgroundColor: isDark ? "#2a2a2a" : "#fff",
+            borderColor: isDark ? "#444" : "#eee",
+          },
+        ]}
+      >
+        <View style={{ position: "relative" }}>
+          <Image source={{ uri: item.images?.[0] || "" }} style={styles.image} />
 
-        {/* SOLD BADGE */}
-        {item.sold && (
-          <View style={styles.soldOverlay}>
-            <Text style={styles.soldText}>SOLD</Text>
-          </View>
-        )}
+          {item.sold && (
+            <View style={styles.soldOverlay}>
+              <Text style={styles.soldText}>SOLD</Text>
+            </View>
+          )}
 
-        {/* 3-DOT MENU BUTTON */}
-        <TouchableOpacity
-          style={styles.menuButton}
-          onPress={() => openMenu(item)}
-        >
-          <Ionicons name="ellipsis-vertical" size={18} color="#fff" />
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.menuButton}
+            onPress={(e) => {
+              e.stopPropagation();
+              openMenu(item);
+            }}
+          >
+            <Ionicons name="ellipsis-vertical" size={18} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.cardContent}>
+          <Text
+            style={[styles.title, { color: isDark ? "#fff" : "#111" }]}
+            numberOfLines={1}
+          >
+            {item.title}
+          </Text>
+          <Text style={[styles.price, { color: isDark ? "#00ff7f" : "green" }]}>
+            ₦{Number(item.price || 0).toLocaleString()}
+          </Text>
+          <Text
+            style={[styles.location, { color: isDark ? "#ccc" : "gray" }]}
+            numberOfLines={1}
+          >
+            {item.location || "Unknown location"}
+          </Text>
+          <Text
+            style={[styles.description, { color: isDark ? "#ccc" : "gray" }]}
+            numberOfLines={2}
+          >
+            {item.description || "No description available"}
+          </Text>
+        </View>
       </View>
-
-      <View style={styles.cardContent}>
-        <Text
-          style={[styles.title, { color: isDark ? "#fff" : "#111" }]}
-          numberOfLines={1}
-        >
-          {item.title}
-        </Text>
-        <Text style={[styles.price, { color: isDark ? "#00ff7f" : "green" }]}>
-          ₦{Number(item.price || 0).toLocaleString()}
-        </Text>
-        <Text
-          style={[styles.location, { color: isDark ? "#ccc" : "gray" }]}
-          numberOfLines={1}
-        >
-          {item.location || "Unknown location"}
-        </Text>
-        <Text
-          style={[styles.description, { color: isDark ? "#ccc" : "gray" }]}
-          numberOfLines={2}
-        >
-          {item.description || "No description available"}
-        </Text>
-      </View>
-    </View>
+    </TouchableOpacity>
   );
 
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: isDark ? "#1e1e1e" : "#f9f9f9" },
-      ]}
-    >
+    <View style={[styles.container, { backgroundColor: isDark ? "#1e1e1e" : "#f9f9f9" }]}>
+      {/* ========== HEADER — EXACTLY LIKE MYLISTING.JSX ========== */}
+      <View style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        paddingHorizontal: 20,
+        paddingTop: 50,
+        paddingBottom: 32,
+      }}>
+        {/* Back Button */}
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={{ padding: 10 }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="arrow-back" size={28} color="#000000" />
+        </TouchableOpacity>
+
+        {/* Title */}
+        <View style={{ flex: 1, alignItems: "center", marginRight: 48 }}>
+          <Text style={[styles.pageTitle, { color: isDark ? "#fff" : "#000" }]}>
+            Vendor store
+          </Text>
+        </View>
+      </View>
+      {/* ========== END HEADER ========== */}
+
       {myListings.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={{ color: isDark ? "#ccc" : "gray" }}>
@@ -147,7 +184,7 @@ const VendorUserListing = ({ route }) => {
           renderItem={renderCard}
           numColumns={2}
           columnWrapperStyle={{ justifyContent: "space-between" }}
-          contentContainerStyle={{ padding: 10 }}
+          contentContainerStyle={{ padding: 10, paddingBottom: 100 }}
         />
       )}
 
@@ -169,7 +206,7 @@ const VendorUserListing = ({ route }) => {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.menuItem}
-              onPress={() => handleDelete(selectedListing.id)}
+              onPress={() => handleDelete(selectedListing?.id)}
             >
               <Ionicons name="trash-outline" size={16} color="#ff4444" />
               <Text style={[styles.menuText, { color: "#ff4444" }]}>Delete</Text>
@@ -183,11 +220,14 @@ const VendorUserListing = ({ route }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: "800",
+  },
   emptyState: { flex: 1, justifyContent: "center", alignItems: "center" },
   card: {
     width: CARD_WIDTH,
     borderRadius: 10,
-    marginBottom: 15,
     overflow: "hidden",
     borderWidth: 1,
   },
@@ -226,6 +266,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingVertical: 8,
     elevation: 5,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
   },
   menuItem: {
     flexDirection: "row",

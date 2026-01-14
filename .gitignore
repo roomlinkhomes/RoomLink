@@ -87,3 +87,14 @@ out
 # Vite logs
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+node_modules
+node_modules
+node_modules
+node_modules
+node_modules
+node_modules
+node_modules
+node_modules
+node_modules
+roomlink-backend/serviceAccountKey.json
+

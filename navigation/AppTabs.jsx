@@ -1,167 +1,262 @@
-// navigation/AppTabs.jsx
-import React, { useContext } from "react";
-import { TouchableOpacity, Image, useColorScheme } from "react-native";
+import React, { useEffect, useState, useMemo } from "react";
+import {
+  Image,
+  useColorScheme,
+  View,
+  Text,
+  StyleSheet,
+  Platform,
+  KeyboardAvoidingView,
+} from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-import { getFocusedRouteNameFromRoute } from "@react-navigation/native";
-import { UserContext } from "../context/UserContext";
+import {
+  getFocusedRouteNameFromRoute,
+  useNavigation,          // ✅ FIX
+} from "@react-navigation/native";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { useUser } from "../context/UserContext";
+import { onSnapshot, doc } from "firebase/firestore";
+import { db } from "../firebaseConfig";
+import { useMessageCount } from "../context/MessageProvider.jsx";
 
 // Screens
 import Home from "../screens/home";
 import ListingScreen from "../screens/listing";
 import VendorScreen from "../screens/vendor";
-import ProfileScreen from "../screens/profile";
-
-// Stack for Messages
-import MessagesStack from "./MessagesStack"; // stack navigator for messages
-
-// SVGs
-import HomeIcon from "../assets/icons/svg/home.svg";
-import MessageIcon from "../assets/icons/svg/message.svg";
-import PlusIcon from "../assets/icons/svg/plus.svg";
-import VendorIcon from "../assets/icons/svg/vendor.svg";
-import ProfileIcon from "../assets/icons/svg/profile.svg";
+import MyProfileScreen from "../screens/Profile/MyProfileScreen.jsx";
+import MessagesStack from "./MessagesStack";
 
 const Tab = createBottomTabNavigator();
 
+const SIZES = {
+  default: 26,
+  plus: 30,
+  vendor: 24,
+};
+
 export default function AppTabs() {
-  const { user } = useContext(UserContext);
+  const navigation = useNavigation();   // ✅ FIX
+  const { user } = useUser();
+  const [liveUser, setLiveUser] = useState(null);
+  const { unreadConversations: unreadCount } = useMessageCount();
   const scheme = useColorScheme();
+  const isDarkMode = scheme === "dark";
 
-  const inactiveColor = scheme === "dark" ? "#fff" : "#000";
-  const activeColor = "#036dd6";
+  const theme = {
+    tabBarBackground: isDarkMode ? "#121212" : "#fafafa",
+    tabBarActive: isDarkMode ? "#00ff7f" : "#017a6b",
+    tabBarInactive: isDarkMode ? "#b0b0b0" : "#666",
+    tabBarVendorActive: "#017a6b",
+    badgeBackground: "#ef4444",
+    badgeText: "#ffffff",
+  };
 
-  // Function to hide tab bar on certain screens
-  const getTabBarStyle = (route) => {
-    const routeName = getFocusedRouteNameFromRoute(route) ?? "";
+  // Realtime avatar listener
+  useEffect(() => {
+    if (!user?.uid) return;
+    const unsub = onSnapshot(doc(db, "users", user.uid), (snap) => {
+      if (snap.exists()) {
+        setLiveUser({ uid: user.uid, ...snap.data() });
+      }
+    });
+    return () => unsub();
+  }, [user?.uid]);
 
-    if (routeName === "Message" || routeName === "Listing") {
-      return { display: "none" };
-    }
+  const tabBarStyle = {
+    backgroundColor: theme.tabBarBackground,
+    height: Platform.OS === "ios" ? 70 : 65,
+    paddingBottom: Platform.OS === "ios" ? 24 : 8,
+    paddingTop: 8,
+  };
 
-    return {
-      backgroundColor: scheme === "dark" ? "#1e1e1e" : "#fff",
-      height: 70,
-      paddingBottom: 10,
-      paddingTop: 10,
-      borderTopLeftRadius: 18,
-      borderTopRightRadius: 18,
-      borderTopWidth: 0,
-      overflow: "hidden",
-    };
+  const screenOptions = useMemo(
+    () => ({ route }) => {
+      const focusedRouteName =
+        getFocusedRouteNameFromRoute(route) ?? route.name;
+
+      const hideTabBarRoutes = [
+        "Message",
+        "Listing",
+        "VendorListing",
+        "VendorCategory",
+        "ListingDetails",
+        "VendorListingDetails",
+        "Search",
+      ];
+
+      const isHidden = hideTabBarRoutes.includes(focusedRouteName);
+
+      return {
+        headerShown: false,
+        tabBarActiveTintColor: theme.tabBarActive,
+        tabBarInactiveTintColor: theme.tabBarInactive,
+        tabBarLabelStyle: styles.tabLabel,
+        tabBarStyle: isHidden ? { display: "none" } : tabBarStyle,
+        tabBarHideOnKeyboard: true,
+        tabBarPressColor: "transparent",
+        tabBarPressOpacity: 1,
+      };
+    },
+    [theme]
+  );
+
+  const MessageBadge = ({ count }) => {
+    if (!count) return null;
+    return (
+      <View style={styles.badge}>
+        <Text style={styles.badgeText}>
+          {count > 99 ? "99+" : count}
+        </Text>
+      </View>
+    );
   };
 
   return (
-    <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: activeColor,
-        tabBarInactiveTintColor: inactiveColor,
-        tabBarLabelStyle: { fontSize: 12, fontWeight: "600" },
-      }}
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 70 : 0}
+      enabled={Platform.OS === "ios"}
     >
-      {/* Home */}
-      <Tab.Screen
-        name="Home"
-        component={Home}
-        options={({ route }) => ({
-          tabBarLabel: "Home",
-          tabBarIcon: ({ color, size, focused }) => (
-            <HomeIcon
-              width={size}
-              height={size}
-              fill={focused ? color : "none"}
-              stroke={color}
-              strokeWidth={1.5}
-            />
-          ),
-          tabBarStyle: getTabBarStyle(route),
-        })}
-      />
-
-      {/* Messages Stack */}
-      <Tab.Screen
-        name="Messages"
-        component={MessagesStack} // stack navigator here
-        options={({ route }) => ({
-          tabBarLabel: "Messages",
-          tabBarIcon: ({ color, size, focused }) => (
-            <MessageIcon
-              width={size}
-              height={size}
-              fill={focused ? color : "none"}
-              stroke={color}
-              strokeWidth={1.5}
-            />
-          ),
-          tabBarStyle: getTabBarStyle(route),
-        })}
-      />
-
-      {/* Listing (Plus) */}
-      <Tab.Screen
-        name="ListingTab"
-        component={ListingScreen}
-        options={{
-          tabBarLabel: "",
-          tabBarButton: ({ onPress }) => (
-            <TouchableOpacity
-              onPress={onPress}
-              activeOpacity={0.8}
-              style={{
-                flex: 1,
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <PlusIcon width={32} height={32} fill={activeColor} />
-            </TouchableOpacity>
-          ),
-        }}
-      />
-
-      {/* Vendor */}
-      <Tab.Screen
-        name="Vendor"
-        component={VendorScreen}
-        options={{
-          tabBarLabel: "Vendors",
-          tabBarStyle: { display: "none" },
-          tabBarIcon: ({ color, size, focused }) => (
-            <VendorIcon
-              width={size}
-              height={size}
-              fill={focused ? color : "none"}
-              stroke={color}
-              strokeWidth={1.5}
-            />
-          ),
-        }}
-      />
-
-      {/* Profile */}
-      <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{
-          tabBarLabel: "You",
-          tabBarStyle: { display: "none" },
-          tabBarIcon: ({ color, focused, size = 24 }) =>
-            user?.avatar ? (
-              <Image
-                source={{ uri: user.avatar }}
-                style={{ width: size, height: size, borderRadius: size / 2 }}
-              />
-            ) : (
-              <ProfileIcon
-                width={size}
-                height={size}
-                fill={focused ? color : "none"}
-                stroke={color}
-                strokeWidth={1.5}
+      <Tab.Navigator screenOptions={screenOptions}>
+        <Tab.Screen
+          name="Home"
+          component={Home}
+          options={{
+            tabBarLabel: "Home",
+            tabBarIcon: ({ focused }) => (
+              <Ionicons
+                name={focused ? "home" : "home-outline"}
+                size={SIZES.default}
+                color={focused ? theme.tabBarActive : theme.tabBarInactive}
               />
             ),
-        }}
-      />
-    </Tab.Navigator>
+          }}
+        />
+
+        <Tab.Screen
+          name="Messages"
+          component={MessagesStack}
+          options={{
+            tabBarLabel: "Messages",
+            tabBarIcon: ({ focused }) => (
+              <View style={styles.iconContainer}>
+                <Ionicons
+                  name={focused ? "chatbubble" : "chatbubble-outline"}
+                  size={SIZES.default}
+                  color={focused ? theme.tabBarActive : theme.tabBarInactive}
+                />
+                <MessageBadge count={unreadCount} />
+              </View>
+            ),
+          }}
+        />
+
+        <Tab.Screen
+          name="ListingTab"
+          component={ListingScreen}
+          options={{
+            tabBarLabel: "List",
+            tabBarIcon: ({ focused }) => (
+              <Ionicons
+                name={focused ? "add-circle" : "add-circle-outline"}
+                size={SIZES.plus}
+                color={focused ? theme.tabBarActive : theme.tabBarInactive}
+              />
+            ),
+          }}
+        />
+
+        <Tab.Screen
+          name="Vendor"
+          component={VendorScreen}
+          options={{
+            tabBarLabel: "Vendors",
+            tabBarIcon: ({ focused }) => (
+              <Ionicons
+                name={focused ? "storefront" : "storefront-outline"}
+                size={SIZES.vendor}
+                color={focused ? theme.tabBarVendorActive : theme.tabBarInactive}
+              />
+            ),
+          }}
+        />
+
+        <Tab.Screen
+          name="Profile"
+          component={MyProfileScreen}
+          options={{
+            tabBarLabel: "You",
+            tabBarIcon: ({ focused }) => {
+              const avatar = liveUser?.avatar || user?.avatar;
+              return avatar ? (
+                <Image
+                  source={{ uri: avatar }}
+                  style={[
+                    styles.avatar,
+                    {
+                      borderWidth: focused ? 3 : 1,
+                      borderColor: focused
+                        ? theme.tabBarActive
+                        : theme.tabBarInactive,
+                    },
+                  ]}
+                />
+              ) : (
+                <Ionicons
+                  name={focused ? "person" : "person-outline"}
+                  size={SIZES.default}
+                  color={focused ? theme.tabBarActive : theme.tabBarInactive}
+                />
+              );
+            },
+          }}
+          listeners={{
+            tabPress: (e) => {
+              e.preventDefault();
+              navigation.navigate("HomeTabs", {
+                screen: "Profile",
+                params: { userId: undefined },
+              });
+            },
+          }}
+        />
+      </Tab.Navigator>
+    </KeyboardAvoidingView>
   );
 }
+
+const styles = StyleSheet.create({
+  tabLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    marginBottom: 4,
+  },
+  iconContainer: {
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badge: {
+    position: "absolute",
+    right: -8,
+    top: -4,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#ef4444",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  avatar: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+  },
+});

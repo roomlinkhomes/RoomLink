@@ -1,37 +1,61 @@
-import React, { createContext, useState, useEffect } from "react";
+// context/AuthContext.jsx — CLEANED: No duplicate auth listener
+import React, { createContext, useContext, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { auth } from "../firebaseConfig";
+import {
+  reauthenticateWithCredential,
+  EmailAuthProvider,
+  updatePassword,
+  signOut,
+} from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
+import { db } from "../firebaseConfig";
+import * as Notifications from "expo-notifications";
+import * as Device from "expo-device";
 
-// Create context
 export const AuthContext = createContext();
 
-// Provider
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null); // logged-in user
-  const [loading, setLoading] = useState(true); // initial loading state
-  const [userCountry, setUserCountry] = useState(null); // 🌍 added
-  const [userCurrency, setUserCurrency] = useState(null); // 💰 added
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true); // ← Keep for initial load
+  const [userCountry, setUserCountry] = useState("NG");
+  const [userCurrency, setUserCurrency] = useState("₦");
 
-  // Load user & preferences on app start
+  // Save push token
+  const savePushToken = async (uid) => {
+    if (!Device.isDevice) return;
+    try {
+      const { status } = await Notifications.requestPermissionsAsync();
+      if (status !== "granted") return;
+      const token = (await Notifications.getExpoPushTokenAsync()).data;
+      await setDoc(doc(db, "users", uid), { expoPushToken: token }, { merge: true });
+      console.log("Push token saved:", token);
+    } catch (e) {
+      console.log("Failed to save token:", e);
+    }
+  };
+
+  // Load persisted data on mount
   useEffect(() => {
-    const loadStoredData = async () => {
+    const loadPersistedData = async () => {
       try {
         const savedUser = await AsyncStorage.getItem("user");
-        const savedCountry = await AsyncStorage.getItem("userCountry");
-        const savedCurrency = await AsyncStorage.getItem("userCurrency");
+        const country = await AsyncStorage.getItem("userCountry");
+        const currency = await AsyncStorage.getItem("userCurrency");
 
         if (savedUser) setUser(JSON.parse(savedUser));
-        if (savedCountry) setUserCountry(savedCountry);
-        if (savedCurrency) setUserCurrency(savedCurrency);
-      } catch (err) {
-        console.log("Error loading user:", err);
+        if (country) setUserCountry(country);
+        if (currency) setUserCurrency(currency);
+      } catch (e) {
+        console.log("Load error:", e);
       } finally {
         setLoading(false);
       }
     };
-    loadStoredData();
+    loadPersistedData();
   }, []);
 
-  // Persist country/currency when changed
+  // Save country/currency changes
   useEffect(() => {
     if (userCountry) AsyncStorage.setItem("userCountry", userCountry);
   }, [userCountry]);
@@ -40,23 +64,25 @@ export const AuthProvider = ({ children }) => {
     if (userCurrency) AsyncStorage.setItem("userCurrency", userCurrency);
   }, [userCurrency]);
 
-  // Login / Signup
+  // Login — save to storage + push token
   const login = async (userData) => {
     const formattedUser = {
+      uid: auth.currentUser?.uid,
       fullName: userData.fullName || "",
       username: userData.username || "",
-      email: userData.email || null,
+      email: userData.email || auth.currentUser?.email || null,
       phone: userData.phone || null,
-      avatar: userData.profilePic || userData.avatar || null, // support signup avatar
+      avatar: userData.profilePic || userData.avatar || null,
       role: userData.role || "tenant",
       lastNameChange: null,
       lastUsernameChange: null,
     };
     setUser(formattedUser);
     await AsyncStorage.setItem("user", JSON.stringify(formattedUser));
+    await savePushToken(auth.currentUser.uid);
   };
 
-  // Update user profile
+  // Update user
   const updateUser = async (updatedFields) => {
     if (!user) return;
     const updatedUser = { ...user, ...updatedFields };
@@ -64,28 +90,30 @@ export const AuthProvider = ({ children }) => {
     await AsyncStorage.setItem("user", JSON.stringify(updatedUser));
   };
 
-  // Logout
+  // Logout — clear storage + sign out
   const logout = async () => {
-    setUser(null);
-    setUserCountry(null);
-    setUserCurrency(null);
-    await AsyncStorage.multiRemove(["user", "userCountry", "userCurrency"]);
+    try {
+      await signOut(auth);
+      setUser(null);
+      setUserCountry("NG");
+      setUserCurrency("₦");
+      await AsyncStorage.multiRemove(["user", "userCountry", "userCurrency"]);
+      console.log("Logout complete");
+    } catch (error) {
+      console.error("Logout failed:", error);
+      throw error;
+    }
   };
 
-  // Change password (frontend mock)
+  // Change password
   const changePassword = async (oldPassword, newPassword) => {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        if (!oldPassword || !newPassword) {
-          reject("Please fill in all fields.");
-        } else if (newPassword.length < 6) {
-          reject("New password must be at least 6 characters.");
-        } else {
-          console.log("Password changed successfully (mock)");
-          resolve("Password changed successfully.");
-        }
-      }, 1000);
-    });
+    const currentUser = auth.currentUser;
+    if (!currentUser?.email) throw new Error("Email required");
+
+    const credential = EmailAuthProvider.credential(currentUser.email, oldPassword);
+    await reauthenticateWithCredential(currentUser, credential);
+    await updatePassword(currentUser, newPassword);
+    return "Password changed!";
   };
 
   return (
@@ -98,13 +126,15 @@ export const AuthProvider = ({ children }) => {
         updateUser,
         changePassword,
         loading,
-        userCountry, // ✅ added
-        setUserCountry, // ✅ added
-        userCurrency, // ✅ added
-        setUserCurrency, // ✅ added
+        userCountry,
+        setUserCountry,
+        userCurrency,
+        setUserCurrency,
       }}
     >
       {children}
     </AuthContext.Provider>
   );
 };
+
+export const useAuth = () => useContext(AuthContext);

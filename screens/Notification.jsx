@@ -1,71 +1,172 @@
-import React, { useContext, useState } from "react";
-import { View, Text, StyleSheet, FlatList, TouchableOpacity } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+// screens/Notification.jsx
+import React, { useContext, useState, useEffect } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  Image,
+  SafeAreaView,
+} from "react-native";
 import { NotificationContext } from "../context/NotificationContext";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase";
+import * as Haptics from "expo-haptics";
+
+const formatTimeAgo = (ts) => {
+  if (!ts) return "Now";
+  const sec = Math.floor((Date.now() - ts.toDate()) / 1000);
+  if (sec < 60) return "Now";
+  if (sec < 3600) return Math.floor(sec / 60) + "m";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h";
+  if (sec < 2592000) return Math.floor(sec / 86400) + "d";
+  return Math.floor(sec / 2592000) + "mo";
+};
 
 export default function Notification() {
   const { notifications, markAsRead } = useContext(NotificationContext);
   const [expandedId, setExpandedId] = useState(null);
+  const [list, setList] = useState([]);
 
-  const toggleExpand = (id) => {
+  useEffect(() => {
+    const load = async () => {
+      const items = await Promise.all(
+        notifications.map(async (n) => {
+          let name = "System";
+          let photo = null;
+
+          if ((n.type === "message" || n.type === "chat") && n.senderId) {
+            try {
+              const snap = await getDoc(doc(db, "users", n.senderId));
+              if (snap.exists()) {
+                const d = snap.data();
+                name = d.name || d.businessName || "User";
+                photo = d.photoURL;
+              }
+            } catch (e) {}
+          } else if (n.type === "order") {
+            name = "New Order";
+          } else if (n.type === "vendor_approved") {
+            name = "Vendor Approved!";
+          } else if (n.type === "vendor_rejected") {
+            name = "Application Update";
+          }
+
+          return { ...n, senderName: name, senderPhoto: photo };
+        })
+      );
+      setList(items);
+    };
+    load();
+  }, [notifications]);
+
+  const toggle = (id) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setExpandedId(expandedId === id ? null : id);
-    if (expandedId !== id) markAsRead(id); // mark as read when expanded
+    markAsRead(id);
   };
 
-  const renderItem = ({ item }) => (
-    <TouchableOpacity style={styles.card} onPress={() => toggleExpand(item.id)}>
-      <Ionicons
-        name={item.read ? "notifications-outline" : "notifications"}
-        size={24}
-        color={item.read ? "#888" : "#1A237E"}
-      />
-      <View style={styles.textContainer}>
-        <Text style={styles.title}>{item.title}</Text>
-        <Text style={styles.body}>{item.body}</Text>
+  const renderItem = ({ item }) => {
+    const expanded = expandedId === item.id;
 
-        {expandedId === item.id && (
-          <View style={styles.detailsContainer}>
-            <Text style={styles.details}>{item.details}</Text>
+    return (
+      <TouchableOpacity activeOpacity={0.7} onPress={() => toggle(item.id)}>
+        <View style={[styles.row, expanded && styles.rowExpanded]}>
+          {/* Avatar */}
+          {item.senderPhoto ? (
+            <Image source={{ uri: item.senderPhoto }} style={styles.avatar} />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <Text style={styles.avatarText}>
+                {item.senderName?.[0]?.toUpperCase() || "?"}
+              </Text>
+            </View>
+          )}
+
+          {/* Text */}
+          <View style={styles.text}>
+            <Text style={styles.name}>{item.senderName}</Text>
+            <Text
+              style={styles.message}
+              numberOfLines={expanded ? undefined : 2}
+            >
+              {item.body || item.message || "New notification"}
+            </Text>
           </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
+
+          {/* Right: time + unread dot */}
+          <View style={styles.right}>
+            <Text style={styles.time}>{formatTimeAgo(item.createdAt)}</Text>
+            {!item.read && <View style={styles.dot} />}
+          </View>
+        </View>
+
+        {/* Bottom border only when collapsed */}
+        {!expanded && <View style={styles.border} />}
+      </TouchableOpacity>
+    );
+  };
 
   return (
-    <View style={styles.container}>
-      {notifications.length > 0 ? (
-        <FlatList
-          data={notifications}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-        />
-      ) : (
-        <Text style={styles.empty}>No notifications yet</Text>
-      )}
-    </View>
+    <SafeAreaView style={styles.container}>
+      <FlatList
+        data={list}
+        keyExtractor={(i) => i.id}
+        renderItem={renderItem}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>No notifications yet</Text>
+          </View>
+        }
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff", padding: 16 },
-  card: {
+  container: { flex: 1, backgroundColor: "#fff" },
+  row: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    padding: 12,
-    backgroundColor: "#f9f9f9",
-    borderRadius: 10,
-    marginBottom: 10,
+    padding: 16,
+    minHeight: 78,
   },
-  textContainer: { marginLeft: 10, flex: 1 },
-  title: { fontSize: 16, fontWeight: "600", color: "#333" },
-  body: { fontSize: 14, color: "#666", marginTop: 2 },
-  detailsContainer: {
-    marginTop: 6,
-    backgroundColor: "#e8f0fe",
-    padding: 8,
-    borderRadius: 6,
+  rowExpanded: {
+    paddingBottom: 24,
+    backgroundColor: "#fafafa",
   },
-  details: { fontSize: 13, color: "#111" },
-  empty: { textAlign: "center", marginTop: 40, fontSize: 16, color: "#999" },
+  avatar: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    marginRight: 14,
+  },
+  avatarPlaceholder: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: "#017a6b",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 14,
+  },
+  avatarText: { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  text: { flex: 1 },
+  name: { fontSize: 16, fontWeight: "600", color: "#111" },
+  message: { fontSize: 14.5, color: "#444", marginTop: 4, lineHeight: 21 },
+  right: { alignItems: "flex-end", justifyContent: "center" },
+  time: { fontSize: 13, color: "#888", marginBottom: 6 },
+  dot: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#ff8c00" },
+  border: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#eee",
+    marginLeft: 82,
+  },
+  empty: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingTop: 100,
+  },
+  emptyText: { fontSize: 17, color: "#aaa" },
 });

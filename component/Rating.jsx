@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+// components/Rating.jsx — FINAL (uses auth.currentUser — NO ERRORS)
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -8,41 +9,49 @@ import {
   Alert,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import axios from "axios";
+import { addReview } from "../firebase/reviewService";
+import { auth } from "../firebaseConfig"; // ← ADD THIS LINE
 
-// pass props: vendorId (string), userId (string), existingRating (number)
-export default function Rating({ vendorId, userId, existingRating = 0 }) {
-  const [rating, setRating] = useState(existingRating);
-  const [loading, setLoading] = useState(false);
+export default function Rating({ targetUserId, onRatingSubmitted }) {
+  const [rating, setRating] = useState(0);
   const [hoverRating, setHoverRating] = useState(0);
-
-  useEffect(() => {
-    setRating(existingRating);
-  }, [existingRating]);
+  const [loading, setLoading] = useState(false);
 
   const handleRate = async (value) => {
-    try {
-      setRating(value);
-      setLoading(true);
+    const user = auth.currentUser; // ← Use direct auth
 
-      // Send to backend API
-      const res = await axios.post(
-        "https://your-backend-api.com/api/ratings", // change to your API
-        {
-          vendorId,
-          userId,
-          rating: value,
-        }
+    if (!user) {
+      Alert.alert("Login Required", "You must be logged in to rate.");
+      return;
+    }
+
+    if (user.uid === targetUserId) {
+      Alert.alert("Wait o!", "You no fit rate yourself my guy 😂");
+      return;
+    }
+
+    setRating(value);
+    setLoading(true);
+
+    try {
+      const reviewerName =
+        user.displayName ||
+        user.email?.split("@")[0] ||
+        "Anonymous";
+
+      await addReview(
+        targetUserId,
+        value,
+        user.uid,
+        reviewerName
       );
 
-      if (res.data.success) {
-        Alert.alert("Success", "Your rating has been submitted!");
-      } else {
-        Alert.alert("Error", "Something went wrong while submitting rating.");
-      }
+      Alert.alert("Thank you!", `You gave ${value} star${value > 1 ? "s" : ""}!`);
+      onRatingSubmitted?.(value);
     } catch (err) {
-      console.error("Rating error:", err);
-      Alert.alert("Error", "Unable to submit rating.");
+      console.error("Rating failed:", err);
+      Alert.alert("Error", err.message || "Could not submit rating.");
+      setRating(0);
     } finally {
       setLoading(false);
     }
@@ -50,35 +59,36 @@ export default function Rating({ vendorId, userId, existingRating = 0 }) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>Rate this Vendor</Text>
-
+      <Text style={styles.label}>Rate this User</Text>
+      
       <View style={styles.stars}>
-        {Array.from({ length: 5 }).map((_, i) => {
-          const starIndex = i + 1;
-          return (
-            <TouchableOpacity
-              key={i}
-              onPress={() => handleRate(starIndex)}
-              onPressIn={() => setHoverRating(starIndex)}
-              onPressOut={() => setHoverRating(0)}
-              disabled={loading}
-            >
-              <Ionicons
-                name="star"
-                size={32}
-                color={
-                  starIndex <= (hoverRating || rating) ? "#000" : "#ccc"
-                }
-                style={{ marginHorizontal: 4 }}
-              />
-            </TouchableOpacity>
-          );
-        })}
+        {[1, 2, 3, 4, 5].map((star) => (
+          <TouchableOpacity
+            key={star}
+            onPress={() => handleRate(star)}
+            onPressIn={() => setHoverRating(star)}
+            onPressOut={() => setHoverRating(0)}
+            disabled={loading}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={star <= (hoverRating || rating) ? "star" : "star-outline"}
+              size={40}
+              color="#FFD700"
+              style={styles.star}
+            />
+          </TouchableOpacity>
+        ))}
       </View>
 
-      {loading && <ActivityIndicator size="small" color="#1A237E" />}
+      {loading && (
+        <ActivityIndicator size="small" color="#FFD700" style={{ marginTop: 12 }} />
+      )}
+
       <Text style={styles.ratingText}>
-        {rating > 0 ? `${rating}/5` : "No rating yet"}
+        {rating > 0
+          ? `${rating} star${rating > 1 ? "s" : ""} selected`
+          : "Tap a star to rate"}
       </Text>
     </View>
   );
@@ -86,26 +96,35 @@ export default function Rating({ vendorId, userId, existingRating = 0 }) {
 
 const styles = StyleSheet.create({
   container: {
-    marginVertical: 15,
-    padding: 15,
     backgroundColor: "#fff",
-    borderRadius: 12,
-    elevation: 2,
+    padding: 20,
+    borderRadius: 16,
+    marginVertical: 12,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    alignItems: "center",
   },
   label: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 10,
-    color: "#1A237E",
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#1e1e1e",
+    marginBottom: 12,
   },
   stars: {
     flexDirection: "row",
-    justifyContent: "flex-start",
+    justifyContent: "center",
+  },
+  star: {
+    marginHorizontal: 6,
   },
   ratingText: {
-    marginTop: 10,
-    fontSize: 14,
-    color: "#444",
+    textAlign: "center",
+    marginTop: 12,
+    fontSize: 15,
+    color: "#555",
+    fontWeight: "500",
   },
 });
-	

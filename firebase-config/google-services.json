@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "796064439495",
+    "project_id": "roomlink-homes",
+    "storage_bucket": "roomlink-homes.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:796064439495:android:c1a3bb1bfd6d8b7467f2e2",
+        "android_client_info": {
+          "package_name": "com.roomlink.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "796064439495-05cjtcgtcnp2dh8t4tplnsckf2u11931.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBgic-2FtzaeP88SVQuhZYtnCT5-RibJQg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "796064439495-05cjtcgtcnp2dh8t4tplnsckf2u11931.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

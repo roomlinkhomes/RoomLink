@@ -1,12 +1,13 @@
 {
   "expo": {
-    "name": "roomlink-app",
-    "slug": "roomlink-app",
+    "name": "RoomLink",
+    "slug": "roomlink",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
+    "jsEngine": "jsc",
     "scheme": "roomlink",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -15,44 +16,15 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.yourname.roomlink",
-      "infoPlist": {
-        "NSCameraUsageDescription": "This app needs access to your camera to take photos for property listings.",
-        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to upload property images."
-      }
+      "bundleIdentifier": "com.roomlink.app"
     },
     "android": {
-      "package": "com.yourname.roomlink",
+      "package": "com.roomlink.app",
+      "googleServicesFile": "./firebase-config/google-services.json",  // ← Updated safe path
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      },
-      "intentFilters": [
-        {
-          "action": "VIEW",
-          "data": [
-            {
-              "scheme": "https",
-              "host": "roomlink.app",
-              "pathPrefix": "/"
-            },
-            {
-              "scheme": "roomlink"
-            }
-          ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
-        }
-      ],
-      "edgeToEdgeEnabled": true,
-      "permissions": [
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
-        "READ_MEDIA_IMAGES"
-      ]
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -63,7 +35,14 @@
       }
     },
     "plugins": [
-      "expo-web-browser"
+      "expo-system-ui",
+      "expo-web-browser",
+      "expo-font",
+      "expo-asset",
+      "react-native-iap",
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
+      "expo-audio"
     ]
   }
 }

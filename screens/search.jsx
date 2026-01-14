@@ -1,4 +1,5 @@
-import React, { useState, useContext, useEffect } from "react";
+// screens/SearchScreen.jsx — FIXED: Safe keyExtractor + deduplication + dark mode polish
+import React, { useState, useContext, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -17,43 +18,55 @@ const { width: SCREEN_WIDTH } = Dimensions.get("window");
 export default function SearchScreen({ navigation }) {
   const { listings: contextListings } = useContext(ListingContext);
   const route = useRoute();
-  const colorScheme = useColorScheme();          // ✅ detect system theme
-  const isDarkMode = colorScheme === "dark";     // ✅ true if dark mode
+  const colorScheme = useColorScheme();
+  const isDarkMode = colorScheme === "dark";
 
   const searchQuery = route.params?.query || "";
 
   const [filteredPosts, setFilteredPosts] = useState([]);
   const [searchHistory, setSearchHistory] = useState([]);
 
-  const listings = route.params?.listings ?? contextListings;
+  const listings = route.params?.listings ?? contextListings ?? [];
   const scope = route.params?.scope ?? "all";
   const userIdFilter = route.params?.userId ?? null;
 
+  // FIXED: Deduplicate listings by ID (prevents duplicate keys)
+  const uniqueListings = useMemo(() => {
+    const seen = new Map();
+    return listings.filter((item) => {
+      if (!item?.id) return false; // Skip items with no ID
+      if (seen.has(item.id)) return false;
+      seen.set(item.id, true);
+      return true;
+    });
+  }, [listings]);
+
   useEffect(() => {
-    if (!searchQuery) {
+    if (!searchQuery?.trim()) {
       setFilteredPosts([]);
       return;
     }
 
-    const lowerText = searchQuery.toLowerCase();
+    const lowerText = searchQuery.toLowerCase().trim();
 
-    if (searchQuery.trim() && !searchHistory.includes(searchQuery.trim())) {
-      setSearchHistory((prev) => [searchQuery.trim(), ...prev].slice(0, 5));
+    // Add to history only if new
+    if (lowerText && !searchHistory.includes(lowerText)) {
+      setSearchHistory((prev) => [lowerText, ...prev].slice(0, 5));
     }
 
-    const results = listings.filter((item) => {
+    const results = uniqueListings.filter((item) => {
       if (scope === "user" && item.userId !== userIdFilter) return false;
 
       return (
         item.title?.toLowerCase().includes(lowerText) ||
         item.location?.toLowerCase().includes(lowerText) ||
-        String(item.price).toLowerCase().includes(lowerText) ||
+        String(item.price || "").toLowerCase().includes(lowerText) ||
         item.userName?.toLowerCase().includes(lowerText)
       );
     });
 
     setFilteredPosts(results);
-  }, [searchQuery, listings]);
+  }, [searchQuery, uniqueListings, scope, userIdFilter, searchHistory]);
 
   const useSuggestion = (term) => {
     navigation.setParams({ query: term });
@@ -73,13 +86,13 @@ export default function SearchScreen({ navigation }) {
       />
       <View style={styles.listingInfo}>
         <Text style={[styles.listingTitle, { color: isDarkMode ? "#fff" : "#000" }]}>
-          {item.title}
+          {item.title || "Untitled Listing"}
         </Text>
         <Text style={[styles.price, { color: isDarkMode ? "#81C784" : "green" }]}>
-          ₦{item.price}
+          ₦{Number(item.price || 0).toLocaleString()}
         </Text>
         <Text style={[styles.location, { color: isDarkMode ? "#ccc" : "gray" }]}>
-          {item.location}
+          {item.location || "Location not specified"}
         </Text>
       </View>
     </TouchableOpacity>
@@ -94,7 +107,7 @@ export default function SearchScreen({ navigation }) {
           </Text>
           {searchHistory.map((term, index) => (
             <TouchableOpacity
-              key={index}
+              key={term} // ← Use term itself as key (unique strings)
               style={styles.suggestionItem}
               onPress={() => useSuggestion(term)}
             >
@@ -114,9 +127,14 @@ export default function SearchScreen({ navigation }) {
         ) : (
           <FlatList
             data={filteredPosts}
-            keyExtractor={(item) => item.id.toString()}
+            keyExtractor={(item, index) => item.id ? item.id.toString() : `fallback-${index}`} // ← SAFE fallback
             renderItem={renderPost}
             contentContainerStyle={{ paddingBottom: 20 }}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Text style={{ color: isDarkMode ? "#aaa" : "gray" }}>No listings match your search.</Text>
+              </View>
+            }
           />
         )
       ) : (
@@ -136,7 +154,7 @@ const styles = StyleSheet.create({
   suggestionsTitle: { fontWeight: "bold", marginBottom: 5 },
   suggestionItem: { paddingVertical: 5 },
   suggestionText: { fontSize: 14 },
-  emptyState: { flex: 1, alignItems: "center", justifyContent: "center" },
+  emptyState: { flex: 1, alignItems: "center", justifyContent: "center", padding: 20 },
   card: { margin: 10, borderBottomWidth: 1 },
   postImage: { width: SCREEN_WIDTH - 20, height: 200, borderRadius: 8 },
   listingInfo: { padding: 10 },

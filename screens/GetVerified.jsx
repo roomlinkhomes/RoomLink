@@ -1,4 +1,4 @@
-// GetVerified.jsx
+// screens/GetVerified.jsx — FINAL FIXED: No syntax errors, header matches EditProfile
 import React, { useState, useContext } from "react";
 import {
   View,
@@ -11,19 +11,21 @@ import {
   Linking,
   TouchableWithoutFeedback,
   useColorScheme,
+  Alert,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { UserContext } from "../context/UserContext";
 import { Ionicons } from "@expo/vector-icons";
+import { db } from "../firebaseConfig";
+import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 
-// ✅ Import your custom SVG badges
+// SVG badges
 import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
 import RedBadge from "../assets/icons/red.svg";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 
-// ✅ Verification options
 const verificationOptions = [
   {
     type: "vendor",
@@ -31,7 +33,7 @@ const verificationOptions = [
     monthly: 4990,
     yearly: 49880,
     Badge: YellowBadge,
-    borderColor: "#FFD700", // yellow
+    borderColor: "#FFD700",
     features: [
       "Unlimited listings",
       "Stand out to your customers",
@@ -46,7 +48,7 @@ const verificationOptions = [
     monthly: 3000,
     yearly: 26000,
     Badge: BlueBadge,
-    borderColor: "#1E90FF", // blue
+    borderColor: "#1E90FF",
     features: [
       "Unlimited listings",
       "Stand out to potential tenants",
@@ -61,7 +63,7 @@ const verificationOptions = [
     monthly: 3000,
     yearly: 26000,
     Badge: RedBadge,
-    borderColor: "#FF4500", // red
+    borderColor: "#FF4500",
     features: [
       "Unlimited listings",
       "Stand out to customers",
@@ -73,13 +75,12 @@ const verificationOptions = [
 ];
 
 export default function GetVerified() {
-  const { updateUser } = useContext(UserContext);
+  const { updateUser, user: currentUser } = useContext(UserContext);
   const navigation = useNavigation();
   const [selectedOption, setSelectedOption] = useState(null);
   const [billing, setBilling] = useState("monthly");
   const [modalVisible, setModalVisible] = useState(false);
   const [activeBadge, setActiveBadge] = useState(null);
-
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
 
@@ -88,25 +89,57 @@ export default function GetVerified() {
     setModalVisible(true);
   };
 
-  const handlePay = () => {
-    setTimeout(() => {
+  const handlePay = async () => {
+    if (!currentUser?.uid) {
+      Alert.alert("Error", "User not found. Please log in again.");
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, "users", currentUser.uid), {
+        verificationType: selectedOption.type,
+        verifiedAt: serverTimestamp(),
+      });
+
       updateUser({ badge: selectedOption.type });
+
       setActiveBadge({ type: selectedOption.type });
       setModalVisible(false);
-      alert(`${selectedOption.title} activated successfully! Badge applied.`);
-    }, 1200);
+      Alert.alert("Success!", `${selectedOption.title} activated! Badge applied.`);
+    } catch (err) {
+      console.error("Verification save error:", err);
+      Alert.alert("Error", "Failed to activate verification. Try again.");
+    }
   };
 
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: isDark ? "#000" : "#fff" },
-      ]}
-    >
-      <Text style={[styles.header, { color: isDark ? "#fff" : "#000" }]}>
-        Choose Verification Type
-      </Text>
+    <View style={[styles.container, { backgroundColor: isDark ? "#000" : "#fff" }]}>
+      {/* ========== HEADER AREA - SAME HEIGHT AS EDITPROFILE ========== */}
+      <View style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        paddingHorizontal: 20,
+        paddingTop: 50,           // ← Matches EditProfile exactly
+        paddingBottom: 32,
+      }}>
+        {/* Back Button */}
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={{ padding: 10 }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="arrow-back" size={28} color={isDark ? "#fff" : "#000"} />
+        </TouchableOpacity>
+
+        {/* Title */}
+        <View style={{ flex: 1, alignItems: "center", marginRight: 48 }}>
+          <Text style={[styles.header, { color: isDark ? "#fff" : "#000" }]}>
+            Choose Verification Type
+          </Text>
+        </View>
+      </View>
+      {/* ========== END HEADER AREA ========== */}
 
       <ScrollView
         horizontal
@@ -151,9 +184,7 @@ export default function GetVerified() {
                 ]}
                 onPress={() => setBilling("monthly")}
               >
-                <Text
-                  style={[styles.billingText, { color: isDark ? "#fff" : "#000" }]}
-                >
+                <Text style={[styles.billingText, { color: isDark ? "#fff" : "#000" }]}>
                   Monthly ₦{option.monthly}
                 </Text>
               </TouchableOpacity>
@@ -170,9 +201,7 @@ export default function GetVerified() {
                 ]}
                 onPress={() => setBilling("yearly")}
               >
-                <Text
-                  style={[styles.billingText, { color: isDark ? "#fff" : "#000" }]}
-                >
+                <Text style={[styles.billingText, { color: isDark ? "#fff" : "#000" }]}>
                   Yearly ₦{option.yearly}{" "}
                   <Text style={styles.saveText}>
                     (Save ₦{option.monthly * 12 - option.yearly})
@@ -181,7 +210,6 @@ export default function GetVerified() {
               </TouchableOpacity>
             </View>
 
-            {/* Features */}
             <View style={styles.features}>
               {option.features.map((feat, i) => (
                 <View
@@ -198,19 +226,13 @@ export default function GetVerified() {
                     color="#036dd6"
                     style={{ marginRight: 6 }}
                   />
-                  <Text
-                    style={[
-                      styles.featureItem,
-                      { color: isDark ? "#ddd" : "#000" },
-                    ]}
-                  >
+                  <Text style={[styles.featureItem, { color: isDark ? "#ddd" : "#000" }]}>
                     {feat}
                   </Text>
                 </View>
               ))}
             </View>
 
-            {/* Subscribe Button */}
             <TouchableOpacity
               style={[
                 styles.subscribeButton,
@@ -238,26 +260,11 @@ export default function GetVerified() {
         <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
           <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback>
-              <View
-                style={[
-                  styles.modalContent,
-                  { backgroundColor: isDark ? "#121212" : "#fff" },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.modalTitle,
-                    { color: isDark ? "#fff" : "#000" },
-                  ]}
-                >
+              <View style={[styles.modalContent, { backgroundColor: isDark ? "#121212" : "#fff" }]}>
+                <Text style={[styles.modalTitle, { color: isDark ? "#fff" : "#000" }]}>
                   Confirm {selectedOption?.title}
                 </Text>
-                <Text
-                  style={{
-                    marginBottom: 10,
-                    color: isDark ? "#aaa" : "#000",
-                  }}
-                >
+                <Text style={{ marginBottom: 10, color: isDark ? "#aaa" : "#000" }}>
                   Choose your plan:
                 </Text>
                 <View style={{ flexDirection: "row", marginBottom: 20 }}>
@@ -300,7 +307,6 @@ export default function GetVerified() {
                   <Text style={styles.subscribeButtonText}>Pay & Subscribe</Text>
                 </TouchableOpacity>
 
-                {/* ✅ Disclaimer text */}
                 <Text style={styles.disclaimer}>
                   By tapping Subscribe, your payment will be charged to your
                   Google Play account. Subscription renews automatically unless
@@ -309,9 +315,7 @@ export default function GetVerified() {
                   <Text
                     style={styles.link}
                     onPress={() =>
-                      Linking.openURL(
-                        "https://play.google.com/intl/en_us/about/play-terms/"
-                      )
+                      Linking.openURL("https://play.google.com/intl/en_us/about/play-terms/")
                     }
                   >
                     Google Play Terms of Service
@@ -320,9 +324,7 @@ export default function GetVerified() {
                   <Text
                     style={styles.link}
                     onPress={() =>
-                      Linking.openURL(
-                        "https://support.google.com/googleplay/answer/2479637"
-                      )
+                      Linking.openURL("https://support.google.com/googleplay/answer/2479637")
                     }
                   >
                     Refund Policy
@@ -339,12 +341,11 @@ export default function GetVerified() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingTop: 20 },
+  container: { flex: 1 },
   header: {
     fontSize: 18,
     fontWeight: "bold",
     textAlign: "center",
-    marginBottom: 20,
   },
   card: {
     width: SCREEN_WIDTH - 100,

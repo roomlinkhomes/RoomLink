@@ -1,36 +1,51 @@
-# Node.js
-node_modules
-npm-debug.log
+# Node / NPM
+node_modules/
+npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+package-lock.json
 
-# Environment variables (secrets)
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native builds
+android/
+ios/
+*.keystore
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Environment variables
 .env
-*.env
+.env.*
+.env*.local
+!.env.example
 
-# Firebase service account key
-serviceAccountKey.json
-
-# Logs
+# Logs & reports
 logs
 *.log
 *.out
 *.pid
-
-# Runtime data
 pids
-*.pid
-*.seed
 *.pid.lock
+report.[0-9].[0-9].[0-9].[0-9].json
 
 # Coverage
-coverage
+coverage/
 *.lcov
 
-# Build outputs
-dist
-build
-
-# macOS / Windows system files
+# OS / IDE junk
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
+
+# Metro / cache
+.metro-cache/
+.cache/

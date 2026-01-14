@@ -1,4 +1,4 @@
-// components/HomeTopHeader.jsx
+// components/HomeTopHeader.jsx — FIXED: Help/Support navigation working + useNavigation imported
 import React, { useRef, useState, useContext } from "react";
 import {
   View,
@@ -15,11 +15,10 @@ import {
   TextInput,
   useColorScheme,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
-
-// SVG icons
-import BellIcon from "../assets/icons/svg/bell.svg";
-import MenuIcon from "../assets/icons/svg/menu.svg";
+import { useNavigation } from "@react-navigation/native"; // ← FIXED: Imported here
+import Ionicons from "react-native-vector-icons/Ionicons";
+import { NotificationContext } from "../context/NotificationContext";
+import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 
 // Menu item icons
 import IdentityIcon from "../assets/icons/svg/identity.svg";
@@ -28,19 +27,14 @@ import AdIcon from "../assets/icons/svg/ad.svg";
 import HelpIcon from "../assets/icons/svg/help.svg";
 import NewsIcon from "../assets/icons/svg/news.svg";
 
-// Notification context
-import { NotificationContext } from "../context/NotificationContext";
-import Icon from "react-native-vector-icons/MaterialCommunityIcons"; // ✅ added for magnify
-
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const TOP_OFFSET =
   Platform.OS === "android" ? StatusBar.currentHeight || 35 : 70;
 
 export default function HomeTopHeader() {
-  const navigation = useNavigation();
+  const navigation = useNavigation(); // ← Now properly defined
   const { notifications } = useContext(NotificationContext);
   const [menuVisible, setMenuVisible] = useState(false);
-
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
 
@@ -56,7 +50,16 @@ export default function HomeTopHeader() {
     "Studio",
     "Estate",
     "Duplex",
-    "shops",
+    "Shops",
+    "1 plot",
+    "2 plots",
+    "3 plots",
+    "4 plots",
+    "5 plots",
+    "6 plots",
+    "7 plots",
+    "10 plots of land",
+    "suite",
   ];
 
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -66,21 +69,11 @@ export default function HomeTopHeader() {
   const slideX = useRef(new Animated.Value(menuWidth)).current;
 
   const menuItems = [
-    {
-      id: "1",
-      label: "Identity Verification",
-      icon: IdentityIcon,
-      screen: "IdentityVerification",
-    },
+    { id: "1", label: "Identity Verification", icon: IdentityIcon, screen: "IdentityVerification" },
     { id: "2", label: "Settings", icon: SettingsIcon, screen: "Settings" },
-    { id: "3", label: "Ad Zone", icon: AdIcon, screen: "AdZone" },
-    { id: "4", label: "Help / Support", icon: HelpIcon, screen: "HelpSupport" },
-    {
-      id: "5",
-      label: "Announcement / News",
-      icon: NewsIcon,
-      screen: "Announcements",
-    },
+    { id: "3", label: "Ad Zone", icon: AdIcon, screen: "AdsZone" },
+    { id: "4", label: "Help / Support", icon: HelpIcon, screen: "HelpSupport" }, // ← Navigates here
+    { id: "5", label: "Announcement / News", icon: NewsIcon, screen: "Announcements" },
   ];
 
   const openMenu = () => {
@@ -99,13 +92,15 @@ export default function HomeTopHeader() {
       useNativeDriver: true,
     }).start(() => {
       setMenuVisible(false);
-      cb && cb();
+      if (cb) cb();
     });
   };
 
   const handleMenuPress = (item) => {
     closeMenu(() => {
-      if (item.screen) navigation.navigate(item.screen);
+      if (item.screen) {
+        navigation.navigate(item.screen); // ← Works now with useNavigation
+      }
     });
   };
 
@@ -129,78 +124,84 @@ export default function HomeTopHeader() {
 
   return (
     <>
-      {/* Top Row */}
+      {/* 🔹 Top Header — Shifted up a little (tighter) */}
       <View
         style={[
           styles.topRow,
-          {
-            paddingTop: TOP_OFFSET - 15,
-            backgroundColor: isDark ? "#1e1e1e" : "#ffffff",
+          { 
+            paddingTop: TOP_OFFSET - 25,
+            paddingBottom: 6,
+            backgroundColor: isDark ? "#1e1e1e" : "#ffffff" 
           },
         ]}
       >
-        <Text
-          style={[
-            styles.appTitle,
-            { color: isDark ? "#fff" : "#036dd6" },
-          ]}
-        >
-          RoomLink
-        </Text>
-        <View style={styles.rightIcons}>
+        {/* Notification Icon */}
+        <View style={{ position: "relative" }}>
           <TouchableOpacity
             onPress={() => navigation.navigate("Notification")}
-            style={{ marginRight: 10 }}
+            activeOpacity={0.8}
           >
-            <BellIcon width={24} height={24} />
-            {unreadCount > 0 && (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>{unreadCount}</Text>
-              </View>
-            )}
+            <Ionicons
+              name={unreadCount > 0 ? "notifications" : "notifications-outline"}
+              size={28}
+              color={unreadCount > 0 ? "#036dd6" : isDark ? "#fff" : "#666"}
+            />
           </TouchableOpacity>
-          <TouchableOpacity onPress={openMenu}>
-            <MenuIcon width={30} height={30} />
-          </TouchableOpacity>
+
+          {unreadCount > 0 && (
+            <View
+              style={{
+                position: "absolute",
+                top: -5,
+                right: -5,
+                minWidth: 18,
+                height: 18,
+                borderRadius: 9,
+                backgroundColor: "red",
+                justifyContent: "center",
+                alignItems: "center",
+                paddingHorizontal: 3,
+                zIndex: 99,
+                elevation: 5,
+              }}
+            >
+              <Text style={{ color: "#fff", fontSize: 10, fontWeight: "bold" }}>
+                {unreadCount}
+              </Text>
+            </View>
+          )}
         </View>
+
+        {/* Center Search Box */}
+        <TouchableOpacity
+          style={[
+            styles.inlineSearchContainer,
+            { backgroundColor: isDark ? "#1e1e1e" : "#fff", borderColor: isDark ? "#fff" : "#000" },
+          ]}
+          activeOpacity={0.9}
+          onPress={() => navigation.navigate("Search")}
+        >
+          <Icon name="magnify" size={25} color="#444" style={{ marginRight: 6 }} />
+          <TextInput
+            style={[styles.inlineSearchInput, { color: isDark ? "#fff" : "#111" }]}
+            placeholder="Search..."
+            placeholderTextColor={isDark ? "#888" : "#666"}
+            editable={false}
+          />
+        </TouchableOpacity>
+
+        {/* Menu Icon */}
+        <TouchableOpacity onPress={openMenu}>
+          <Ionicons name="menu-outline" size={30} color={isDark ? "#fff" : "#666"} />
+        </TouchableOpacity>
       </View>
 
-      {/* Search Row */}
-      <TouchableOpacity
-        style={[
-          styles.searchContainer,
-          {
-            backgroundColor: isDark ? "#2a2a2a" : "#fff",
-            borderColor: isDark ? "#444" : "#e0e0e0",
-          },
-        ]}
-        activeOpacity={0.9}
-        onPress={() => navigation.navigate("Search")}
-      >
-        {/* ✅ exact magnify as in signup */}
-        <Icon
-          name="magnify"
-          size={22}
-          color="#036dd6"
-          style={{ marginRight: 8 }}
-        />
-        <TextInput
-          style={[styles.searchInput, { color: isDark ? "#fff" : "#111" }]}
-          placeholder="Search listings..."
-          placeholderTextColor={isDark ? "#888" : "#666"}
-          editable={false}
-        />
-      </TouchableOpacity>
-
-      {/* Categories Row */}
+      {/* Categories */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={[
-          styles.secondHeaderContainer,
-          { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
-        ]}
-        contentContainerStyle={{ paddingHorizontal: 10 }}
+        style={[styles.secondHeaderContainer, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}
+        contentContainerStyle={{ paddingLeft: 0, paddingRight: 0 }}
         ref={scrollRef}
       >
         {categories.map((cat, idx) => {
@@ -209,42 +210,49 @@ export default function HomeTopHeader() {
             <TouchableOpacity
               key={cat + idx}
               onPress={() => handleCategoryPress(cat, idx)}
-              style={styles.categoryButton}
+              activeOpacity={0.8}
+              style={[
+                styles.categoryButton,
+                {
+                  marginLeft: idx === 0 ? 0 : 6,
+                  marginRight: idx === categories.length - 1 ? 0 : 6,
+                  backgroundColor: isActive
+                    ? "rgba(3, 109, 214, 0.25)"
+                    : isDark
+                    ? "#2a2a2a"
+                    : "#f3f4f6",
+                  borderColor: isActive ? "#017a6b" : isDark ? "#444" : "#ddd",
+                  elevation: isActive ? 2 : 0,
+                  shadowColor: "#000",
+                  shadowOpacity: isActive ? 0.15 : 0,
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowRadius: 3,
+                },
+              ]}
             >
               <Text
                 style={{
                   color: isActive
-                    ? "#036dd6"
+                    ? isDark
+                      ? "#fff"
+                      : "#00ff7f"
                     : isDark
                     ? "#fff"
-                    : "#000",
+                    : "#111",
                   fontSize: 14,
-                  fontWeight: "400",
+                  fontWeight: isActive ? "600" : "400",
                 }}
               >
                 {cat}
               </Text>
-              {isActive && (
-                <View
-                  style={[
-                    styles.activeUnderline,
-                    { backgroundColor: "#036dd6" },
-                  ]}
-                />
-              )}
             </TouchableOpacity>
           );
         })}
       </ScrollView>
 
-      {/* Right-side dropdown drawer */}
+      {/* Right-side Drawer */}
       {menuVisible && (
-        <Modal
-          transparent
-          visible={menuVisible}
-          animationType="none"
-          statusBarTranslucent
-        >
+        <Modal transparent visible={menuVisible} animationType="none" statusBarTranslucent>
           <TouchableOpacity
             style={styles.overlay}
             activeOpacity={1}
@@ -307,33 +315,37 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 4,
-    paddingBottom: 10,
+    paddingHorizontal: 10,
+    paddingBottom: 6,
   },
-  appTitle: { fontSize: 20, fontWeight: "700" },
-  rightIcons: { flexDirection: "row", alignItems: "center" },
-
-  searchContainer: {
+  inlineSearchContainer: {
     flexDirection: "row",
     alignItems: "center",
+    flex: 1,
     marginHorizontal: 12,
-    marginBottom: 15,
-    paddingVertical: 1,
-    paddingHorizontal: 14,
-    borderRadius: 30,
-    borderWidth: 2,
+    paddingVertical: 0,
+    paddingHorizontal: 12,
+    borderRadius: 50,
+    borderWidth: 1.5,
     shadowColor: "#000",
-    shadowOpacity: 0.8,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 2,
+    elevation: 10,
   },
-  searchInput: { flex: 1, fontSize: 15 },
-
+  inlineSearchInput: {
+    flex: 1,
+    fontSize: 10,
+  },
   secondHeaderContainer: { flexDirection: "row", marginBottom: 10 },
-  categoryButton: { marginRight: 20, alignItems: "center" },
-  activeUnderline: { marginTop: 4, height: 2, width: "100%", borderRadius: 1 },
-
+  categoryButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   overlay: {
     position: "absolute",
     top: 0,
@@ -362,18 +374,4 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   cardText: { fontSize: 16, fontWeight: "600" },
-
-  badge: {
-    position: "absolute",
-    top: -5,
-    right: -5,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: "red",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 3,
-  },
-  badgeText: { color: "#fff", fontSize: 10, fontWeight: "bold" },
 });

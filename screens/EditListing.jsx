@@ -1,4 +1,4 @@
-// screens/EditListing.jsx
+// screens/EditListing.jsx — FINAL: Full backend save to Firestore + premium check + syntax fixed
 import React, { useState, useContext } from "react";
 import {
   View,
@@ -10,67 +10,113 @@ import {
   Alert,
   useColorScheme,
   ScrollView,
-  Keyboard,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { ListingContext } from "../context/ListingContext";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
-import { useUser } from "../context/UserContext"; // 👈 import user context
+import { ListingContext } from "../context/ListingContext";
+import { useUser } from "../context/UserContext";
+import { db } from "../firebaseConfig";
+import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 
 export default function EditListing({ route, navigation }) {
   const { listing } = route.params;
   const { updateListing } = useContext(ListingContext);
-  const { user } = useUser(); // 👈 get user
-  const isPremium = user?.isPremium; // 👈 check premium status
-
+  const { user } = useUser();
+  const isPremium = user?.isPremium || false;
   const colorScheme = useColorScheme();
   const isDarkMode = colorScheme === "dark";
 
-  const [title, setTitle] = useState(listing.title);
-  const [price, setPrice] = useState(listing.price.toString());
+  const [title, setTitle] = useState(listing.title || "");
+  const [price, setPrice] = useState(listing.price?.toString() || "");
   const [location, setLocation] = useState(listing.location || "");
   const [category, setCategory] = useState(listing.category || "");
   const [description, setDescription] = useState(listing.description || "");
   const [images, setImages] = useState(listing.images || []);
+  const [uploading, setUploading] = useState(false);
 
-  // Pick a new image
+  const uploadImage = async (uri) => {
+    const data = new FormData();
+    data.append("file", { uri, type: "image/jpeg", name: "upload.jpg" });
+    data.append("upload_preset", "roomlink_preset");
+    data.append("cloud_name", "drserbss8");
+    try {
+      const res = await fetch("https://api.cloudinary.com/v1_1/drserbss8/image/upload", {
+        method: "POST",
+        body: data,
+      });
+      const json = await res.json();
+      return json.secure_url || null;
+    } catch (err) {
+      Alert.alert("Upload Error", "Image upload failed.");
+      return null;
+    }
+  };
+
   const pickImage = async () => {
-    let result = await ImagePicker.launchImageLibraryAsync({
+    const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       quality: 0.7,
     });
-
     if (!result.canceled) {
-      setImages([...images, result.assets[0].uri]);
+      setUploading(true);
+      const url = await uploadImage(result.assets[0].uri);
+      setUploading(false);
+      if (url) {
+        setImages([...images, url]);
+      }
     }
   };
 
-  // Remove an image
   const removeImage = (index) => {
     const updated = images.filter((_, i) => i !== index);
     setImages(updated);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!title || !price || !location) {
       Alert.alert("Error", "Title, price and location are required");
       return;
     }
 
-    const updated = {
-      ...listing,
-      title,
-      price: Number(price),
-      location,
-      category,
-      description,
-      images,
-    };
+    const priceNum = Number(price);
+    if (isNaN(priceNum) || priceNum <= 0) {
+      Alert.alert("Error", "Enter a valid price");
+      return;
+    }
 
-    updateListing(updated);
-    Alert.alert("Success", "Listing updated successfully");
-    navigation.goBack();
+    setUploading(true);
+    try {
+      // Update Firestore
+      await updateDoc(doc(db, "listings", listing.id), {
+        title,
+        price: priceNum,
+        location,
+        category,
+        description,
+        images,
+        updatedAt: serverTimestamp(),
+      });
+
+      // Update local context
+      updateListing({
+        id: listing.id,
+        title,
+        price: priceNum,
+        location,
+        category,
+        description,
+        images,
+      });
+
+      Alert.alert("Success", "Listing updated successfully!");
+      navigation.goBack();
+    } catch (err) {
+      console.error("Update error:", err);
+      Alert.alert("Error", "Failed to update listing. Try again.");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handlePremiumSave = () => {
@@ -93,14 +139,8 @@ export default function EditListing({ route, navigation }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: isDarkMode ? "#000" : "#fff" }}>
-      <KeyboardAwareScrollView
-        contentContainerStyle={styles.container}
-        enableOnAndroid={true}
-        extraScrollHeight={80}
-      >
-        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>
-          Title
-        </Text>
+      <KeyboardAwareScrollView contentContainerStyle={styles.container}>
+        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>Title</Text>
         <TextInput
           style={[
             styles.input,
@@ -114,15 +154,9 @@ export default function EditListing({ route, navigation }) {
           placeholderTextColor={isDarkMode ? "#888" : "#666"}
           value={title}
           onChangeText={setTitle}
-          returnKeyType="done"
-          blurOnSubmit={true}
-          onSubmitEditing={() => Keyboard.dismiss()}
-          multiline={false}
         />
 
-        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>
-          Price
-        </Text>
+        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>Price</Text>
         <TextInput
           style={[
             styles.input,
@@ -137,15 +171,9 @@ export default function EditListing({ route, navigation }) {
           value={price}
           onChangeText={setPrice}
           keyboardType="numeric"
-          returnKeyType="done"
-          blurOnSubmit={true}
-          onSubmitEditing={() => Keyboard.dismiss()}
-          multiline={false}
         />
 
-        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>
-          Location
-        </Text>
+        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>Location</Text>
         <TextInput
           style={[
             styles.input,
@@ -159,15 +187,9 @@ export default function EditListing({ route, navigation }) {
           placeholderTextColor={isDarkMode ? "#888" : "#666"}
           value={location}
           onChangeText={setLocation}
-          returnKeyType="done"
-          blurOnSubmit={true}
-          onSubmitEditing={() => Keyboard.dismiss()}
-          multiline={false}
         />
 
-        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>
-          Category
-        </Text>
+        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>Category</Text>
         <TextInput
           style={[
             styles.input,
@@ -181,15 +203,9 @@ export default function EditListing({ route, navigation }) {
           placeholderTextColor={isDarkMode ? "#888" : "#666"}
           value={category}
           onChangeText={setCategory}
-          returnKeyType="done"
-          blurOnSubmit={true}
-          onSubmitEditing={() => Keyboard.dismiss()}
-          multiline={false}
         />
 
-        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>
-          Description
-        </Text>
+        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>Description</Text>
         <TextInput
           style={[
             styles.input,
@@ -205,37 +221,31 @@ export default function EditListing({ route, navigation }) {
           value={description}
           onChangeText={setDescription}
           multiline
-          returnKeyType="done"
-          blurOnSubmit={true}
-          onSubmitEditing={() => Keyboard.dismiss()}
         />
 
-        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>
-          Images
-        </Text>
+        <Text style={[styles.label, { color: isDarkMode ? "#fff" : "#000" }]}>Images</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {images.map((img, idx) => (
             <View key={idx} style={styles.imageContainer}>
               <Image source={{ uri: img }} style={styles.image} />
-              <TouchableOpacity
-                style={styles.removeButton}
-                onPress={() => removeImage(idx)}
-              >
+              <TouchableOpacity style={styles.removeButton} onPress={() => removeImage(idx)}>
                 <Text style={{ color: "white", fontSize: 12 }}>X</Text>
               </TouchableOpacity>
             </View>
           ))}
-
-          <TouchableOpacity style={styles.addImage} onPress={pickImage}>
-            <Text style={{ color: "#036dd6", fontWeight: "bold" }}>+ Add</Text>
+          <TouchableOpacity style={styles.addImage} onPress={pickImage} disabled={uploading}>
+            <Text style={{ color: "#036dd6", fontWeight: "bold" }}>
+              {uploading ? "Uploading..." : "+ Add"}
+            </Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAwareScrollView>
 
-      {/* Footer with fixed action button */}
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.button} onPress={handlePremiumSave}>
-          <Text style={styles.buttonText}>Save Changes</Text>
+        <TouchableOpacity style={styles.button} onPress={handlePremiumSave} disabled={uploading}>
+          <Text style={styles.buttonText}>
+            {uploading ? "Saving..." : "Save Changes"}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -292,11 +302,8 @@ const styles = StyleSheet.create({
   },
   button: {
     backgroundColor: "#036dd6",
-    paddingVertical: 8,
-    paddingHorizontal: 120,
+    paddingVertical: 15,
     borderRadius: 50,
-    alignSelf: "center",
-    minWidth: "60%",
     alignItems: "center",
   },
   buttonText: {

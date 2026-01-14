@@ -1,17 +1,20 @@
 const { getDefaultConfig } = require("expo/metro-config");
 
-const defaultConfig = getDefaultConfig(__dirname);
+const config = getDefaultConfig(__dirname);
 
-defaultConfig.transformer = {
-  ...defaultConfig.transformer,
+const { transformer, resolver } = config;
+
+// ✅ Correct setup: only change handling for SVG files
+config.transformer = {
+  ...transformer,
   babelTransformerPath: require.resolve("react-native-svg-transformer"),
+  assetPlugins: ["expo-asset/tools/hashAssetFiles"], // 👈 this line fixes PNG, JPG, etc.
 };
 
-defaultConfig.resolver = {
-  ...defaultConfig.resolver,
-  assetExts: defaultConfig.resolver.assetExts.filter(ext => ext !== "svg"),
-  sourceExts: [...defaultConfig.resolver.sourceExts, "svg"],
+config.resolver = {
+  ...resolver,
+  assetExts: resolver.assetExts.filter((ext) => ext !== "svg"),
+  sourceExts: [...resolver.sourceExts, "svg"],
 };
 
-module.exports = defaultConfig;
-	
+module.exports = config;

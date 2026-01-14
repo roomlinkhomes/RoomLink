@@ -1,4 +1,4 @@
-// EditProfile.jsx
+// screens/EditProfile.jsx — FINAL: Name change lock 100% persistent & reliable
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -6,209 +6,339 @@ import {
   ScrollView,
   TouchableOpacity,
   Image,
-  Alert,
+  Modal,
+  TextInput,
   KeyboardAvoidingView,
   Platform,
   useColorScheme,
+  ActivityIndicator,
+  Alert,
+  SafeAreaView,
 } from "react-native";
-import { TextInput, Button } from "react-native-paper";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useUser } from "../context/UserContext";
+import { db } from "../firebaseConfig";
+import { collection, query, where, getDocs, writeBatch } from "firebase/firestore";
 
 export default function EditProfile({ navigation }) {
   const { user, updateUser } = useUser();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
+  const isDark = useColorScheme() === "dark";
 
-  // --- States ---
-  const [firstName, setFirstName] = useState(user?.firstName || "");
-  const [lastName, setLastName] = useState(user?.lastName || "");
-  const [avatar, setAvatar] = useState(user?.avatar || null);
-  const [bio, setBio] = useState(user?.bio || "");
-  const [location, setLocation] = useState(user?.location || "");
-  const [born, setBorn] = useState(user?.born || "");
-  const [hubby, setHubby] = useState(user?.hubby || "");
-  const [fantasy, setFantasy] = useState(user?.fantasy || "");
-  const [pet, setPet] = useState(user?.pet || "");
-  const [studiedAt, setStudiedAt] = useState(user?.studiedAt || "");
-  const [education, setEducation] = useState(user?.education || "");
-  const [work, setWork] = useState(user?.work || "");
-  const [deliveryMethod, setDeliveryMethod] = useState(user?.deliveryMethod || "");
-  const [lastNameChangeDate, setLastNameChangeDate] = useState(user?.nameChangedAt || null);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [currentField, setCurrentField] = useState("");
+  const [inputValue, setInputValue] = useState("");
+  const [saving, setSaving] = useState(false);
 
+  // Capture original names once when screen loads — this is the baseline for "changed" check
+  const [originalNames, setOriginalNames] = useState({
+    firstName: "",
+    lastName: "",
+  });
+
+  const [profile, setProfile] = useState({
+    avatar: user?.avatar || null,
+    firstName: user?.firstName || "",
+    lastName: user?.lastName || "",
+    bio: user?.bio || "",
+    location: user?.location || "",
+    born: user?.born || "",
+    hubby: user?.hubby || "",
+    fantasy: user?.fantasy || "",
+    pet: user?.pet || "",
+    studiedAt: user?.studiedAt || "",
+    education: user?.education || "",
+    work: user?.work || "",
+    deliveryMethod: user?.deliveryMethod || "",
+    nameChangedAt: user?.nameChangedAt || null,
+  });
+
+  // Sync with latest user data + capture original names on first load
   useEffect(() => {
-    if (!firstName) setFirstName(user?.firstName || "");
-    if (!lastName) setLastName(user?.lastName || "");
-    if (!avatar) setAvatar(user?.avatar || null);
-    if (!bio) setBio(user?.bio || "");
-    if (!location) setLocation(user?.location || "");
-    if (!born) setBorn(user?.born || "");
-    if (!hubby) setHubby(user?.hubby || "");
-    if (!fantasy) setFantasy(user?.fantasy || "");
-    if (!pet) setPet(user?.pet || "");
-    if (!studiedAt) setStudiedAt(user?.studiedAt || "");
-    if (!education) setEducation(user?.education || "");
-    if (!work) setWork(user?.work || "");
-    if (!deliveryMethod) setDeliveryMethod(user?.deliveryMethod || "");
-    if (!lastNameChangeDate) setLastNameChangeDate(user?.nameChangedAt || null);
-  }, [user]);
+    if (user) {
+      setProfile(prev => ({
+        ...prev,
+        ...user,
+        avatar: user.avatar || prev.avatar,
+      }));
 
-  // --- Image Picker ---
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.5,
-      allowsEditing: true,
-    });
-    if (!result.canceled && result.assets?.length > 0) setAvatar(result.assets[0].uri);
-  };
-
-  // --- Save Changes ---
-  const handleSave = () => {
-    const now = new Date();
-    if (!firstName || !lastName) {
-      Alert.alert("Error", "Please fill in required fields");
-      return;
-    }
-
-    // Check 6-month name change restriction
-    if (lastNameChangeDate) {
-      const lastChange = new Date(lastNameChangeDate);
-      const sixMonthsLater = new Date(lastChange.setMonth(lastChange.getMonth() + 6));
-      if (now < sixMonthsLater && (firstName !== user.firstName || lastName !== user.lastName)) {
-        Alert.alert(
-          "Name Change Restricted",
-          "You can only change your first and last name once every 6 months."
-        );
-        return;
+      // Only set originalNames if not already set (on first load)
+      if (originalNames.firstName === "" && originalNames.lastName === "") {
+        setOriginalNames({
+          firstName: user.firstName || "",
+          lastName: user.lastName || "",
+        });
       }
     }
+  }, [user]);
 
-    const updated = {
-      avatar,
-      firstName,
-      lastName,
-      bio,
-      location,
-      born,
-      hubby,
-      fantasy,
-      pet,
-      studiedAt,
-      education,
-      work,
-      deliveryMethod,
-      nameChangedAt: firstName !== user.firstName || lastName !== user.lastName ? now.toISOString() : lastNameChangeDate,
-    };
-
-    updateUser(updated);
-    Alert.alert("Success", "Profile updated successfully!");
+  const pickAvatar = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0].uri) {
+      const uri = result.assets[0].uri;
+      setProfile(prev => ({ ...prev, avatar: uri }));
+      await updateUser({ avatar: uri });
+      await syncListingsAvatar(uri);
+    }
   };
 
-  const renderInput = (label, value, setValue, iconName, multiline = false, maxChars = null) => {
-    const handleChange = (text) => {
-      if (maxChars && text.length > maxChars) return;
-      setValue(text);
-    };
-
-    return (
-      <View style={{ flexDirection: "column", marginBottom: 15 }}>
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <Ionicons name={iconName} size={22} color={isDark ? "#aaa" : "#555"} style={{ marginRight: 8 }} />
-          <TextInput
-            label={label}
-            value={value}
-            onChangeText={handleChange}
-            mode="outlined"
-            outlineColor="#036DD6"
-            activeOutlineColor="#036DD6"
-            textColor={isDark ? "#fff" : "#000"}
-            multiline={multiline}
-            style={[{ flex: 1, backgroundColor: isDark ? "#1f1f1f" : "#fff" }, multiline && { height: 100 }]}
-          />
-        </View>
-        {label.includes("Bio") && (
-          <Text style={{ alignSelf: "flex-end", color: isDark ? "#aaa" : "#555", fontSize: 12 }}>
-            {value.length}/50
-          </Text>
-        )}
-      </View>
-    );
+  const openEditModal = (field, value) => {
+    setCurrentField(field);
+    setInputValue(value || "");
+    setModalVisible(true);
   };
 
-  const avatarLetter = firstName ? firstName[0].toUpperCase() : "A";
+  const saveField = async () => {
+    const trimmed = inputValue.trim();
+    if (!trimmed && currentField !== "bio") return;
+
+    setSaving(true);
+
+    const updates = { [currentField]: trimmed || "" };
+
+    const isNameField = currentField === "firstName" || currentField === "lastName";
+
+    // Compare against ORIGINAL names (captured on load) — always accurate
+    const nameActuallyChanged =
+      (currentField === "firstName" && trimmed !== originalNames.firstName) ||
+      (currentField === "lastName" && trimmed !== originalNames.lastName);
+
+    if (isNameField && nameActuallyChanged) {
+      // Lock check using fresh user.nameChangedAt from Firestore
+      if (user?.nameChangedAt) {
+        const lastChange = new Date(user.nameChangedAt);
+        const sixMonthsLater = new Date(lastChange);
+        sixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6);
+
+        if (new Date() < sixMonthsLater) {
+          const monthsLeft = Math.ceil((sixMonthsLater - new Date()) / (1000 * 60 * 60 * 24 * 30));
+          Alert.alert("Name Change Locked", `You can only change your name once every 6 months.\nWait ${monthsLeft} more month(s).`);
+          setSaving(false);
+          setModalVisible(false);
+          return;
+        }
+      }
+
+      // Change allowed — set new lock timestamp
+      updates.nameChangedAt = new Date().toISOString();
+    }
+
+    try {
+      setProfile(prev => ({ ...prev, ...updates }));
+      await updateUser(updates);
+
+      // Update original names after successful save (for next cycle)
+      if (nameActuallyChanged) {
+        setOriginalNames({
+          firstName: currentField === "firstName" ? trimmed : originalNames.firstName,
+          lastName: currentField === "lastName" ? trimmed : originalNames.lastName,
+        });
+      }
+
+      if (currentField === "firstName" || currentField === "lastName") {
+        await syncListingsName();
+      }
+    } catch (err) {
+      Alert.alert("Error", "Failed to save. Try again.");
+    } finally {
+      setSaving(false);
+      setModalVisible(false);
+      setInputValue("");
+    }
+  };
+
+  const syncListingsName = async () => {
+    if (!user?.uid) return;
+    try {
+      const q = query(collection(db, "listings"), where("uid", "==", user.uid));
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) return;
+      const fullName = `${profile.firstName || user.firstName} ${profile.lastName || user.lastName}`.trim();
+      const batch = writeBatch(db);
+      snapshot.forEach(doc => batch.update(doc.ref, { userName: fullName }));
+      await batch.commit();
+    } catch (e) { console.warn(e); }
+  };
+
+  const syncListingsAvatar = async (uri) => {
+    if (!user?.uid) return;
+    try {
+      const q = query(collection(db, "listings"), where("uid", "==", user.uid));
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) return;
+      const batch = writeBatch(db);
+      snapshot.forEach(doc => batch.update(doc.ref, { userAvatar: uri }));
+      await batch.commit();
+    } catch (e) { console.warn(e); }
+  };
+
+  const fields = [
+    { key: "firstName", label: "First Name", icon: "person-outline" },
+    { key: "lastName", label: "Last Name", icon: "person-outline" },
+    { key: "bio", label: "Bio", icon: "pencil-outline", placeholder: "Tell us about yourself" },
+    { key: "location", label: "Location", icon: "location-outline", placeholder: "Where do you live?" },
+    { key: "born", label: "Born", icon: "calendar-outline", placeholder: "Date of birth" },
+    { key: "hubby", label: "Hubby", icon: "heart-outline", placeholder: "Relationship status" },
+    { key: "fantasy", label: "Fantasy", icon: "sparkles-outline", placeholder: "Your dream?" },
+    { key: "pet", label: "Pet", icon: "paw-outline", placeholder: "Do you have pets?" },
+    { key: "studiedAt", label: "Studied at", icon: "school-outline", placeholder: "Your school/university" },
+    { key: "education", label: "Education", icon: "book-outline", placeholder: "Degree or field" },
+    { key: "work", label: "Work", icon: "briefcase-outline", placeholder: "What do you do?" },
+    { key: "deliveryMethod", label: "Delivery Method", icon: "bicycle-outline", placeholder: "How do you deliver?" },
+  ];
+
+  const getDisplayText = (key) => profile[key] || fields.find(f => f.key === key)?.placeholder || "Tap to add";
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={{ flex: 1 }}
-    >
-      <ScrollView
-        style={{ flex: 1, backgroundColor: isDark ? "#121212" : "#fff" }}
-        contentContainerStyle={{ paddingBottom: 60 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Avatar */}
-        <TouchableOpacity style={{ alignItems: "center", marginVertical: 20 }} onPress={pickImage}>
-          {avatar ? (
-            <Image source={{ uri: avatar }} style={{ width: 100, height: 100, borderRadius: 50 }} />
-          ) : (
-            <View
-              style={{
-                width: 100,
-                height: 100,
-                borderRadius: 50,
-                backgroundColor: "#036DD6",
-                justifyContent: "center",
-                alignItems: "center",
-              }}
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? "#121212" : "#fafafa" }}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
+
+          {/* ========== HEADER AREA - CONTROL THIS MANUALLY ========== */}
+          <View style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "flex-start",
+            paddingHorizontal: 20,
+            paddingTop: 50,
+            paddingBottom: 32,
+          }}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={{ padding: 10 }}
+              activeOpacity={0.6}
             >
-              <Text style={{ color: "#fff", fontSize: 36, fontWeight: "bold" }}>{avatarLetter}</Text>
+              <Ionicons name="arrow-back" size={28} color="#000000" />
+            </TouchableOpacity>
+
+            <View style={{ flex: 1, alignItems: "center", marginRight: 48 }}>
+              <Text style={{ fontSize: 24, fontWeight: "800", color: isDark ? "#e0e0e0" : "#1a1a1a" }}>
+                Edit Profile
+              </Text>
+              <Text style={{ fontSize: 14, color: isDark ? "#b0b0b0" : "#666", marginTop: 4 }}>
+                @{user?.username || "user"}
+              </Text>
             </View>
-          )}
-          <Text style={{ color: "#036DD6", marginTop: 8 }}>Change Profile</Text>
-        </TouchableOpacity>
+          </View>
+          {/* ========== END HEADER AREA ========== */}
 
-        {/* Inputs */}
-        <View style={{ paddingHorizontal: 20 }}>
-          {renderInput("First Name", firstName, setFirstName, "person-outline")}
-          {renderInput("Last Name", lastName, setLastName, "person-outline")}
-          {renderInput("Bio (max 50 chars)", bio, setBio, "text-outline", true, 50)}
-          {renderInput("Location", location, setLocation, "location-outline")}
-          {renderInput("Born", born, setBorn, "calendar-outline")}
-          {renderInput("Hubby", hubby, setHubby, "heart-outline")}
-          {renderInput("Fantasy", fantasy, setFantasy, "flower-outline")}
-          {renderInput("Pet", pet, setPet, "paw-outline")}
-          {renderInput("Studied at", studiedAt, setStudiedAt, "school-outline")}
-          {renderInput("Education", education, setEducation, "book-outline")}
-          {renderInput("Work", work, setWork, "briefcase-outline")}
-          {renderInput("How I deliver customer", deliveryMethod, setDeliveryMethod, "bicycle-outline")}
+          {/* AVATAR */}
+          <View style={{ alignItems: "center", marginTop: 10 }}>
+            <TouchableOpacity onPress={pickAvatar}>
+              {profile.avatar ? (
+                <Image
+                  source={{ uri: profile.avatar }}
+                  style={{ width: 130, height: 130, borderRadius: 65, borderWidth: 5, borderColor: "#00ff9d" }}
+                />
+              ) : (
+                <View style={{
+                  width: 130,
+                  height: 130,
+                  borderRadius: 65,
+                  backgroundColor: "#017a6b",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  borderWidth: 5,
+                  borderColor: "#00ff9d",
+                }}>
+                  <Text style={{ fontSize: 56, fontWeight: "900", color: "#fff" }}>
+                    {profile.firstName?.[0]?.toUpperCase() || "R"}
+                  </Text>
+                </View>
+              )}
+              <View style={{
+                position: "absolute",
+                bottom: 0,
+                right: 0,
+                backgroundColor: "#00ff9d",
+                padding: 14,
+                borderRadius: 40,
+                borderWidth: 5,
+                borderColor: "#fff",
+              }}>
+                <Ionicons name="camera" size={26} color="#000" />
+              </View>
+            </TouchableOpacity>
+          </View>
 
-          {/* Save Button */}
-<Button
-  mode="contained"
-  onPress={handleSave}
-  style={{
-    backgroundColor: "#036DD6",
-    marginTop: 15,
-    borderRadius: 50, // 👈 pill shape
-  }}
-  contentStyle={{
-    paddingVertical: 3,
-    borderRadius: 50, // 👈 ensure content also matches pill shape
-  }}
-  labelStyle={{
-    fontWeight: "bold",
-    fontSize: 16,
-    color: "#fff",
-  }}
->
-  Save Changes
-</Button>
+          {/* FIELDS LIST */}
+          <View style={{ paddingHorizontal: 20, marginTop: 40 }}>
+            {fields.map((field) => (
+              <TouchableOpacity
+                key={field.key}
+                onPress={() => openEditModal(field.key, profile[field.key])}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  paddingVertical: 18,
+                  borderBottomWidth: 1,
+                  borderBottomColor: isDark ? "#333" : "#eee",
+                }}
+              >
+                <Ionicons name={field.icon} size={28} color="#000000" style={{ width: 50 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: isDark ? "#aaa" : "#666", fontSize: 15, fontWeight: "500" }}>
+                    {field.label}
+                  </Text>
+                  <Text style={{
+                    fontSize: 18,
+                    fontWeight: "600",
+                    color: profile[field.key] ? (isDark ? "#fff" : "#000") : (isDark ? "#666" : "#999"),
+                    marginTop: 4,
+                  }}>
+                    {getDisplayText(field.key)}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={24} color={isDark ? "#666" : "#aaa"} />
+              </TouchableOpacity>
+            ))}
+          </View>
 
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+
+        {/* MODAL */}
+        <Modal visible={modalVisible} transparent animationType="slide">
+          <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.9)", justifyContent: "flex-end" }}>
+            <View style={{ backgroundColor: isDark ? "#111" : "#fff", padding: 24, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
+              <Text style={{ fontSize: 22, fontWeight: "800", color: isDark ? "#fff" : "#000", marginBottom: 20 }}>
+                Edit {fields.find(f => f.key === currentField)?.label}
+              </Text>
+
+              <TextInput
+                value={inputValue}
+                onChangeText={setInputValue}
+                placeholder="Enter text..."
+                placeholderTextColor="#888"
+                autoFocus
+                style={{
+                  backgroundColor: isDark ? "#222" : "#f5f5f5",
+                  padding: 16,
+                  borderRadius: 14,
+                  fontSize: 18,
+                  color: isDark ? "#fff" : "#000",
+                }}
+              />
+
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 24, gap: 16, alignItems: "center" }}>
+                <TouchableOpacity onPress={() => setModalVisible(false)} disabled={saving}>
+                  <Text style={{ fontSize: 18, color: "#888" }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={saveField} disabled={saving}>
+                  {saving ? (
+                    <ActivityIndicator size="small" color="#00ff9d" />
+                  ) : (
+                    <Text style={{ fontSize: 18, color: "#017a6b", fontWeight: "900" }}>Save</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }

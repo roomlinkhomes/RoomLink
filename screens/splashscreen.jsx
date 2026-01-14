@@ -5,7 +5,7 @@ const SplashScreen = ({ navigation }) => {
   useEffect(() => {
     const timer = setTimeout(() => {
       navigation.replace('Login'); // after 2s go to Login
-    }, 2000);
+    }, 400);
 
     return () => clearTimeout(timer);
   }, []);
@@ -24,7 +24,7 @@ const SplashScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1A237E', // RoomLink Blue
+    backgroundColor: '#fff', // RoomLink Blue
     alignItems: 'center',
     justifyContent: 'center',
   },
