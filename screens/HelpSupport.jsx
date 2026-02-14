@@ -30,7 +30,7 @@ export default function HelpSupport() {
     accent: isDark ? "#ffcc00" : "#ff9500",
   };
 
-  const supportUID = "PdEzQK2PxUccxbJLJo67lRi21NR2";
+  const supportUID = "kLR1nC68S1WA4Ma3cpyjGcMaUb22";
 
   const [search, setSearch] = useState("");
   const [openFaq, setOpenFaq] = useState(null);

@@ -1,4 +1,3 @@
-// screens/AdsZone.jsx — FULLY FIXED: Upload works reliably, no silent failures
 import React, { useState, useContext, useEffect } from "react";
 import {
   View,
@@ -22,22 +21,23 @@ import {
   addDoc,
   query,
   where,
-  getDocs,
+  onSnapshot,
   serverTimestamp,
   doc,
-  onSnapshot,
   setDoc,
 } from "firebase/firestore";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useTheme } from "@react-navigation/native";
+import Toast from "react-native-toast-message";
 
 const CLOUD_NAME = "drserbss8";
 const UPLOAD_PRESET = "roomlink_preset";
 
 const MAX_TOTAL_ADS = 35;
 
+const FINANCIAL_SUPPORT_UID = "e12i0xwZ5mfXzpgQUcwsLMZlApq2";
+
 const plans = [
-  { id: "free", title: "1 Week Free", price: 0, desc: "Ad runs for 7 days", durationDays: 7 },
-  { id: "daily", title: "24 Hours", price: 100, desc: "Ad runs for 24 hours", durationDays: 1 },
+  { id: "daily", title: "24 Hours", price: 500, desc: "Ad runs for 24 hours", durationDays: 1 },
   { id: "weekly", title: "Weekly", price: 3500, desc: "Ad runs for 7 days", durationDays: 7 },
   { id: "monthly", title: "Monthly", price: 10500, desc: "Ad runs for 30 days", durationDays: 30 },
 ];
@@ -55,9 +55,11 @@ export default function AdsZone() {
   const { addAd } = useContext(AdsContext) || {};
   const screenHeight = Dimensions.get("window").height;
   const navigation = useNavigation();
+  const { dark } = useTheme();
   const user = auth.currentUser;
+  const iconColor = dark ? "#fff" : "#000";
 
-  // Real-time: user's active ad + global total active ads count
+  // Real-time listeners
   useEffect(() => {
     if (!user) {
       setActiveAd(null);
@@ -67,7 +69,6 @@ export default function AdsZone() {
       return;
     }
 
-    // User's active ad
     const userAdsQuery = query(collection(db, "ads"), where("userId", "==", user.uid));
     const unsubUser = onSnapshot(userAdsQuery, (snap) => {
       let active = null;
@@ -83,7 +84,6 @@ export default function AdsZone() {
       setActiveAd(active);
     });
 
-    // Global total active ads count (paid + free)
     const allAdsQuery = query(collection(db, "ads"));
     const unsubAll = onSnapshot(allAdsQuery, (snap) => {
       let count = 0;
@@ -116,7 +116,6 @@ export default function AdsZone() {
     }
   };
 
-  // Fixed: No longer controls uploading state here
   const uploadToCloudinary = async (imageUri) => {
     try {
       const data = new FormData();
@@ -129,9 +128,7 @@ export default function AdsZone() {
         body: data,
       });
 
-      if (!res.ok) {
-        throw new Error(`Upload failed with status ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`Upload failed with status ${res.status}`);
 
       const json = await res.json();
       return json.secure_url || null;
@@ -166,7 +163,6 @@ export default function AdsZone() {
     }
   };
 
-  // Fixed: Proper loading control + no silent failures
   const uploadBanner = async () => {
     if (!image) {
       Alert.alert("No Image", "Please pick an image first!");
@@ -178,13 +174,10 @@ export default function AdsZone() {
     }
 
     setUploading(true);
-
     const cloudUrl = await uploadToCloudinary(image.uri);
-
     setUploading(false);
 
     if (!cloudUrl) {
-      // uploadToCloudinary already shows alert, but reinforce
       Alert.alert("Upload Failed", "Could not upload image. Please try again.");
       return;
     }
@@ -226,14 +219,6 @@ export default function AdsZone() {
               };
               if (typeof addAd === "function") addAd(newAd);
 
-              // Mark free plan as used
-              if (selectedPlan.id === "free") {
-                await setDoc(doc(db, "users", user.uid), {
-                  freeAdUsed: true,
-                  freeAdUsedAt: serverTimestamp(),
-                }, { merge: true });
-              }
-
               Alert.alert("Success!", billboardFull ? "Your ad is queued and will appear soon!" : "Your ad is now live on the billboard!");
               setModalVisible(false);
               setImage(null);
@@ -258,101 +243,124 @@ export default function AdsZone() {
     setModalVisible(true);
   };
 
+  const openFinancialSupport = () => {
+    Toast.show({
+      type: "info",
+      text1: "Payment Support",
+      text2: "After payment is completed send payment receipt or prove to RoomLink financial",
+      position: "bottom",
+      visibilityTime: 7000,
+      bottomOffset: 120,
+    });
+
+    navigation.navigate("HomeTabs", {
+      screen: "Messages",
+      params: {
+        screen: "Message",
+        params: {
+          recipientUID: FINANCIAL_SUPPORT_UID,
+          otherUserName: "RoomLink Financial",
+        },
+      },
+    });
+  };
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.header}>Boost your reach</Text>
-      <Text style={styles.subText}>Select a plan to promote your post, website, or product.</Text>
+    <>
+      <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.header}>Boost your reach</Text>
+        <Text style={styles.subText}>Select a plan to promote your post, website, or product.</Text>
 
-      {activeAd && (
-        <Text style={{ color: "green", fontWeight: "bold", textAlign: "center", marginBottom: 20 }}>
-          Active Ad: {activeAd.plan.toUpperCase()} (expires {activeAdEndDate.toLocaleDateString()})
-        </Text>
-      )}
+        {activeAd && (
+          <Text style={{ color: "green", fontWeight: "bold", textAlign: "center", marginBottom: 20 }}>
+            Active Ad: {activeAd.plan.toUpperCase()} (expires {activeAdEndDate.toLocaleDateString()})
+          </Text>
+        )}
 
-      {billboardFull && (
-        <Text style={{ color: "red", fontWeight: "bold", textAlign: "center", marginBottom: 15 }}>
-          Billboard Full (35/35 ads) — All new ads will be queued
-        </Text>
-      )}
+        {billboardFull && (
+          <Text style={{ color: "red", fontWeight: "bold", textAlign: "center", marginBottom: 15 }}>
+            Billboard Full (35/35 ads) — All new ads will be queued
+          </Text>
+        )}
 
-      <View style={styles.planContainer}>
-        {plans.map((plan) => {
-          const isActive = activeAd && activeAd.plan === plan.id;
-          const isFreeUsed = plan.id === "free" && activeAd?.plan === "free";
+        <View style={styles.planContainer}>
+          {plans.map((plan) => {
+            const isActive = activeAd && activeAd.plan === plan.id;
 
-          return (
-            <TouchableOpacity
-              key={plan.id}
-              style={[
-                styles.planCard,
-                isActive && { borderColor: "orange", borderWidth: 2, backgroundColor: "#fff4e6" },
-                (plan.id === "free" && isFreeUsed) && { opacity: 0.5, backgroundColor: "#f0f0f0" },
-              ]}
-              onPress={() => openModal(plan)}
-              disabled={isActive || (plan.id === "free" && isFreeUsed)}
-            >
-              <Ionicons name="megaphone-outline" size={24} color="orange" style={{ marginBottom: 5 }} />
-              <Text style={styles.planTitle}>{plan.title}</Text>
-              <Text style={styles.planPrice}>{plan.price === 0 ? "₦0" : `₦${plan.price}`}</Text>
-              <Text style={styles.planDesc}>{plan.desc}</Text>
-              {isActive && (
-                <View style={styles.activeBadge}>
-                  <Text style={styles.activeText}>Active</Text>
-                </View>
-              )}
-              {plan.id === "free" && isFreeUsed && (
-                <Text style={{ color: "red", fontSize: 12, marginTop: 5, fontWeight: "bold" }}>Already Used</Text>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={styles.footerText}>Your sponsored ad will appear instantly on RoomLink’s home billboard.</Text>
-
-      <Modal animationType="slide" transparent visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
-        <View style={styles.bottomModalOverlay}>
-          <View style={[styles.bottomModalContent, { maxHeight: screenHeight * 0.8 }]}>
-            <Text style={styles.modalTitle}>{selectedPlan?.title} Promotion</Text>
-
-            <TouchableOpacity style={styles.imagePicker} onPress={pickImage}>
-              {image ? (
-                <Image source={{ uri: image.uri }} style={{ width: "100%", height: 150, borderRadius: 10 }} />
-              ) : (
-                <View style={{ alignItems: "center" }}>
-                  <Ionicons name="images-outline" size={30} color="orange" />
-                  <Text style={{ color: "#666", marginTop: 5 }}>Pick Image from Gallery</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-
-            <TextInput
-              placeholder="https://example.com"
-              style={styles.input}
-              value={link}
-              onChangeText={setLink}
-              keyboardType="url"
-            />
-
-            {uploading ? (
-              <ActivityIndicator size="large" color="#1A237E" />
-            ) : selectedPlan?.price > 0 ? (
-              <TouchableOpacity style={styles.payBtn} onPress={handlePayment}>
-                <Text style={styles.payText}>Pay ₦{selectedPlan.price}</Text>
+            return (
+              <TouchableOpacity
+                key={plan.id}
+                style={[
+                  styles.planCard,
+                  isActive && { borderColor: "orange", borderWidth: 2, backgroundColor: "#fff4e6" },
+                ]}
+                onPress={() => openModal(plan)}
+                disabled={isActive}
+              >
+                <Ionicons name="megaphone-outline" size={24} color="orange" style={{ marginBottom: 5 }} />
+                <Text style={styles.planTitle}>{plan.title}</Text>
+                <Text style={styles.planPrice}>₦{plan.price}</Text>
+                <Text style={styles.planDesc}>{plan.desc}</Text>
+                {isActive && (
+                  <View style={styles.activeBadge}>
+                    <Text style={styles.activeText}>Active</Text>
+                  </View>
+                )}
               </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.uploadBtn} onPress={uploadBanner}>
-                <Text style={styles.uploadText}>Upload Banner</Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalVisible(false)}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
+            );
+          })}
         </View>
-      </Modal>
-    </ScrollView>
+
+        <Text style={styles.footerText}>After payment send receipt to the RoomLink financial by tapping the support icon down to confirm and give instructions on how to post on the billboard.</Text>
+
+        <Modal animationType="slide" transparent visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
+          <View style={styles.bottomModalOverlay}>
+            <View style={[styles.bottomModalContent, { maxHeight: screenHeight * 0.8 }]}>
+              <Text style={styles.modalTitle}>{selectedPlan?.title} Promotion</Text>
+
+              <TouchableOpacity style={styles.imagePicker} onPress={pickImage}>
+                {image ? (
+                  <Image source={{ uri: image.uri }} style={{ width: "100%", height: 150, borderRadius: 10 }} />
+                ) : (
+                  <View style={{ alignItems: "center" }}>
+                    <Ionicons name="images-outline" size={30} color="orange" />
+                    <Text style={{ color: "#666", marginTop: 5 }}>Pick Image from Gallery</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <TextInput
+                placeholder="https://example.com"
+                style={styles.input}
+                value={link}
+                onChangeText={setLink}
+                keyboardType="url"
+              />
+
+              {uploading ? (
+                <ActivityIndicator size="large" color="#1A237E" />
+              ) : (
+                <TouchableOpacity style={styles.payBtn} onPress={handlePayment}>
+                  <Text style={styles.payText}>Pay ₦{selectedPlan?.price}</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalVisible(false)}>
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </ScrollView>
+
+      {/* Floating financial support button */}
+      <TouchableOpacity style={styles.supportFab} onPress={openFinancialSupport}>
+        <Ionicons name="headset-outline" size={26} color={iconColor} />
+        <View style={[styles.helpBadge, { borderColor: dark ? "#000" : "#fff" }]}>
+          <Text style={styles.badgeText}>Help</Text>
+        </View>
+      </TouchableOpacity>
+    </>
   );
 }
 
@@ -375,8 +383,44 @@ const styles = StyleSheet.create({
   input: { width: "100%", borderWidth: 1, borderColor: "#ccc", padding: 10, borderRadius: 8, marginBottom: 15 },
   payBtn: { backgroundColor: "#1A237E", paddingVertical: 12, borderRadius: 10, alignItems: "center" },
   payText: { color: "#fff", fontWeight: "bold" },
-  uploadBtn: { backgroundColor: "green", paddingVertical: 12, borderRadius: 10, alignItems: "center" },
-  uploadText: { color: "#fff", fontWeight: "bold" },
   cancelBtn: { marginTop: 15, alignItems: "center" },
   cancelText: { color: "red", fontWeight: "600" },
+
+  supportFab: {
+    position: "absolute",
+    bottom: 30,
+    right: 20,
+    backgroundColor: "#017a6b",
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+
+  helpBadge: {
+    position: "absolute",
+    top: -6,
+    right: -14,
+    backgroundColor: "#ff3b30",
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+  },
+
+  badgeText: {
+    color: "#fff",
+    fontSize: 6,
+    fontWeight: "bold",
+    letterSpacing: 0.3,
+  },
 });

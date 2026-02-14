@@ -1,3 +1,4 @@
+// navigation/AppTabs.jsx
 import React, { useEffect, useState, useMemo } from "react";
 import {
   Image,
@@ -11,34 +12,34 @@ import {
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import {
   getFocusedRouteNameFromRoute,
-  useNavigation,          // ✅ FIX
+  useNavigation,
 } from "@react-navigation/native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useUser } from "../context/UserContext";
 import { onSnapshot, doc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useMessageCount } from "../context/MessageProvider.jsx";
+import { useTripCount } from "../context/TripCountProvider"; // ← NEW: import for Trips badge
 
 // Screens
 import Home from "../screens/home";
 import ListingScreen from "../screens/listing";
-import VendorScreen from "../screens/vendor";
 import MyProfileScreen from "../screens/Profile/MyProfileScreen.jsx";
 import MessagesStack from "./MessagesStack";
+import Trips from "../screens/Trips"; // ← Your Trips screen
 
 const Tab = createBottomTabNavigator();
 
 const SIZES = {
-  default: 26,
-  plus: 30,
-  vendor: 24,
+  default: 26, // uniform size for all tabs
 };
 
 export default function AppTabs() {
-  const navigation = useNavigation();   // ✅ FIX
+  const navigation = useNavigation();
   const { user } = useUser();
   const [liveUser, setLiveUser] = useState(null);
   const { unreadConversations: unreadCount } = useMessageCount();
+  const { upcomingCount } = useTripCount(); // ← NEW: get count for Trips badge
   const scheme = useColorScheme();
   const isDarkMode = scheme === "dark";
 
@@ -46,7 +47,6 @@ export default function AppTabs() {
     tabBarBackground: isDarkMode ? "#121212" : "#fafafa",
     tabBarActive: isDarkMode ? "#00ff7f" : "#017a6b",
     tabBarInactive: isDarkMode ? "#b0b0b0" : "#666",
-    tabBarVendorActive: "#017a6b",
     badgeBackground: "#ef4444",
     badgeText: "#ffffff",
   };
@@ -118,7 +118,10 @@ export default function AppTabs() {
       keyboardVerticalOffset={Platform.OS === "ios" ? 70 : 0}
       enabled={Platform.OS === "ios"}
     >
-      <Tab.Navigator screenOptions={screenOptions}>
+      <Tab.Navigator
+        screenOptions={screenOptions}
+        backBehavior="history"
+      >
         <Tab.Screen
           name="Home"
           component={Home}
@@ -156,28 +159,38 @@ export default function AppTabs() {
           name="ListingTab"
           component={ListingScreen}
           options={{
-            tabBarLabel: "List",
+            tabBarLabel: "Post",
             tabBarIcon: ({ focused }) => (
               <Ionicons
                 name={focused ? "add-circle" : "add-circle-outline"}
-                size={SIZES.plus}
+                size={SIZES.default}
                 color={focused ? theme.tabBarActive : theme.tabBarInactive}
               />
             ),
           }}
         />
 
+        {/* Trips tab with badge */}
         <Tab.Screen
-          name="Vendor"
-          component={VendorScreen}
+          name="Trips"
+          component={Trips}
           options={{
-            tabBarLabel: "Vendors",
+            tabBarLabel: "Trips",
             tabBarIcon: ({ focused }) => (
-              <Ionicons
-                name={focused ? "storefront" : "storefront-outline"}
-                size={SIZES.vendor}
-                color={focused ? theme.tabBarVendorActive : theme.tabBarInactive}
-              />
+              <View style={styles.iconContainer}>
+                <Ionicons
+                  name={focused ? "calendar" : "calendar-outline"} // or "suitcase"
+                  size={SIZES.default}
+                  color={focused ? theme.tabBarActive : theme.tabBarInactive}
+                />
+                {upcomingCount > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>
+                      {upcomingCount > 9 ? "9+" : upcomingCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
             ),
           }}
         />

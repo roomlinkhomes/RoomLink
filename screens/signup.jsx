@@ -1,4 +1,4 @@
-// screens/Signup.jsx — RLMARKET REBRANDED (FIXED: Valid Ionicons lock icon)
+// screens/Signup.jsx — FIXED: infinite re-render loop in username check
 import React, { useState, useContext, useEffect } from "react";
 import {
   View,
@@ -13,15 +13,19 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   Platform,
+  ActivityIndicator,
+  TouchableWithoutFeedback,
 } from "react-native";
-import { TextInput, Button, Checkbox } from "react-native-paper";
+import { TextInput, Checkbox } from "react-native-paper";
 import { Ionicons } from "@expo/vector-icons";
 import { AuthContext } from "../context/AuthContext";
 import { countries } from "../constants/countries";
 import { auth, db } from "../firebaseConfig";
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { useNavigation } from "@react-navigation/native";
+import { getFunctions, httpsCallable } from "firebase/functions";
+
+const functions = getFunctions();
 
 export default function Signup() {
   const navigation = useNavigation();
@@ -42,20 +46,25 @@ export default function Signup() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Username availability
+  const [usernameAvailable, setUsernameAvailable] = useState(null);
+  const [checkingUsername, setCheckingUsername] = useState(false);
+
   const scheme = useColorScheme();
   const isDarkMode = scheme === "dark";
 
-  // 🆕 RLMARKET Theme - EXACT SAME AS LOGIN
   const theme = {
-    background: isDarkMode ? "#121212" : "#fafafa",
-    card: isDarkMode ? "#1e1e1e" : "#ffffff",
-    text: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-    textSecondary: isDarkMode ? "#b0b0b0" : "#666",
+    background: isDarkMode ? "#0f172a" : "#f8fafc",
+    card: isDarkMode ? "#1e293b" : "#ffffff",
+    text: isDarkMode ? "#e2e8f0" : "#1e293b",
+    textSecondary: isDarkMode ? "#94a3b8" : "#64748b",
     primary: isDarkMode ? "#00ff7f" : "#017a6b",
-    border: isDarkMode ? "#333" : "#e0e6ed",
+    border: isDarkMode ? "#334155" : "#e2e8f0",
+    error: "#ef4444",
+    success: "#22c55e",
   };
 
-  // Auto-detect user country and set currency
+  // Auto-detect country
   useEffect(() => {
     const locale = Intl.DateTimeFormat().resolvedOptions().locale;
     const countryCode = locale.split("-")[1] || "NG";
@@ -67,6 +76,45 @@ export default function Signup() {
     }
   }, [setUserCountry, setUserCurrency]);
 
+  // Debounce username input to prevent too many checks
+  const [debouncedUsername, setDebouncedUsername] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedUsername(username.trim().toLowerCase());
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [username]);
+
+  // Username availability check — only runs when debounced value changes
+  useEffect(() => {
+    const clean = debouncedUsername;
+
+    if (clean.length < 5) {
+      setUsernameAvailable(null);
+      setCheckingUsername(false);
+      return;
+    }
+
+    setCheckingUsername(true);
+    setUsernameAvailable(null);
+
+    const checkUsername = async () => {
+      try {
+        const usernameRef = doc(db, "usernames", clean);
+        const snap = await getDoc(usernameRef);
+        setUsernameAvailable(!snap.exists());
+      } catch (err) {
+        console.error("Username check failed:", err);
+        setUsernameAvailable(null);
+      } finally {
+        setCheckingUsername(false);
+      }
+    };
+
+    checkUsername();
+  }, [debouncedUsername]);
+
   const filteredCountries = countries.filter((country) =>
     country.name.toLowerCase().includes(search.toLowerCase())
   );
@@ -74,87 +122,67 @@ export default function Signup() {
   const validate = () => {
     let tempErrors = {};
     const nameRegex = /^[A-Za-z]+$/;
-    if (!firstName.trim()) tempErrors.firstName = "First name is required";
-    else if (!nameRegex.test(firstName.trim()))
-      tempErrors.firstName = "First name cannot contain numbers";
-
-    if (!lastName.trim()) tempErrors.lastName = "Last name is required";
-    else if (!nameRegex.test(lastName.trim()))
-      tempErrors.lastName = "Last name cannot contain numbers";
-
     const usernameRegex = /^[a-z][a-z0-9_]{4,}$/;
-    if (!username.trim()) tempErrors.username = "Username is required";
-    else if (!usernameRegex.test(username.trim()))
-      tempErrors.username =
-        "Username must start with lowercase, min 5 chars, only _ allowed";
-
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!email.trim()) tempErrors.email = "Email is required";
-    else if (!emailRegex.test(email.trim()))
-      tempErrors.email = "Invalid email format";
-
     const passwordRegex = /^(?=.*[A-Z])(?=.*[0-9])(?=.*[#%&@]).{6,}$/;
-    if (!password) tempErrors.password = "Password is required";
+
+    if (!firstName.trim()) tempErrors.firstName = "Required";
+    else if (!nameRegex.test(firstName.trim())) tempErrors.firstName = "No numbers";
+
+    if (!lastName.trim()) tempErrors.lastName = "Required";
+    else if (!nameRegex.test(lastName.trim())) tempErrors.lastName = "No numbers";
+
+    const cleanUsername = username.trim().toLowerCase();
+    if (!username.trim()) tempErrors.username = "Required";
+    else if (!usernameRegex.test(cleanUsername))
+      tempErrors.username = "Start with letter, min 5 chars (a-z0-9_)";
+    else if (usernameAvailable === false)
+      tempErrors.username = "Taken — try another";
+    else if (checkingUsername)
+      tempErrors.username = "Checking...";
+
+    if (!email.trim()) tempErrors.email = "Required";
+    else if (!emailRegex.test(email.trim())) tempErrors.email = "Invalid email";
+
+    if (!password) tempErrors.password = "Required";
     else if (!passwordRegex.test(password))
-      tempErrors.password =
-        "Password must include 1 uppercase, 1 number, and 1 special character (#%&@)";
+      tempErrors.password = "1 uppercase, 1 number, 1 special, min 6";
 
-    if (password !== confirmPassword)
-      tempErrors.confirmPassword = "Passwords do not match";
+    if (password !== confirmPassword) tempErrors.confirmPassword = "No match";
 
-    if (!agree) tempErrors.agree = "You must agree to Terms & Privacy";
+    if (!agree) tempErrors.agree = "Agree to terms";
 
-    if (!selectedCountry) tempErrors.country = "Please select your country";
+    if (!selectedCountry) tempErrors.country = "Select country";
 
     setErrors(tempErrors);
     return Object.keys(tempErrors).length === 0;
   };
 
-  // ✅ RLMARKET SIGNUP - AUTO CREATES USER DOC
-  const handleSignup = async () => {
-    if (!validate()) return;
+  const handleSendOTP = async () => {
+    if (!validate() || usernameAvailable !== true) return;
 
     setLoading(true);
-    try {
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        email.trim(),
-        password
-      );
-      const user = userCredential.user;
 
-      await updateProfile(user, {
-        displayName: `${firstName.trim()} ${lastName.trim()}`,
+    try {
+      const sendSignupOTP = httpsCallable(functions, "sendSignupOTP");
+      await sendSignupOTP({
+        email: email.trim(),
+        name: `${firstName.trim()} ${lastName.trim()}`,
       });
 
-      await setDoc(doc(db, "users", user.uid), {
-        id: user.uid,
+      navigation.navigate("OtpVerification", {
+        email: email.trim(),
+        password: password.trim(),
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        username: username.trim(),
-        email: email.trim().toLowerCase(),
-        country: selectedCountry.code,
-        currency: selectedCountry.symbol,
-        isVendor: false,
-        createdAt: serverTimestamp(),
+        username: username.trim().toLowerCase(),
+        country: selectedCountry,
       });
-
-      setUserCountry(selectedCountry.code);
-      setUserCurrency(selectedCountry.symbol);
-
-      Alert.alert("Success", "Account created successfully! Welcome to RLMARKET!");
-      navigation.navigate("Login");
     } catch (error) {
-      console.error("Signup Error:", error);
-      let message = "Signup failed. Please try again.";
-      if (error.code === "auth/email-already-in-use") {
-        message = "This email is already registered.";
-      } else if (error.code === "auth/invalid-email") {
-        message = "Invalid email address.";
-      } else if (error.code === "auth/weak-password") {
-        message = "Password is too weak.";
-      }
-      Alert.alert("Error", message);
+      console.error("OTP send failed:", error);
+      let msg = "Failed to send OTP. Try again.";
+      if (error.message?.includes("already-exists")) msg = "Email already registered";
+      Alert.alert("Error", msg);
     } finally {
       setLoading(false);
     }
@@ -169,6 +197,15 @@ export default function Signup() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+      {/* Back Button */}
+      <TouchableOpacity
+        style={styles.backButton}
+        onPress={() => navigation.goBack()}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="arrow-back" size={28} color={theme.text} />
+      </TouchableOpacity>
+
       <KeyboardAvoidingView
         style={styles.keyboardView}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -178,198 +215,214 @@ export default function Signup() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* 🆕 RLMARKET Header */}
+          {/* Slim Header */}
           <View style={styles.header}>
-            <View style={[
-              styles.rlBadge,
-              { 
-                backgroundColor: isDarkMode ? 'rgba(0, 255, 127, 0.1)' : 'rgba(1, 122, 107, 0.08)',
-                borderColor: theme.primary
-              }
-            ]}>
+            <View
+              style={[
+                styles.rlBadge,
+                {
+                  backgroundColor: `${theme.primary}15`,
+                  borderColor: theme.primary,
+                },
+              ]}
+            >
               <Text style={[styles.rlText, { color: theme.primary }]}>RL</Text>
             </View>
-            
+
             <View style={styles.headerContent}>
               <Text style={[styles.welcomeTitle, { color: theme.text }]}>
                 Create Account
               </Text>
               <Text style={[styles.welcomeSubtitle, { color: theme.textSecondary }]}>
-                Join RLMARKET today
+                Join RoomLink
               </Text>
             </View>
           </View>
 
-          {/* 🆕 Signup Card */}
-          <View style={[
-            styles.signupCard,
-            { 
-              backgroundColor: theme.card,
-              borderColor: theme.border,
-              shadowColor: '#000'
-            }
-          ]}>
-            {/* Country Selector */}
+          {/* Slim Signup Card */}
+          <View
+            style={[
+              styles.signupCard,
+              {
+                backgroundColor: theme.card,
+                borderColor: theme.border,
+              },
+            ]}
+          >
+            {/* Country */}
             <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons name="earth-outline" size={20} color={theme.primary} />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>Country</Text>
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.countryBox,
-                  { 
-                    backgroundColor: theme.card,
-                    borderColor: theme.border
-                  }
-                ]}
-                onPress={() => setCountryModalVisible(true)}
-                activeOpacity={0.7}
-              >
-                <Text style={[
-                  styles.countryText,
-                  { 
-                    color: selectedCountry ? theme.text : theme.textSecondary 
-                  }
-                ]}>
-                  {selectedCountry
-                    ? `${selectedCountry.flag} ${selectedCountry.name}`
-                    : "Select your country"}
-                </Text>
-                <Ionicons name="chevron-down" size={20} color={theme.primary} />
-              </TouchableOpacity>
-              {errors.country && <Text style={styles.error}>{errors.country}</Text>}
+              <TextInput
+                value={selectedCountry ? `${selectedCountry.flag} ${selectedCountry.name}` : ""}
+                mode="outlined"
+                label="Country"
+                placeholder="Select country"
+                placeholderTextColor={theme.textSecondary}
+                editable={false}
+                outlineColor={errors.country ? theme.error : theme.border}
+                activeOutlineColor={errors.country ? theme.error : theme.primary}
+                style={{ backgroundColor: "transparent" }}
+                theme={{
+                  colors: {
+                    onSurfaceVariant: theme.textSecondary,
+                    primary: theme.primary,
+                    text: theme.text,
+                    error: theme.error,
+                  },
+                }}
+                left={<TextInput.Icon icon="earth" color={theme.primary} />}
+                right={<TextInput.Icon icon="chevron-down" color={theme.primary} />}
+                onFocus={() => setCountryModalVisible(true)}
+              />
+              {errors.country && <Text style={[styles.errorText, { color: theme.error }]}>{errors.country}</Text>}
             </View>
 
             {/* First Name */}
             <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons name="person-outline" size={20} color={theme.primary} />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>First Name</Text>
-              </View>
               <TextInput
                 value={firstName}
                 onChangeText={setFirstName}
                 mode="outlined"
-                placeholder="Enter your first name"
+                label="First Name"
+                placeholder="Your first name"
                 placeholderTextColor={theme.textSecondary}
-                style={[styles.textInput, { color: theme.text }]}
-                outlineColor={theme.border}
-                activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
+                outlineColor={errors.firstName ? theme.error : theme.border}
+                activeOutlineColor={errors.firstName ? theme.error : theme.primary}
+                style={{ backgroundColor: "transparent" }}
                 theme={{
                   colors: {
-                    onSurfaceVariant: theme.border,
+                    onSurfaceVariant: theme.textSecondary,
                     primary: theme.primary,
+                    text: theme.text,
+                    error: theme.error,
                   },
                 }}
+                left={<TextInput.Icon icon="account-outline" color={theme.primary} />}
               />
-              {errors.firstName && <Text style={styles.error}>{errors.firstName}</Text>}
+              {errors.firstName && <Text style={[styles.errorText, { color: theme.error }]}>{errors.firstName}</Text>}
             </View>
 
             {/* Last Name */}
             <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons name="person-outline" size={20} color={theme.primary} />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>Last Name</Text>
-              </View>
               <TextInput
                 value={lastName}
                 onChangeText={setLastName}
                 mode="outlined"
-                placeholder="Enter your last name"
+                label="Last Name"
+                placeholder="Your last name"
                 placeholderTextColor={theme.textSecondary}
-                style={[styles.textInput, { color: theme.text }]}
-                outlineColor={theme.border}
-                activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
+                outlineColor={errors.lastName ? theme.error : theme.border}
+                activeOutlineColor={errors.lastName ? theme.error : theme.primary}
+                style={{ backgroundColor: "transparent" }}
                 theme={{
                   colors: {
-                    onSurfaceVariant: theme.border,
+                    onSurfaceVariant: theme.textSecondary,
                     primary: theme.primary,
+                    text: theme.text,
+                    error: theme.error,
                   },
                 }}
+                left={<TextInput.Icon icon="account-outline" color={theme.primary} />}
               />
-              {errors.lastName && <Text style={styles.error}>{errors.lastName}</Text>}
+              {errors.lastName && <Text style={[styles.errorText, { color: theme.error }]}>{errors.lastName}</Text>}
             </View>
 
             {/* Username */}
             <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons name="at-outline" size={20} color={theme.primary} />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>Username</Text>
-              </View>
               <TextInput
                 value={username}
-                onChangeText={setUsername}
+                onChangeText={(val) => setUsername(val.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
                 mode="outlined"
-                placeholder="Enter your username"
+                label="Username"
+                placeholder="e.g. roomlink_bro"
                 placeholderTextColor={theme.textSecondary}
-                style={[styles.textInput, { color: theme.text }]}
-                outlineColor={theme.border}
-                activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
+                autoCapitalize="none"
+                outlineColor={
+                  checkingUsername ? theme.primary :
+                  usernameAvailable === true ? theme.success :
+                  usernameAvailable === false ? theme.error :
+                  theme.border
+                }
+                activeOutlineColor={
+                  checkingUsername ? theme.primary :
+                  usernameAvailable === true ? theme.success :
+                  usernameAvailable === false ? theme.error :
+                  theme.primary
+                }
+                style={{ backgroundColor: "transparent" }}
                 theme={{
                   colors: {
-                    onSurfaceVariant: theme.border,
+                    onSurfaceVariant: theme.textSecondary,
                     primary: theme.primary,
+                    text: theme.text,
+                    error: theme.error,
                   },
                 }}
+                left={<TextInput.Icon icon="at" color={theme.primary} />}
+                right={
+                  checkingUsername ? (
+                    <TextInput.Icon icon="timer-sand" color={theme.primary} />
+                  ) : usernameAvailable === true ? (
+                    <TextInput.Icon icon="check-circle" color={theme.success} />
+                  ) : usernameAvailable === false ? (
+                    <TextInput.Icon icon="close-circle" color={theme.error} />
+                  ) : null
+                }
               />
-              {errors.username && <Text style={styles.error}>{errors.username}</Text>}
+              {errors.username && <Text style={[styles.errorText, { color: theme.error }]}>{errors.username}</Text>}
+              {usernameAvailable === true && username.length >= 5 && !errors.username && (
+                <Text style={[styles.successText, { color: theme.success }]}>Available ✓</Text>
+              )}
             </View>
 
             {/* Email */}
             <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons name="mail-outline" size={20} color={theme.primary} />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>Email Address</Text>
-              </View>
               <TextInput
                 value={email}
                 onChangeText={setEmail}
                 mode="outlined"
-                placeholder="Enter your email"
+                label="Email"
+                placeholder="your@email.com"
                 placeholderTextColor={theme.textSecondary}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                style={[styles.textInput, { color: theme.text }]}
-                outlineColor={theme.border}
-                activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
+                outlineColor={errors.email ? theme.error : theme.border}
+                activeOutlineColor={errors.email ? theme.error : theme.primary}
+                style={{ backgroundColor: "transparent" }}
                 theme={{
                   colors: {
-                    onSurfaceVariant: theme.border,
+                    onSurfaceVariant: theme.textSecondary,
                     primary: theme.primary,
+                    text: theme.text,
+                    error: theme.error,
                   },
                 }}
+                left={<TextInput.Icon icon="email-outline" color={theme.primary} />}
               />
-              {errors.email && <Text style={styles.error}>{errors.email}</Text>}
+              {errors.email && <Text style={[styles.errorText, { color: theme.error }]}>{errors.email}</Text>}
             </View>
 
             {/* Password */}
             <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons name="lock-closed-outline" size={20} color={theme.primary} />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>Password</Text>
-              </View>
               <TextInput
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={!showPassword}
                 mode="outlined"
-                placeholder="Enter your password"
+                label="Password"
+                placeholder="••••••••"
                 placeholderTextColor={theme.textSecondary}
-                style={[styles.textInput, { color: theme.text }]}
-                outlineColor={theme.border}
-                activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
+                outlineColor={errors.password ? theme.error : theme.border}
+                activeOutlineColor={errors.password ? theme.error : theme.primary}
+                style={{ backgroundColor: "transparent" }}
                 theme={{
                   colors: {
-                    onSurfaceVariant: theme.border,
+                    onSurfaceVariant: theme.textSecondary,
                     primary: theme.primary,
+                    text: theme.text,
+                    error: theme.error,
                   },
                 }}
+                left={<TextInput.Icon icon="lock-outline" color={theme.primary} />}
                 right={
                   <TextInput.Icon
                     icon={showPassword ? "eye-off" : "eye"}
@@ -378,32 +431,31 @@ export default function Signup() {
                   />
                 }
               />
-              {errors.password && <Text style={styles.error}>{errors.password}</Text>}
+              {errors.password && <Text style={[styles.errorText, { color: theme.error }]}>{errors.password}</Text>}
             </View>
 
             {/* Confirm Password */}
             <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons name="lock-closed-outline" size={20} color={theme.primary} />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>Confirm Password</Text>
-              </View>
               <TextInput
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
                 secureTextEntry={!showConfirmPassword}
                 mode="outlined"
-                placeholder="Confirm your password"
+                label="Confirm Password"
+                placeholder="••••••••"
                 placeholderTextColor={theme.textSecondary}
-                style={[styles.textInput, { color: theme.text }]}
-                outlineColor={theme.border}
-                activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
+                outlineColor={errors.confirmPassword ? theme.error : theme.border}
+                activeOutlineColor={errors.confirmPassword ? theme.error : theme.primary}
+                style={{ backgroundColor: "transparent" }}
                 theme={{
                   colors: {
-                    onSurfaceVariant: theme.border,
+                    onSurfaceVariant: theme.textSecondary,
                     primary: theme.primary,
+                    text: theme.text,
+                    error: theme.error,
                   },
                 }}
+                left={<TextInput.Icon icon="lock-outline" color={theme.primary} />}
                 right={
                   <TextInput.Icon
                     icon={showConfirmPassword ? "eye-off" : "eye"}
@@ -412,420 +464,249 @@ export default function Signup() {
                   />
                 }
               />
-              {errors.confirmPassword && <Text style={styles.error}>{errors.confirmPassword}</Text>}
+              {errors.confirmPassword && <Text style={[styles.errorText, { color: theme.error }]}>{errors.confirmPassword}</Text>}
             </View>
 
-            {/* Terms Agreement */}
+            {/* Terms */}
             <View style={styles.agreeContainer}>
               <Checkbox.Android
                 status={agree ? "checked" : "unchecked"}
                 onPress={() => setAgree(!agree)}
                 color={theme.primary}
-                uncheckedColor={theme.primary}
+                uncheckedColor={theme.border}
               />
               <Text style={[styles.agreeText, { color: theme.text }]}>
                 I agree to the{" "}
-                <Text style={[styles.linkText, { color: theme.primary }]}>Terms & Privacy Policy</Text>
+                <Text style={[styles.linkText, { color: theme.primary }]}>Terms & Privacy</Text>
               </Text>
             </View>
-            {errors.agree && <Text style={styles.error}>{errors.agree}</Text>}
+            {errors.agree && <Text style={[styles.errorText, { color: theme.error }]}>{errors.agree}</Text>}
 
-            {/* 🆕 Signup Button */}
-            <Button
-              mode="contained"
-              onPress={handleSignup}
+            {/* Signup Button */}
+            <TouchableOpacity
               style={[
                 styles.signupButton,
-                { backgroundColor: theme.primary }
+                { backgroundColor: theme.primary, opacity: loading || checkingUsername ? 0.7 : 1 },
               ]}
-              labelStyle={styles.signupButtonText}
-              loading={loading}
-              disabled={loading}
+              onPress={handleSendOTP}
+              disabled={loading || checkingUsername}
+              activeOpacity={0.8}
             >
-              {loading ? "Creating Account..." : "Create Account"}
-            </Button>
+              {loading ? (
+                <ActivityIndicator size="small" color="#000" />
+              ) : (
+                <Text style={styles.signupButtonText}>Create Account</Text>
+              )}
+            </TouchableOpacity>
           </View>
 
-          {/* 🆕 Security Badge */}
-          <View style={[
-            styles.securityBadge,
-            { 
-              backgroundColor: 'rgba(1, 122, 107, 0.05)',
-              borderColor: 'rgba(1, 122, 107, 0.1)'
-            }
-          ]}>
-            <Ionicons name="shield-checkmark-outline" size={20} color={theme.primary} />
-            <Text style={[styles.securityText, { color: theme.textSecondary }]}>
-              Your data is secured with encryption
+          {/* Login CTA */}
+          <View style={styles.loginContainer}>
+            <Text style={[styles.loginText, { color: theme.textSecondary }]}>
+              Already have an account?
             </Text>
+            <TouchableOpacity onPress={() => navigation.navigate("Login")}>
+              <Text style={[styles.loginLink, { color: theme.primary }]}>
+                Sign in
+              </Text>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* 🆕 Login CTA - FIXED */}
-      <View style={[
-        styles.loginContainer,
-        { 
-          backgroundColor: theme.card,
-          borderTopColor: theme.border
-        }
-      ]}>
-        <Text style={[styles.loginText, { color: theme.textSecondary }]}>
-          Already have an account?
-        </Text>
-        <TouchableOpacity
-          style={[
-            styles.loginButton,
-            { 
-              backgroundColor: 'rgba(1, 122, 107, 0.08)', 
-              borderColor: theme.primary 
-            }
-          ]}
-          onPress={() => navigation.navigate("Login")}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="log-in-outline" size={18} color={theme.primary} />
-          <Text style={[styles.loginButtonText, { color: theme.primary }]}>
-            Sign In
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* 🆕 Country Modal - RLMARKET Styled */}
+      {/* Country Modal */}
       <Modal
         visible={countryModalVisible}
         animationType="slide"
         transparent
         onRequestClose={() => setCountryModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[
-            styles.modalContainer,
-            { 
-              backgroundColor: theme.card,
-              borderTopColor: theme.border,
-              borderTopWidth: 1
-            }
-          ]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: theme.text }]}>
-                Select Country
-              </Text>
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={() => setCountryModalVisible(false)}
-              >
-                <Ionicons name="close-outline" size={24} color={theme.primary} />
-              </TouchableOpacity>
-            </View>
+        <TouchableWithoutFeedback onPress={() => setCountryModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={[
+                styles.modalContainer,
+                { backgroundColor: theme.card, borderTopColor: theme.border }
+              ]}>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalTitle, { color: theme.text }]}>Select Country</Text>
+                  <TouchableOpacity onPress={() => setCountryModalVisible(false)}>
+                    <Ionicons name="close" size={24} color={theme.primary} />
+                  </TouchableOpacity>
+                </View>
 
-            <TextInput
-              value={search}
-              onChangeText={setSearch}
-              mode="outlined"
-              placeholder="Search country..."
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.searchInput, { color: theme.text }]}
-              outlineColor={theme.border}
-              activeOutlineColor={theme.primary}
-              contentStyle={{ color: theme.text }}
-              theme={{
-                colors: {
-                  onSurfaceVariant: theme.border,
-                  primary: theme.primary,
-                },
-              }}
-              left={<TextInput.Icon icon="magnify" color={theme.primary} />}  // Solid magnify (most common)
-            />
+                <TextInput
+                  value={search}
+                  onChangeText={setSearch}
+                  mode="outlined"
+                  placeholder="Search country..."
+                  placeholderTextColor={theme.textSecondary}
+                  style={[styles.searchInput, { color: theme.text }]}
+                  outlineColor={theme.border}
+                  activeOutlineColor={theme.primary}
+                  theme={{
+                    colors: {
+                      onSurfaceVariant: theme.textSecondary,
+                      primary: theme.primary,
+                      text: theme.text,
+                    },
+                  }}
+                  left={<TextInput.Icon icon="magnify" color={theme.primary} />}
+                />
 
-            <FlatList
-              data={filteredCountries}
-              keyExtractor={(item) => item.code}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.countryItem,
-                    { 
-                      backgroundColor: theme.card,
-                      borderBottomColor: theme.border,
-                      opacity: item.active ? 1 : 0.5 
-                    }
-                  ]}
-                  onPress={() => handleSelectCountry(item)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.countryFlag}>{item.flag}</Text>
-                  <View style={styles.countryInfo}>
-                    <Text style={[styles.countryName, { color: theme.text }]}>
-                      {item.name}
-                    </Text>
-                    <Text style={[styles.countryDetails, { color: theme.textSecondary }]}>
-                      {item.symbol} {item.currency}
-                    </Text>
-                  </View>
-                  {!item.active && (
-                    <Text style={[styles.comingSoon, { color: theme.textSecondary }]}>
-                      Coming Soon
-                    </Text>
+                <FlatList
+                  data={filteredCountries}
+                  keyExtractor={(item) => item.code}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={[
+                        styles.countryItem,
+                        { borderBottomColor: theme.border }
+                      ]}
+                      onPress={() => handleSelectCountry(item)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.countryFlag}>{item.flag}</Text>
+                      <View style={styles.countryInfo}>
+                        <Text style={[styles.countryName, { color: theme.text }]}>
+                          {item.name}
+                        </Text>
+                        <Text style={[styles.countryDetails, { color: theme.textSecondary }]}>
+                          {item.symbol} {item.currency}
+                        </Text>
+                      </View>
+                      {!item.active && (
+                        <Text style={[styles.comingSoon, { color: theme.textSecondary }]}>
+                          Coming Soon
+                        </Text>
+                      )}
+                    </TouchableOpacity>
                   )}
-                </TouchableOpacity>
-              )}
-              showsVerticalScrollIndicator={false}
-            />
+                  showsVerticalScrollIndicator={false}
+                />
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  keyboardView: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  keyboardView: { flex: 1 },
   scrollContainer: {
     flexGrow: 1,
-    padding: 24,
-    paddingTop: 20,
-    paddingBottom: 140,
+    padding: 20,
+    paddingTop: 60,
+    paddingBottom: 80,
   },
-
-  // 🆕 RLMARKET Header - EXACT SAME AS LOGIN
+  backButton: {
+    position: "absolute",
+    top: 5,
+    left: 10,
+    zIndex: 10,
+    padding: 8,
+  },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 32,
   },
   rlBadge: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    marginRight: 16,
-  },
-  rlText: {
-    fontSize: 24,
-    fontWeight: '900',
-    letterSpacing: -1.5,
-  },
-  headerContent: {
-    flex: 1,
-  },
-  welcomeTitle: {
-    fontSize: 28,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    lineHeight: 34,
-  },
-  welcomeSubtitle: {
-    fontSize: 16,
-    fontWeight: '500',
-    marginTop: 6,
-    lineHeight: 22,
-  },
-
-  // 🆕 Signup Card
-  signupCard: {
-    borderRadius: 24,
-    padding: 24,
-    marginBottom: 24,
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    elevation: 8,
-  },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  inputHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginLeft: 10,
-    letterSpacing: 0.3,
-  },
-  textInput: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  countryBox: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
+    width: 40,
+    height: 40,
     borderRadius: 12,
-    padding: 16,
-    minHeight: 56,
-  },
-  countryText: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-
-  // Agreement
-  agreeContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginTop: 20,
-    marginBottom: 24,
-  },
-  agreeText: {
-    fontSize: 15,
-    lineHeight: 22,
-    flex: 1,
-    marginLeft: 12,
-  },
-  linkText: {
-    fontWeight: '700',
-  },
-
-  // Buttons
-  signupButton: {
-    paddingVertical: 18,
-    borderRadius: 16,
-    marginTop: 8,
-    elevation: 10,
-  },
-  signupButtonText: {
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-
-  // Security Badge
-  securityBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    marginBottom: 24,
-  },
-  securityText: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 12,
-    lineHeight: 18,
-  },
-
-  // FIXED Login CTA
-  loginContainer: {
-    position: 'absolute',
-    bottom: 30,
-    left: 24,
-    right: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 20,
-    borderTopWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  loginText: {
-    fontSize: 15,
-    fontWeight: '500',
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1.5,
     marginRight: 12,
   },
-  loginButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  rlText: { fontSize: 18, fontWeight: "900", letterSpacing: -1 },
+  headerContent: { flex: 1 },
+  welcomeTitle: { fontSize: 24, fontWeight: "900" },
+  welcomeSubtitle: { fontSize: 14, marginTop: 4 },
+  signupCard: {
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  inputContainer: { marginBottom: 14 },
+  countryItem: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    borderWidth: 1.5,
-  },
-  loginButtonText: {
-    fontSize: 15,
-    fontWeight: '800',
-    marginLeft: 8,
-    letterSpacing: 0.3,
-  },
-
-  // Error styling
-  error: {
-    color: '#ef4444',
-    fontSize: 13,
-    marginTop: 4,
-    marginLeft: 4,
-    fontWeight: '500',
-  },
-
-  // 🆕 Country Modal - RLMARKET Styled
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContainer: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: '80%',
-    padding: 0,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 24,
-    paddingBottom: 16,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-  },
-  closeButton: {
-    padding: 8,
-  },
-  searchInput: {
-    fontSize: 16,
-    fontWeight: '500',
-    margin: 24,
+  countryFlag: { fontSize: 22, marginRight: 12 },
+  countryInfo: { flex: 1 },
+  countryName: { fontSize: 15, fontWeight: "600" },
+  countryDetails: { fontSize: 13, marginTop: 1 },
+  comingSoon: { fontSize: 12, fontWeight: "500" },
+  agreeContainer: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginTop: 12,
     marginBottom: 16,
   },
-  countryItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
+  agreeText: { fontSize: 14, lineHeight: 20, flex: 1, marginLeft: 8 },
+  linkText: { fontWeight: "700" },
+  signupButton: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  signupButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  loginContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginTop: 28,
+  },
+  loginText: { fontSize: 14 },
+  loginLink: {
+    fontSize: 14,
+    fontWeight: "700",
+    marginLeft: 6,
+  },
+  errorText: {
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  successText: {
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalContainer: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "80%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
     borderBottomWidth: 1,
   },
-  countryFlag: {
-    fontSize: 24,
-    marginRight: 16,
-  },
-  countryInfo: {
-    flex: 1,
-  },
-  countryName: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  countryDetails: {
-    fontSize: 14,
-    marginTop: 2,
-  },
-  comingSoon: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
+  modalTitle: { fontSize: 18, fontWeight: "700" },
+  searchInput: { margin: 16, marginBottom: 8 },
 });

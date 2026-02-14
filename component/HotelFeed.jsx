@@ -1,4 +1,4 @@
-// component/HotelFeed.jsx — FIXED: Removed Intl, used manual formatter + location icon + safe rendering
+// component/HotelFeed.jsx — FIXED: smaller gray price text
 import React, { useContext, useMemo, useEffect, useState } from "react";
 import {
   View,
@@ -20,6 +20,7 @@ import { ListingContext } from "../context/ListingContext";
 import { UserContext } from "../context/UserContext";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
+
 import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
 import RedBadge from "../assets/icons/red.svg";
@@ -27,11 +28,8 @@ import RedBadge from "../assets/icons/red.svg";
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
 
-// Manual formatter (no Intl dependency - fixes Android/Hermes crash)
 const formatPricePerNight = (price) => {
   if (!price) return "Price on request";
-
-  // Add commas + ₦ prefix
   const formatted = price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return "₦" + formatted + " / night";
 };
@@ -85,6 +83,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
     const fetchUserInfo = async () => {
       const uniqueUserIds = [...new Set(posts.map((p) => p.userId).filter(Boolean))];
       const newInfo = {};
+
       await Promise.all(
         uniqueUserIds.map(async (uid) => {
           if (!userInfoMap[uid]) {
@@ -96,18 +95,34 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
                   name: getFullName(data),
                   avatar: data.photoURL || data.profileImage || data.avatar || null,
                   verificationType: data.verificationType || null,
+                  averageRating: data.averageRating || 0,
+                  reviewCount: data.reviewCount || 0,
                 };
               } else {
-                newInfo[uid] = { name: "User", avatar: null, verificationType: null };
+                newInfo[uid] = {
+                  name: "User",
+                  avatar: null,
+                  verificationType: null,
+                  averageRating: 0,
+                  reviewCount: 0,
+                };
               }
             } catch (err) {
-              newInfo[uid] = { name: "User", avatar: null, verificationType: null };
+              newInfo[uid] = {
+                name: "User",
+                avatar: null,
+                verificationType: null,
+                averageRating: 0,
+                reviewCount: 0,
+              };
             }
           }
         })
       );
+
       setUserInfoMap((prev) => ({ ...prev, ...newInfo }));
     };
+
     if (posts.length > 0) fetchUserInfo();
   }, [posts]);
 
@@ -118,7 +133,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
       cardBorder: { borderBottomColor: isDark ? "#444" : "#ddd" },
       textColor: { color: isDark ? "#fff" : "#000" },
       secondaryText: { color: isDark ? "#aaa" : "gray" },
-      priceColor: { color: "#00ff7f" },
+      priceColor: { color: isDark ? "#aaa" : "#888" }, // ← CHANGED: gray instead of green
       noImageBg: { backgroundColor: isDark ? "#3a3a3a" : "#eee" },
       dropdownBg: { backgroundColor: isDark ? "#333" : "#fff" },
       dropdownText: { color: isDark ? "#fff" : "#111" },
@@ -155,12 +170,17 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
 
   const renderPost = ({ item, index }) => {
     if (!item) return null;
+
     const isMyPost = item.userId === currentUser?.uid;
     const ownerId = item.userId;
     const userInfo = userInfoMap[ownerId] || {};
     const fullName = userInfo.name || "User";
-    const avatarUri = userInfo.avatar || (isMyPost ? currentUser?.photoURL || currentUser?.avatar : null);
+    const avatarUri =
+      userInfo.avatar || (isMyPost ? currentUser?.photoURL || currentUser?.avatar : null);
     const verificationType = userInfo.verificationType;
+
+    const hasRating = userInfo.averageRating > 0 || userInfo.reviewCount > 0;
+
     const images = Array.isArray(item.images) && item.images.length > 0 ? item.images : [];
     const isBoosted = item.boostedUntil && new Date(item.boostedUntil) > new Date();
 
@@ -183,18 +203,58 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
                 </View>
               )}
             </TouchableOpacity>
-            <View style={{ marginLeft: 10, flex: 1 }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
+
+            <View style={styles.nameContainer}>
+              <View style={styles.nameRow}>
                 <Text style={[styles.userName, dynamicStyles.textColor]}>{fullName}</Text>
-                {verificationType === "vendor" && <YellowBadge width={24} height={24} style={{ marginLeft: 6 }} />}
-                {verificationType === "studentLandlord" && <BlueBadge width={24} height={24} style={{ marginLeft: 6 }} />}
-                {verificationType === "realEstate" && <RedBadge width={24} height={24} style={{ marginLeft: 6 }} />}
+                {verificationType === "vendor" && (
+                  <YellowBadge width={24} height={24} style={{ marginLeft: 6 }} />
+                )}
+                {verificationType === "studentLandlord" && (
+                  <BlueBadge width={24} height={24} style={{ marginLeft: 6 }} />
+                )}
+                {verificationType === "realEstate" && (
+                  <RedBadge width={24} height={24} style={{ marginLeft: 6 }} />
+                )}
               </View>
-              <Text style={dynamicStyles.secondaryText}>{timeAgo(item.createdAt)}</Text>
+
+              <View style={styles.secondaryRow}>
+                {hasRating && (
+                  <View style={styles.ratingRow}>
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <Ionicons
+                        key={s}
+                        name={
+                          s <= Math.floor(userInfo.averageRating || 0)
+                            ? "star"
+                            : s <= (userInfo.averageRating || 0)
+                            ? "star-half"
+                            : "star-outline"
+                        }
+                        size={11}
+                        color={s <= (userInfo.averageRating || 0) ? "#FFA41C" : "#888"}
+                        style={{ marginRight: 1 }}
+                      />
+                    ))}
+                    <Text style={styles.ratingText}>
+                      {userInfo.averageRating?.toFixed(1) || "0.0"}
+                    </Text>
+                  </View>
+                )}
+
+                <Text style={[dynamicStyles.secondaryText, styles.timestamp]}>
+                  {timeAgo(item.createdAt)}
+                  {hasRating && " • "}
+                  {hasRating && <Text style={styles.reviewCount}>({userInfo.reviewCount})</Text>}
+                </Text>
+              </View>
             </View>
           </View>
 
-          <TouchableOpacity activeOpacity={0.95} onPress={() => navigation.navigate("ListingDetails", { listing: item })}>
+          <TouchableOpacity
+            activeOpacity={0.95}
+            onPress={() => navigation.navigate("ListingDetails", { listing: item })}
+          >
             {isBoosted && (
               <View style={styles.boostedBadge}>
                 <Ionicons name="flame" size={16} color="#FF9500" />
@@ -205,7 +265,13 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
             {images.length > 0 ? (
               <Image source={{ uri: images[0] }} style={styles.postImage} resizeMode="cover" />
             ) : (
-              <View style={[styles.postImage, dynamicStyles.noImageBg, { justifyContent: "center", alignItems: "center" }]}>
+              <View
+                style={[
+                  styles.postImage,
+                  dynamicStyles.noImageBg,
+                  { justifyContent: "center", alignItems: "center" },
+                ]}
+              >
                 <Text style={{ color: isDark ? "#ccc" : "#888" }}>No Photos</Text>
               </View>
             )}
@@ -215,13 +281,18 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
                 {item.title || "Untitled Listing"}
               </Text>
 
+              {/* PRICE TEXT – NOW SMALLER & GRAY */}
               <Text style={[styles.price, dynamicStyles.priceColor]}>
                 {formatPricePerNight(item.pricePerNight)}
               </Text>
 
-              {/* Location with icon */}
               <View style={styles.locationRow}>
-                <Ionicons name="location-outline" size={16} color={isDark ? "#aaa" : "#666"} style={styles.locationIcon} />
+                <Ionicons
+                  name="location-outline"
+                  size={16}
+                  color={isDark ? "#aaa" : "#666"}
+                  style={styles.locationIcon}
+                />
                 <Text style={dynamicStyles.secondaryText} numberOfLines={1}>
                   {safeString(item.location)}
                 </Text>
@@ -262,7 +333,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
     <View style={[styles.container, dynamicStyles.containerBg]}>
       <AnimatedFlatList
         data={posts}
-        keyExtractor={(item, index) => `${item.id || 'hotel-unknown'}-${index}`}
+        keyExtractor={(item, index) => `${item.id || "hotel-unknown"}-${index}`}
         renderItem={renderPost}
         contentContainerStyle={{ paddingTop: 180, paddingBottom: 60 }}
         showsVerticalScrollIndicator={false}
@@ -285,60 +356,126 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+
   card: {
     marginBottom: 15,
     borderBottomWidth: 3,
     paddingBottom: 10,
     borderRadius: 12,
   },
+
   userRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     padding: 10,
     marginBottom: 6,
   },
-  avatar: { width: 40, height: 40, borderRadius: 20 },
+
+  avatar: { width: 44, height: 44, borderRadius: 22 },
+
   defaultAvatar: {
     backgroundColor: "#017a6b",
     justifyContent: "center",
     alignItems: "center",
   },
-  defaultAvatarText: { color: "#fff", fontWeight: "bold", fontSize: 18 },
-  userName: { fontWeight: "700", fontSize: 15 },
+
+  defaultAvatarText: { color: "#fff", fontWeight: "bold", fontSize: 20 },
+
+  nameContainer: {
+    marginLeft: 12,
+    flex: 1,
+  },
+
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+
+  userName: {
+    fontWeight: "700",
+    fontSize: 15.5,
+  },
+
+  secondaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    marginTop: 2,
+    gap: 8,
+  },
+
+  ratingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  ratingText: {
+    marginLeft: 4,
+    fontSize: 11.5,
+    fontWeight: "600",
+    color: "#333",
+  },
+
+  reviewCount: {
+    fontSize: 10,
+    color: "#777",
+    fontWeight: "400",
+  },
+
+  timestamp: {
+    fontSize: 12,
+  },
+
   postImage: { width: SCREEN_WIDTH, height: 250 },
+
   listingInfo: { padding: 10 },
+
   listingTitle: { fontSize: 18, fontWeight: "800", lineHeight: 24, marginBottom: 8 },
-  price: { fontSize: 20, fontWeight: "900", letterSpacing: 0.5, marginBottom: 4 },
+
+  // PRICE STYLES – NOW SMALLER & GRAY
+  price: {
+    fontSize: 14,           // ← smaller size
+    fontWeight: "500",      // ← less bold
+    letterSpacing: 0.2,
+    marginBottom: 4,
+  },
+
   locationRow: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 4,
   },
+
   locationIcon: {
     marginRight: 6,
   },
+
   buttonRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginTop: 10,
   },
+
   reserveButton: {
     flex: 1,
     backgroundColor: "#017a6b",
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    paddingVertical: 12,
+    paddingVertical: 6,
     borderRadius: 8,
     marginRight: 10,
   },
+
   reserveText: {
     color: "#fff",
     fontWeight: "bold",
     fontSize: 14,
     marginLeft: 8,
   },
+
   menuShield: {
     padding: 8,
     borderRadius: 12,
@@ -346,6 +483,7 @@ const styles = StyleSheet.create({
     borderColor: "#888",
     borderWidth: 1,
   },
+
   dropdownContainer: {
     position: "absolute",
     top: 40,
@@ -360,7 +498,9 @@ const styles = StyleSheet.create({
     minWidth: 140,
     zIndex: 10,
   },
+
   dropdownItem: { paddingVertical: 10, fontSize: 15 },
+
   boostedBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -373,18 +513,22 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     marginTop: 10,
   },
+
   boostedBadgeText: {
     color: "#FF9500",
     fontWeight: "bold",
     fontSize: 13,
     marginLeft: 5,
   },
+
   emptyState: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     paddingTop: 100,
   },
+
   emptyText: { fontSize: 18, fontWeight: "600", marginBottom: 8 },
+
   emptySubtext: { fontSize: 14 },
 });

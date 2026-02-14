@@ -14,6 +14,7 @@ import {
   Modal,
   TouchableWithoutFeedback,
   Alert,
+  RefreshControl,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useUser } from "../context/UserContext";
@@ -112,6 +113,7 @@ export default function Conversation() {
   const [archivedConvos, setArchivedConvos] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedConvo, setSelectedConvo] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Pinned/Archived listener
   useEffect(() => {
@@ -254,23 +256,11 @@ export default function Conversation() {
   }, [navigation, userId]);
 
   // Real-time listener — uses readBy for accurate unread count
-  useEffect(() => {
+  const loadConversations = () => {
     if (!userId) {
       setLoading(false);
-      return;
+      return () => {};
     }
-
-    const sentQuery = query(
-      collection(db, "messages"),
-      where("senderId", "==", userId),
-      orderBy("createdAt", "desc")
-    );
-
-    const receivedQuery = query(
-      collection(db, "messages"),
-      where("receiverId", "==", userId),
-      orderBy("createdAt", "desc")
-    );
 
     const convoMap = new Map();
 
@@ -325,6 +315,18 @@ export default function Conversation() {
       setLoading(false);
     };
 
+    const sentQuery = query(
+      collection(db, "messages"),
+      where("senderId", "==", userId),
+      orderBy("createdAt", "desc")
+    );
+
+    const receivedQuery = query(
+      collection(db, "messages"),
+      where("receiverId", "==", userId),
+      orderBy("createdAt", "desc")
+    );
+
     const unsubSent = onSnapshot(sentQuery, processSnapshot);
     const unsubReceived = onSnapshot(receivedQuery, processSnapshot);
 
@@ -332,7 +334,21 @@ export default function Conversation() {
       unsubSent();
       unsubReceived();
     };
+  };
+
+  useEffect(() => {
+    const unsub = loadConversations();
+    return unsub;
   }, [userId, pinnedConvos, archivedConvos]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    const unsub = loadConversations();
+    setTimeout(() => {
+      setRefreshing(false);
+      if (unsub) unsub();
+    }, 1000);
+  };
 
   const renderItem = ({ item }) => {
     const hasUnread = item.unreadCount > 0;
@@ -430,6 +446,12 @@ export default function Conversation() {
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingTop: 8 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+            />
+          }
         />
       )}
       {/* LONG PRESS MODAL */}

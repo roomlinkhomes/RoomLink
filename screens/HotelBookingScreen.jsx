@@ -1,4 +1,4 @@
-// screens/HotelBookingScreen.jsx — FULL FILE with Curved Bottom Gallery + Clean Back Arrow
+// screens/HotelBookingScreen.jsx
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -16,8 +16,6 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
-import { db, auth } from "../firebaseConfig";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -233,71 +231,29 @@ export default function HotelBookingScreen({ route }) {
     }
   };
 
-  const handlePayNow = async () => {
+  const handleContinue = () => {
     if (!checkIn || !checkOut) {
       Alert.alert("Select Dates", "Please choose check-in and check-out dates.");
       return;
     }
 
-    const user = auth.currentUser;
-    if (!user) {
-      Alert.alert("Login Required", "Please log in to book.");
-      navigation.navigate("Login");
+    if (nights < 1) {
+      Alert.alert("Invalid Dates", "Check-out must be after check-in.");
       return;
     }
 
-    setLoading(true);
-
-    try {
-      const bookingRef = await addDoc(collection(db, "bookings"), {
-        listingId: listing.id,
-        listingTitle: listing.title,
-        listingImages: listing.images,
-        hostId: listing.userId,
-        buyerId: user.uid,
-        buyerEmail: user.email,
-        checkIn: checkIn.toISOString(),
-        checkOut: checkOut.toISOString(),
-        nights,
-        pricePerNight,
-        totalAmount: totalPrice,
-        currency: "NGN",
-        status: "pending_payment",
-        createdAt: serverTimestamp(),
-      });
-
-      const res = await fetch(
-        "https://us-central1-roomlink-homes.cloudfunctions.net/initializePaystack",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: user.email,
-            amount: Math.round(totalPrice * 100),
-            reference: `roomlink_booking_${bookingRef.id}_${Date.now()}`,
-            bookingId: bookingRef.id,
-            callback_url: "roomlink://payment-success",
-          }),
-        }
-      );
-
-      const data = await res.json();
-
-      if (!data || !data.url) {
-        throw new Error(data?.message || "Failed to start payment.");
-      }
-
-      setLoading(false);
-
-      navigation.navigate("PaystackWebView", {
-        url: data.url,
-        bookingId: bookingRef.id,
-      });
-    } catch (error) {
-      console.log("Payment Error:", error);
-      setLoading(false);
-      Alert.alert("Payment Error", error.message || "Please try again.");
-    }
+    navigation.navigate("GuestDetails", {
+      listing,
+      checkIn: checkIn.toISOString(),
+      checkOut: checkOut.toISOString(),
+      nights,
+      pricePerNight,
+      totalAmount: totalPrice,
+      // Feel free to pass more if your GuestDetails screen needs them:
+      // listingTitle: listing.title,
+      // listingLocation: listing.location,
+      // thumbnail: images[0] || null,
+    });
   };
 
   if (!listing) {
@@ -310,6 +266,8 @@ export default function HotelBookingScreen({ route }) {
 
   const displayedAmenities = showMoreAmenities ? amenities : amenities.slice(0, 10);
   const displayedRules = showMoreRules ? houseRules : houseRules.slice(0, 10);
+
+  const hasDates = checkIn && checkOut && nights > 0;
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: isDark ? "#121212" : "#fff" }]}>
@@ -340,7 +298,7 @@ export default function HotelBookingScreen({ route }) {
           </View>
         </TouchableOpacity>
 
-        {/* Clean Back Arrow (no background) */}
+        {/* Clean Back Arrow */}
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backButtonOverlay}
@@ -457,27 +415,34 @@ export default function HotelBookingScreen({ route }) {
           </View>
         )}
 
-        {/* Non-refundable Warning */}
+        {/* Warning */}
         <View style={styles.warningBox}>
           <Ionicons name="alert-circle-outline" size={28} color="#FF9500" />
           <Text style={styles.warningText}>
-            This booking is final and non-refundable once payment is made. Please review dates carefully before proceeding.
+            Booking is final and non-refundable after payment. Please enter correct guest details on the next screen.
           </Text>
         </View>
 
-        {/* Pay Button */}
+        {/* Continue Button */}
         <TouchableOpacity
-          style={[styles.payButton, (loading || nights === 0) && { opacity: 0.6 }]}
-          onPress={handlePayNow}
-          disabled={loading || nights === 0}
+          style={[
+            styles.payButton,
+            !hasDates && { opacity: 0.6, backgroundColor: "#999" },
+          ]}
+          onPress={handleContinue}
+          disabled={loading || !hasDates}
         >
           {loading ? (
             <ActivityIndicator size="small" color="#fff" />
           ) : (
             <>
-              <Ionicons name="card-outline" size={24} color="#fff" />
+              <Ionicons
+                name={hasDates ? "arrow-forward" : "calendar-outline"}
+                size={24}
+                color="#fff"
+              />
               <Text style={styles.payButtonText}>
-                {nights > 0 ? `Pay Now • ₦${totalPrice.toLocaleString()}` : "Select Dates to Book"}
+                {hasDates ? "Continue" : "Select Dates to Continue"}
               </Text>
             </>
           )}
@@ -497,7 +462,7 @@ export default function HotelBookingScreen({ route }) {
       )}
       {showCheckOut && (
         <DateTimePicker
-          value={checkOut || new Date(checkIn?.getTime() + 86400000)}
+          value={checkOut || new Date(checkIn?.getTime() + 86400000 || Date.now())}
           mode="date"
           minimumDate={checkIn ? new Date(checkIn.getTime() + 86400000) : new Date()}
           onChange={onChangeCheckOut}
@@ -510,7 +475,6 @@ export default function HotelBookingScreen({ route }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
 
-  // Curved gallery
   imageGalleryContainer: {
     position: "relative",
     width: "100%",
@@ -534,7 +498,6 @@ const styles = StyleSheet.create({
   },
   noImageText: { marginTop: 12, fontSize: 16, color: "#999" },
 
-  // Clean back arrow
   backButtonOverlay: {
     position: "absolute",
     top: Platform.OS === "ios" ? 50 : 20,
@@ -641,7 +604,7 @@ const styles = StyleSheet.create({
   payButtonText: {
     color: "#fff",
     fontSize: 20,
-    fontWeight: "bold", 
+    fontWeight: "bold",
     marginLeft: 12,
   },
 });

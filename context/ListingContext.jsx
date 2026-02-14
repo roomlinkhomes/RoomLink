@@ -1,4 +1,4 @@
-// context/ListingContext.jsx — FIXED: Now saves amenities + all future fields
+// context/ListingContext.jsx — FIXED: Removed getIdToken calls + aggressive cache clear + debug logs
 import React, { createContext, useState, useEffect, useContext } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { UserContext } from "./UserContext";
@@ -19,116 +19,161 @@ export const VendorListingContext = createContext();
 
 export const ListingProvider = ({ children }) => {
   const { user } = useContext(UserContext);
+
   const [listings, setListings] = useState([]);
   const [vendorListings, setVendorListings] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Load cached data
+  // Clear cache on every login (prevents showing stale/empty data)
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [savedListings, savedVendor] = await Promise.all([
-          AsyncStorage.getItem("listings"),
-          AsyncStorage.getItem("vendorListings"),
-        ]);
-        if (savedListings) setListings(JSON.parse(savedListings));
-        if (savedVendor) setVendorListings(JSON.parse(savedVendor));
-      } catch (err) {
-        console.log("Error loading data:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadData();
-  }, []);
-
-  // Save to AsyncStorage
-  useEffect(() => {
-    if (!loading) {
-      Promise.all([
-        AsyncStorage.setItem("listings", JSON.stringify(listings)),
-        AsyncStorage.setItem("vendorListings", JSON.stringify(vendorListings)),
-      ]).catch((err) => console.log("Error saving data:", err));
+    if (user?.uid) {
+      const clearOnLogin = async () => {
+        try {
+          await AsyncStorage.multiRemove(["listings", "vendorListings"]);
+          console.log("[ListingContext] Cleared stale cache on fresh login");
+          setListings([]); // Force UI to wait for Firestore
+        } catch (err) {
+          console.log("Cache clear failed:", err);
+        }
+      };
+      clearOnLogin();
+    } else {
+      // Logged out → clear everything
+      setListings([]);
+      setVendorListings([]);
+      setLoading(false);
     }
+  }, [user?.uid]);
+
+  // Save to AsyncStorage when data changes (after loading)
+  useEffect(() => {
+    if (loading) return;
+    Promise.all([
+      AsyncStorage.setItem("listings", JSON.stringify(listings)),
+      AsyncStorage.setItem("vendorListings", JSON.stringify(vendorListings)),
+    ]).catch((err) => console.log("Save error:", err));
   }, [listings, vendorListings, loading]);
 
-  // Firestore listener for main listings
+  // Main listings listener (no getIdToken – Expo/Firebase handles token refresh)
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!user?.uid) {
+      setListings([]);
+      setLoading(false);
+      return;
+    }
 
-    const q = query(collection(db, "listings"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allListings = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+    setLoading(true);
 
-      const boosted = allListings.filter((item) => {
-        return item.boostedUntil && new Date(item.boostedUntil) > new Date();
-      });
+    console.log("[ListingContext] Starting main listener for uid:", user.uid);
 
-      const normal = allListings.filter((item) => {
-        return !item.boostedUntil || new Date(item.boostedUntil) <= new Date();
-      });
+    let retryCount = 0;
+    const maxRetries = 3;
 
-      const enrichedNormal = normal.map((item) =>
-        item.userId === user.uid
-          ? {
-              ...item,
-              userName: `${user.firstName} ${user.lastName}`,
-              userAvatar: user.avatar || "",
-            }
-          : item
-      );
+    const startListener = () => {
+      const q = query(collection(db, "listings"), orderBy("createdAt", "desc"));
 
-      const enrichedBoosted = boosted.map((item) =>
-        item.userId === user.uid
-          ? {
-              ...item,
-              userName: `${user.firstName} ${user.lastName}`,
-              userAvatar: user.avatar || "",
-            }
-          : item
-      );
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        console.log("[Listing] Snapshot received – docs count:", snapshot.docs.length);
 
-      enrichedNormal.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        if (snapshot.empty) {
+          console.log("[Listing] No documents found – check data or rules");
+        }
 
-      const finalList = [];
-      let normalIndex = 0;
+        const allListings = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
 
-      enrichedNormal.forEach((post) => {
-        finalList.push({
-          ...post,
-          _key: post.id,
+        const boosted = allListings.filter((item) => {
+          return item.boostedUntil && new Date(item.boostedUntil) > new Date();
         });
 
-        normalIndex++;
+        const normal = allListings.filter((item) => {
+          return !item.boostedUntil || new Date(item.boostedUntil) <= new Date();
+        });
 
-        if (normalIndex % Math.floor(Math.random() * 6 + 10) === 0 && enrichedBoosted.length > 0) {
-          const randomBoost = enrichedBoosted[Math.floor(Math.random() * enrichedBoosted.length)];
+        const enrichedNormal = normal.map((item) =>
+          item.userId === user.uid
+            ? {
+                ...item,
+                userName: `${user.firstName} ${user.lastName}`,
+                userAvatar: user.avatar || "",
+              }
+            : item
+        );
+
+        const enrichedBoosted = boosted.map((item) =>
+          item.userId === user.uid
+            ? {
+                ...item,
+                userName: `${user.firstName} ${user.lastName}`,
+                userAvatar: user.avatar || "",
+              }
+            : item
+        );
+
+        enrichedNormal.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+        const finalList = [];
+        let normalIndex = 0;
+
+        enrichedNormal.forEach((post) => {
           finalList.push({
-            ...randomBoost,
-            _key: `${randomBoost.id}-boost-sprinkle-${normalIndex}-${Math.random()}`,
+            ...post,
+            _key: post.id,
           });
+
+          normalIndex++;
+
+          if (normalIndex % Math.floor(Math.random() * 6 + 10) === 0 && enrichedBoosted.length > 0) {
+            const randomBoost = enrichedBoosted[Math.floor(Math.random() * enrichedBoosted.length)];
+            finalList.push({
+              ...randomBoost,
+              _key: `${randomBoost.id}-boost-sprinkle-${normalIndex}-${Math.random()}`,
+            });
+          }
+        });
+
+        setListings(finalList);
+        setLoading(false);
+      }, (error) => {
+        console.error("[Listing] onSnapshot error:", error.code, error.message);
+        if (error.code === 'permission-denied' && retryCount < maxRetries) {
+          retryCount++;
+          console.log(`[Listing] Permission denied – retry ${retryCount}/${maxRetries} in 2s`);
+          setTimeout(startListener, 2000);
+        } else {
+          setLoading(false);
         }
       });
 
-      setListings(finalList);
-    });
+      return unsubscribe;
+    };
 
-    return () => unsubscribe();
-  }, [user?.uid, user?.firstName, user?.lastName, user?.avatar]);
+    const cleanup = startListener();
 
-  // Vendor listener
+    return () => cleanup && cleanup();
+  }, [user?.uid]);
+
+  // Vendor listener – same clean pattern
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!user?.uid) {
+      setVendorListings([]);
+      return;
+    }
+
+    console.log("[ListingContext] Starting vendor listener for uid:", user.uid);
 
     const q = query(collection(db, "vendorListings"), orderBy("createdAt", "desc"));
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      console.log("[Vendor] Snapshot received – docs count:", snapshot.docs.length);
+
       const updated = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
+
       setVendorListings(
         updated.map((item) =>
           item.userId === user.uid
@@ -140,27 +185,22 @@ export const ListingProvider = ({ children }) => {
             : item
         )
       );
+    }, (error) => {
+      console.error("[Vendor] onSnapshot error:", error.code, error.message);
     });
 
-    return () => unsubscribe();
-  }, [user?.uid, user?.firstName, user?.lastName, user?.avatar]);
+    return unsubscribe;
+  }, [user?.uid]);
 
-  if (!user?.uid) {
-    return (
-      <ListingContext.Provider value={{ listings: [], loading: false, addListing: () => {}, updateListing: () => {}, deleteListing: () => {}, toggleLike: () => {}, toggleSave: () => {}, markAsRented: () => {} }}>
-        <VendorListingContext.Provider value={{ vendorListings: [], loading: false, addVendorListing: () => {}, deleteVendorListing: () => {}, markVendorListingAsRented: () => {} }}>
-          {children}
-        </VendorListingContext.Provider>
-      </ListingContext.Provider>
-    );
-  }
+  // ──────────────────────────────────────────────
+  // CRUD functions (unchanged)
+  // ──────────────────────────────────────────────
 
-  // === FIXED: addListing now saves ALL fields including amenities ===
   const addListing = async (newListing) => {
     if (!user?.uid) return;
 
     const formatted = {
-      ...newListing, // ← SPREADS EVERYTHING: title, description, images, pricePerNight, listingType, amenities, category, etc.
+      ...newListing,
       createdAt: Date.now(),
       likes: 0,
       liked: false,
@@ -171,8 +211,6 @@ export const ListingProvider = ({ children }) => {
       firstName: user.firstName || "",
       lastName: user.lastName || "",
       userAvatar: user.avatar || "",
-
-      // Backward-compatible price field
       price:
         newListing.priceMonthly
           ? newListing.priceMonthly * 12
@@ -224,7 +262,6 @@ export const ListingProvider = ({ children }) => {
     }
   };
 
-  // Vendor functions unchanged
   const addVendorListing = async (newListing) => {
     if (!user?.uid) return;
     const formatted = {

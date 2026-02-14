@@ -1,18 +1,18 @@
-// screens/ForgotPassword.jsx — FULLY FIXED (NO SHAKING ON RETURN)
+// screens/ForgotPassword.jsx — FIXED: Proper success handling + no false "failed" errors
 import React, { useState } from "react";
 import {
   View,
   StyleSheet,
   Text,
   TouchableOpacity,
-  Alert,
   SafeAreaView,
   KeyboardAvoidingView,
   ScrollView,
   Platform,
   ActivityIndicator,
   useColorScheme,
-  Keyboard, // ← NEW: Added for dismiss
+  Keyboard,
+  Alert,
 } from "react-native";
 import { TextInput } from "react-native-paper";
 import { Ionicons } from "@expo/vector-icons";
@@ -22,87 +22,93 @@ import { auth } from "../firebaseConfig";
 
 export default function ForgotPassword() {
   const navigation = useNavigation();
-  const [identifier, setIdentifier] = useState("");
+  const [email, setEmail] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
   const scheme = useColorScheme();
   const isDarkMode = scheme === "dark";
 
   const theme = {
-    background: isDarkMode ? "#121212" : "#fafafa",
-    card: isDarkMode ? "#1e1e1e" : "#ffffff",
-    text: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-    textSecondary: isDarkMode ? "#b0b0b0" : "#666",
+    background: isDarkMode ? "#0f172a" : "#f8fafc",
+    card: isDarkMode ? "#1e293b" : "#ffffff",
+    text: isDarkMode ? "#e2e8f0" : "#1e293b",
+    textSecondary: isDarkMode ? "#94a3b8" : "#64748b",
     primary: isDarkMode ? "#00ff7f" : "#017a6b",
-    border: isDarkMode ? "#333" : "#e0e6ed",
+    border: isDarkMode ? "#334155" : "#e2e8f0",
+    error: "#ef4444",
+    success: "#22c55e",
   };
 
   const validateEmail = (email) => {
     const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return regex.test(email);
+    return regex.test(email.trim());
   };
 
   const handleReset = async () => {
-    const email = identifier.trim();
-
-    if (!email) {
-      setError("Please enter your email address.");
-      return;
-    }
-
-    if (!validateEmail(email)) {
-      setError("Please enter a valid email address.");
-      return;
-    }
+    const trimmedEmail = email.trim();
 
     setError("");
+    setSuccess("");
+
+    if (!trimmedEmail) {
+      setError("Email is required");
+      return;
+    }
+
+    if (!validateEmail(trimmedEmail)) {
+      setError("Please enter a valid email");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(auth, trimmedEmail);
 
-      setIdentifier("");
-
+      // Success: email was queued (Firebase always "sends" even if no user exists)
+      setSuccess("Password reset email sent! Check your inbox and spam folder.");
+      
       Alert.alert(
-        "Check Your Email 📧",
-        `We've sent password reset instructions to:\n\n${email}\n\n` +
-          "Check your inbox and spam/junk folder.\n" +
-          "The link expires in 1 hour.",
+        "Reset Link Sent",
+        `We sent a password reset link to:\n\n${trimmedEmail}\n\nCheck your inbox (and spam/junk folder).`,
         [
           {
             text: "Got it",
             onPress: () => {
-              Keyboard.dismiss(); // ← FIX: Dismiss keyboard before navigating
+              Keyboard.dismiss();
+              setEmail(""); // clear field
               navigation.navigate("Login");
             },
           },
         ],
         { cancelable: false }
       );
-    } catch (error) {
-      console.error("Password reset error:", error.code, error.message);
+    } catch (err) {
+      console.error("Reset password error:", err.code, err.message);
 
-      let userMessage = "Failed to send reset email. Please try again later.";
+      let msg = "Failed to send reset email. Please try again.";
 
-      switch (error.code) {
-        case "auth/user-not-found":
-          userMessage = "If an account exists with this email, reset instructions have been sent.";
-          break;
+      switch (err.code) {
         case "auth/invalid-email":
-          userMessage = "Please enter a valid email address.";
+          msg = "Invalid email format";
+          break;
+        case "auth/user-not-found":
+          msg = "No account found with this email";
           break;
         case "auth/too-many-requests":
-          userMessage = "Too many attempts. Please try again later.";
+          msg = "Too many attempts. Please try again later.";
           break;
         case "auth/network-request-failed":
-          userMessage = "Network error. Check your internet connection.";
+          msg = "Network error. Check your internet connection.";
           break;
         default:
-          userMessage = "Something went wrong. Please try again.";
+          msg = err.message || "An error occurred";
       }
 
-      setError(userMessage);
+      setError(msg);
+      Alert.alert("Error", msg);
     } finally {
       setLoading(false);
     }
@@ -110,6 +116,15 @@ export default function ForgotPassword() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+      {/* Back Button */}
+      <TouchableOpacity
+        style={styles.backButton}
+        onPress={() => navigation.goBack()}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="arrow-back" size={28} color={theme.text} />
+      </TouchableOpacity>
+
       <KeyboardAvoidingView
         style={styles.keyboardView}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -119,13 +134,13 @@ export default function ForgotPassword() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* RLMARKET Header */}
+          {/* Slim Header */}
           <View style={styles.header}>
             <View
               style={[
                 styles.rlBadge,
                 {
-                  backgroundColor: isDarkMode ? "rgba(0, 255, 127, 0.1)" : "rgba(1, 122, 107, 0.08)",
+                  backgroundColor: `${theme.primary}15`,
                   borderColor: theme.primary,
                 },
               ]}
@@ -138,12 +153,12 @@ export default function ForgotPassword() {
                 Reset Password
               </Text>
               <Text style={[styles.welcomeSubtitle, { color: theme.textSecondary }]}>
-                Enter your email to receive reset instructions
+                Enter your email to reset
               </Text>
             </View>
           </View>
 
-          {/* Reset Password Card */}
+          {/* Lighter Reset Card */}
           <View
             style={[
               styles.resetCard,
@@ -153,32 +168,44 @@ export default function ForgotPassword() {
               },
             ]}
           >
+            {/* Email Input */}
             <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons name="mail-outline" size={20} color={theme.primary} />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>Email Address</Text>
-              </View>
               <TextInput
-                value={identifier}
-                onChangeText={setIdentifier}
+                value={email}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  setError("");
+                  setSuccess("");
+                }}
                 mode="outlined"
-                placeholder="Enter your email address"
+                label="Email"
+                placeholder="your@email.com"
                 placeholderTextColor={theme.textSecondary}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                outlineColor={theme.border}
-                activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
+                outlineColor={error ? theme.error : theme.border}
+                activeOutlineColor={error ? theme.error : theme.primary}
+                style={{ backgroundColor: "transparent" }}
                 theme={{
                   colors: {
-                    onSurfaceVariant: theme.border,
+                    onSurfaceVariant: theme.textSecondary,
                     primary: theme.primary,
+                    text: theme.text,
+                    error: theme.error,
                   },
                 }}
+                left={<TextInput.Icon icon="email-outline" color={theme.primary} />}
+                error={!!error}
               />
-              {error ? <Text style={styles.error}>{error}</Text> : null}
+              {error ? (
+                <Text style={[styles.errorText, { color: theme.error }]}>{error}</Text>
+              ) : null}
+              {success ? (
+                <Text style={[styles.successText, { color: theme.success }]}>{success}</Text>
+              ) : null}
             </View>
 
+            {/* Reset Button */}
             <TouchableOpacity
               style={[
                 styles.resetButton,
@@ -189,229 +216,108 @@ export default function ForgotPassword() {
               activeOpacity={0.8}
             >
               {loading ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="small" color="#fff" />
-                  <Text style={styles.resetButtonText}>Sending...</Text>
-                </View>
+                <ActivityIndicator size="small" color="#000" />
               ) : (
-                <>
-                  <Ionicons name="send-outline" size={20} color="#fff" />
-                  <Text style={styles.resetButtonText}>Send Reset Instructions</Text>
-                </>
+                <Text style={styles.resetButtonText}>Send Reset Link</Text>
               )}
             </TouchableOpacity>
           </View>
 
-          <View
-            style={[
-              styles.securityBadge,
-              {
-                backgroundColor: "rgba(1, 122, 107, 0.05)",
-                borderColor: "rgba(1, 122, 107, 0.1)",
-              },
-            ]}
-          >
-            <Ionicons name="shield-checkmark-outline" size={20} color={theme.primary} />
-            <Text style={[styles.securityText, { color: theme.textSecondary }]}>
-              Your email is secured with encryption
+          {/* Back to Login */}
+          <View style={styles.backContainer}>
+            <Text style={[styles.backText, { color: theme.textSecondary }]}>
+              Remember your password?
             </Text>
+            <TouchableOpacity onPress={() => {
+              Keyboard.dismiss();
+              navigation.navigate("Login");
+            }}>
+              <Text style={[styles.backLink, { color: theme.primary }]}>
+                Sign in
+              </Text>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-
-      {/* Back to Login CTA */}
-      <View
-        style={[
-          styles.loginContainer,
-          {
-            backgroundColor: theme.card,
-            borderTopColor: theme.border,
-          },
-        ]}
-      >
-        <Text style={[styles.loginText, { color: theme.textSecondary }]}>
-          Remember your password?
-        </Text>
-        <TouchableOpacity
-          style={[
-            styles.loginButton,
-            {
-              backgroundColor: "rgba(1, 122, 107, 0.08)",
-              borderColor: theme.primary,
-            },
-          ]}
-          onPress={() => {
-            Keyboard.dismiss(); // ← FIX: Dismiss keyboard here too
-            navigation.navigate("Login");
-          }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="log-in-outline" size={18} color={theme.primary} />
-          <Text style={[styles.loginButtonText, { color: theme.primary }]}>
-            Sign In
-          </Text>
-        </TouchableOpacity>
-      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  keyboardView: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  keyboardView: { flex: 1 },
   scrollContainer: {
     flexGrow: 1,
     padding: 24,
-    paddingTop: 20,
-    paddingBottom: 140,
+    paddingTop: 60,
+    paddingBottom: 80,
+  },
+  backButton: {
+    position: "absolute",
+    top: 5,
+    left: 10,
+    zIndex: 10,
+    padding: 8,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 32,
+    marginBottom: 36,
   },
   rlBadge: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 1.5,
     marginRight: 16,
   },
-  rlText: {
-    fontSize: 24,
-    fontWeight: "900",
-    letterSpacing: -1.5,
-  },
-  headerContent: {
-    flex: 1,
-  },
-  welcomeTitle: {
-    fontSize: 28,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    lineHeight: 34,
-  },
-  welcomeSubtitle: {
-    fontSize: 16,
-    fontWeight: "500",
-    marginTop: 6,
-    lineHeight: 22,
-  },
+  rlText: { fontSize: 20, fontWeight: "900", letterSpacing: -1 },
+  headerContent: { flex: 1 },
+  welcomeTitle: { fontSize: 26, fontWeight: "900" },
+  welcomeSubtitle: { fontSize: 15, marginTop: 4 },
   resetCard: {
-    borderRadius: 24,
-    padding: 24,
-    marginBottom: 24,
+    borderRadius: 20,
+    padding: 20,
     borderWidth: 1,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  inputHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: "700",
-    marginLeft: 10,
-    letterSpacing: 0.3,
-  },
+  inputContainer: { marginBottom: 16 },
   resetButton: {
-    flexDirection: "row",
+    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 18,
-    borderRadius: 16,
-    marginTop: 8,
-    minHeight: 56,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 10,
+    marginTop: 12,
   },
   resetButtonText: {
     color: "#fff",
-    fontSize: 18,
-    fontWeight: "800",
-    marginLeft: 12,
-    letterSpacing: 0.5,
+    fontSize: 16,
+    fontWeight: "900",
   },
-  loadingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  securityBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    marginBottom: 24,
-  },
-  securityText: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginLeft: 12,
-    lineHeight: 18,
-  },
-  loginContainer: {
-    position: "absolute",
-    bottom: 30,
-    left: 24,
-    right: 24,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 20,
-    borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  loginText: {
-    fontSize: 15,
-    fontWeight: "500",
-    marginRight: 12,
-  },
-  loginButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    borderWidth: 1.5,
-  },
-  loginButtonText: {
-    fontSize: 15,
-    fontWeight: "800",
-    marginLeft: 8,
-    letterSpacing: 0.3,
-  },
-  error: {
-    color: "#ef4444",
+  errorText: {
     fontSize: 13,
     marginTop: 4,
     marginLeft: 4,
-    fontWeight: "500",
+  },
+  successText: {
+    fontSize: 13,
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  backContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginTop: 32,
+  },
+  backText: { fontSize: 15 },
+  backLink: {
+    fontSize: 15,
+    fontWeight: "700",
+    marginLeft: 6,
   },
 });

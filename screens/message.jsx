@@ -1,4 +1,4 @@
-// screens/Message.jsx — FIXED: REAL blocking logic + read-only UI when blocked + improved input bar
+// screens/Message.jsx — FIXED: Modern compact input field, no floating, buttons fully visible above keyboard
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -70,22 +70,28 @@ export default function Message() {
     listingId: routeListingId,
     listingOwnerId: routeListingOwnerId,
     recipientUID,
-    otherUserName: initialName = "User",
-    otherUserPhoto: initialPhoto,
+    otherUserName: paramName = "User",
+    otherUserPhoto: paramPhoto,
   } = route.params || {};
 
-  const isSupportChat = !!recipientUID && recipientUID === SUPPORT_UID && !routeListingId && !routeListingOwnerId;
+  const isSupportChat =
+    !!recipientUID &&
+    !routeListingId &&
+    !routeListingOwnerId &&
+    (recipientUID === SUPPORT_UID || recipientUID === "kLR1nC68S1WA4Ma3cpyjGcMaUb22");
+
+  const effectiveListingOwnerId = recipientUID || routeListingOwnerId || SUPPORT_UID;
+
   const effectiveListingId = isSupportChat
-    ? `support_${[currentUser?.uid, SUPPORT_UID].sort().join("_")}`
-    : routeListingId;
-  const effectiveListingOwnerId = isSupportChat ? SUPPORT_UID : routeListingOwnerId;
+    ? `support_${[currentUser?.uid, effectiveListingOwnerId].sort().join("_")}`
+    : routeListingId || `chat_${[currentUser?.uid, effectiveListingOwnerId].sort().join("_")}`;
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [fullImage, setFullImage] = useState(null);
-  const [otherUser, setOtherUser] = useState({ name: initialName, photoURL: initialPhoto || null });
+  const [otherUser, setOtherUser] = useState({ name: paramName, photoURL: paramPhoto || null });
   const [verificationType, setVerificationType] = useState(null);
   const [mediaMenuVisible, setMediaMenuVisible] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
@@ -93,7 +99,7 @@ export default function Message() {
   const [isBlocked, setIsBlocked] = useState(false);
 
   const flatListRef = useRef();
-  const inputRef = useRef(null); // ← Added this (fixes "Can't find variable: inputRef")
+  const inputRef = useRef(null);
 
   const currentUserId = currentUser?.uid || currentUser?._id;
   const hasText = inputText.trim().length > 0;
@@ -108,37 +114,43 @@ export default function Message() {
     "When is the earliest move-in date?",
   ];
 
-  const handleQuickReply = (text) => {
-    setInputText(text);
-    setShowSuggestions(false);
-  };
-
-  const heavyVibrate = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy), 60);
-  };
-
-  // Fetch other user info
   useEffect(() => {
+    if (otherUser.name) {
+      navigation.setOptions({
+        title: otherUser.name,
+      });
+    }
+  }, [otherUser.name, navigation]);
+
+  useEffect(() => {
+    if (paramName || paramPhoto) {
+      setOtherUser({
+        name: paramName || otherUser.name,
+        photoURL: paramPhoto || otherUser.photoURL,
+      });
+    }
+
     if (!effectiveListingOwnerId) return;
+
     const unsub = onSnapshot(doc(db, "users", effectiveListingOwnerId), (snap) => {
       if (snap.exists()) {
         const d = snap.data();
         const name =
+          paramName ||
           d.displayName?.trim() ||
           `${d.firstName || ""} ${d.lastName || ""}`.trim() ||
           d.username ||
-          (isSupportChat ? "RoomLink Support" : "User");
-        const photo = d.photoURL || d.profileImage || d.avatar || null;
+          (isSupportChat ? "RoomLink Financial" : "User");
+        const photo = paramPhoto || d.photoURL || d.profileImage || d.avatar || null;
         setOtherUser({ name, photoURL: photo });
       } else if (isSupportChat) {
-        setOtherUser({ name: "RoomLink Support", photoURL: null });
+        setOtherUser({ name: "RoomLink Financial", photoURL: null });
       }
     });
-    return unsub;
-  }, [effectiveListingOwnerId, isSupportChat]);
 
-  // Fetch verification (skip for support)
+    return unsub;
+  }, [effectiveListingOwnerId, isSupportChat, paramName, paramPhoto]);
+
   useEffect(() => {
     if (!effectiveListingOwnerId || isSupportChat) return;
     const fetchVerification = async () => {
@@ -154,7 +166,6 @@ export default function Message() {
     fetchVerification();
   }, [effectiveListingOwnerId, isSupportChat]);
 
-  // REAL BLOCKING CHECK
   useEffect(() => {
     if (!currentUserId || !effectiveListingOwnerId || isSupportChat) {
       setIsBlocked(false);
@@ -172,14 +183,18 @@ export default function Message() {
     return unsub;
   }, [currentUserId, effectiveListingOwnerId, isSupportChat]);
 
-  // Messages listener
   useEffect(() => {
-    if (!currentUserId || !effectiveListingId) return;
+    if (!currentUserId || !effectiveListingId) {
+      setLoading(false);
+      return;
+    }
+
     const q = query(
       collection(db, "messages"),
       where("listingId", "==", effectiveListingId),
       orderBy("createdAt", "asc")
     );
+
     const unsub = onSnapshot(q, (snapshot) => {
       const msgs = snapshot.docs
         .map((doc) => ({ id: doc.id, ...doc.data() }))
@@ -190,7 +205,7 @@ export default function Message() {
         );
       setMessages(msgs);
       setLoading(false);
-      // Mark as read
+
       const toMark = msgs.filter(
         (m) =>
           m.receiverId === currentUserId &&
@@ -199,8 +214,10 @@ export default function Message() {
       toMark.forEach((m) => {
         updateDoc(doc(db, "messages", m.id), { readBy: arrayUnion(currentUserId) }).catch(() => {});
       });
+
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     });
+
     return unsub;
   }, [currentUserId, effectiveListingId, effectiveListingOwnerId]);
 
@@ -209,6 +226,16 @@ export default function Message() {
       setShowSuggestions(false);
     }
   }, [messages.length]);
+
+  const handleQuickReply = (text) => {
+    setInputText(text);
+    setShowSuggestions(false);
+  };
+
+  const heavyVibrate = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy), 60);
+  };
 
   const uploadImage = async (uri) => {
     const response = await fetch(uri);
@@ -446,16 +473,19 @@ export default function Message() {
       </Modal>
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.select({
+          ios: 90,   // tune this: 80–120 (higher = more lift when keyboard opens)
+          android: 0
+        })}
         style={{ flex: 1 }}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
       >
         <FlatList
           ref={flatListRef}
           data={messages}
           keyExtractor={(item) => item.id}
           renderItem={renderMessage}
-          contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: 120 }} // extra bottom space for input
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
         />
@@ -492,16 +522,9 @@ export default function Message() {
           </View>
         )}
 
-        {/* Updated input bar */}
+        {/* MODERN COMPACT INPUT BAR */}
         <View style={styles.inputBar}>
-          <View style={[
-            styles.inputContainer,
-            {
-              backgroundColor: isDark ? "#1e1e1e" : "#fff",
-              borderColor: isFocused ? "#000" : (isDark ? "#444" : "#ddd"),
-            }
-          ]}>
-            {/* + button on LEFT */}
+          <View style={styles.inputContainer}>
             <TouchableOpacity
               style={styles.attachButton}
               onPress={() => setMediaMenuVisible(true)}
@@ -509,12 +532,11 @@ export default function Message() {
             >
               <Ionicons
                 name="add"
-                size={28}
+                size={24}
                 color={uploading || isBlocked ? "#666" : "#000"}
               />
             </TouchableOpacity>
 
-            {/* Growing TextInput */}
             <TextInput
               ref={inputRef}
               style={styles.textInput}
@@ -532,7 +554,6 @@ export default function Message() {
               editable={!uploading && !isBlocked}
             />
 
-            {/* Right side: Mic or Send */}
             {inputText.trim().length === 0 ? (
               <TouchableOpacity
                 style={styles.micButton}
@@ -541,23 +562,20 @@ export default function Message() {
               >
                 <Ionicons
                   name="mic"
-                  size={26}
+                  size={24}
                   color={uploading || isBlocked ? "#666" : "#000"}
                 />
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
-                style={[
-                  styles.sendButton,
-                  { backgroundColor: "#000" }
-                ]}
+                style={styles.sendButton}
                 onPress={sendMessage}
                 disabled={uploading || isBlocked || !inputText.trim()}
               >
                 {uploading ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <Ionicons name="arrow-up" size={24} color="#fff" />
+                  <Ionicons name="arrow-up" size={22} color="#fff" />
                 )}
               </TouchableOpacity>
             )}
@@ -570,11 +588,11 @@ export default function Message() {
           <View style={styles.modalOverlay}>
             <View style={[styles.mediaMenu, { backgroundColor: isDark ? "#222" : "#fff" }]}>
               <TouchableOpacity style={styles.mediaOption} onPress={openCamera}>
-                <Ionicons name="camera-outline" size={32} color="#036dd6" />
+                <Ionicons name="camera-outline" size={32} color="#017a6b" />
                 <Text style={[styles.mediaText, { color: isDark ? "#fff" : "#000" }]}>Camera</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.mediaOption} onPress={pickImage}>
-                <Ionicons name="image-outline" size={32} color="#036dd6" />
+                <Ionicons name="image-outline" size={32} color="#017a6b" />
                 <Text style={[styles.mediaText, { color: isDark ? "#fff" : "#000" }]}>Gallery</Text>
               </TouchableOpacity>
             </View>
@@ -594,47 +612,74 @@ const styles = StyleSheet.create({
   messageText: { fontSize: 16, lineHeight: 22 },
   messageFooter: { flexDirection: "row", alignItems: "center", marginTop: 6, justifyContent: "flex-end" },
   timestamp: { fontSize: 11, marginRight: 6 },
+
+  // MODERN COMPACT INPUT BAR - flush bottom, rises only when needed
   inputBar: {
+    width: '100%',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 6,
     borderTopWidth: 1,
     borderTopColor: "#33333330",
+    backgroundColor: "#fff", // or your theme bg
   },
+
+  // MODERN INPUT CONTAINER - pill-shaped, compact, tinted
   inputContainer: {
     flexDirection: "row",
-    alignItems: "flex-end",
-    borderWidth: 1.9,
-    borderRadius: 24,
+    alignItems: "center",
+    borderRadius: 28,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: "#44444440",
+    backgroundColor: "#f8f9fa", // light tint (change to dark variant if needed)
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
+
   attachButton: {
-    padding: 10,
-    marginRight: 8,
+    padding: 8,
+    marginRight: 6,
     justifyContent: "center",
     alignItems: "center",
   },
+
   textInput: {
     flex: 1,
     fontSize: 16,
-    lineHeight: 22,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    lineHeight: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
     color: "#000",
+    maxHeight: 100,
   },
+
   micButton: {
-    padding: 12,
+    padding: 8,
     justifyContent: "center",
     alignItems: "center",
   },
+
   sendButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     justifyContent: "center",
     alignItems: "center",
-    marginLeft: 8,
+    marginLeft: 6,
+    backgroundColor: "#000",
+    shadowColor: "#017a6b",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -644,8 +689,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-around",
     paddingVertical: 30,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: "#fff",
   },
   mediaOption: {
     alignItems: "center",
@@ -656,6 +702,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+
   suggestionsContainer: {
     paddingHorizontal: 8,
     paddingVertical: 6,
@@ -664,7 +711,7 @@ const styles = StyleSheet.create({
   },
   suggestionChip: {
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderRadius: 20,
     marginRight: 10,
     borderWidth: 1,

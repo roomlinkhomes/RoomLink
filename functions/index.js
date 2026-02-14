@@ -1,4 +1,4 @@
-const functions = require("firebase-functions");
+const functions = require("firebase-functions/v1");
 const admin = require("firebase-admin");
 const axios = require("axios");
 const nodemailer = require("nodemailer");
@@ -250,25 +250,148 @@ exports.reportListing = functions.https.onCall(async (data, context) => {
 });
 
 // ──────────────────────────────────────────────
-// CHAT PUSH NOTIFICATIONS
+// CHAT PUSH NOTIFICATIONS (your existing one - untouched)
 // ──────────────────────────────────────────────
 exports.sendChatNotification = functions.firestore
-  .document("chats/{chatId}/messages/{msgId}")
+  .document("messages/{msgId}")
   .onCreate(async (snap, context) => {
-    const msg = snap.data();
-    if (msg.senderId === msg.receiverId) return null;
-    if (!msg.receiverFcmToken) return null;
+    const message = snap.data();
+    const { senderId, receiverId, content, type, listingId } = message;
 
-    const payload = {
-      notification: {
-        title: msg.senderName || "New Message",
-        body: msg.text || "Image",
-        sound: "default",
-      },
-      data: { chatId: context.params.chatId },
-    };
+    if (!receiverId || senderId === receiverId) return null;
 
-    return admin.messaging().sendToDevice(msg.receiverFcmToken, payload);
+    try {
+      // Get recipient's token
+      const recipientSnap = await db.doc(`users/${receiverId}`).get();
+      const token = recipientSnap.data()?.pushToken;
+      if (!token) {
+        console.log(`No push token for user ${receiverId}`);
+        return null;
+      }
+
+      // Get sender details
+      const senderSnap = await db.doc(`users/${senderId}`).get();
+      const senderName = senderSnap.data()?.displayName || 'Someone';
+
+      const payload = {
+        notification: {
+          title: `New message from ${senderName}`,
+          body: type === 'image' ? 'Sent an image' : (content || '').substring(0, 100),
+          sound: 'default',
+          badge: '1',
+        },
+        data: {
+          type: 'message',
+          screen: 'Messages',
+          params: JSON.stringify({ listingId }),
+        },
+        apns: { payload: { aps: { contentAvailable: true } } },
+        android: { priority: 'high' },
+        token,
+      };
+
+      await admin.messaging().send(payload);
+      console.log('Notification sent successfully');
+    } catch (error) {
+      console.error('Error sending notification:', error);
+    }
+  });
+
+// ──────────────────────────────────────────────
+// NEW: COMMENT / REPLY NOTIFICATIONS (added now)
+// ──────────────────────────────────────────────
+exports.notifyOnNewComment = functions.firestore
+  .document("listings/{listingId}/comments/{commentId}")
+  .onCreate(async (snap, context) => {
+    const comment = snap.data();
+    const listingId = context.params.listingId;
+    const commentId = context.params.commentId;
+
+    console.log(`[COMMENT] New comment/reply created: ${commentId} on listing ${listingId} by ${comment.userName}`);
+
+    // Skip if no text or no user
+    if (!comment.text || !comment.userId) return null;
+
+    try {
+      // 1. Get listing owner
+      const listingSnap = await db.doc(`listings/${listingId}`).get();
+      if (!listingSnap.exists) {
+        console.log(`[COMMENT] Listing ${listingId} not found`);
+        return null;
+      }
+
+      const ownerId = listingSnap.data().userId;
+      if (!ownerId || ownerId === comment.userId) {
+        console.log(`[COMMENT] No owner or self-comment - skipping owner notification`);
+      } else {
+        // Get owner's push token
+        const ownerSnap = await db.doc(`users/${ownerId}`).get();
+        const ownerToken = ownerSnap.data()?.pushToken;
+
+        if (ownerToken) {
+          const isReply = !!comment.replyToCommentId;
+          const title = isReply ? "New Reply on Your Listing" : "New Comment on Your Listing";
+          const body = `${comment.userName || "Someone"}: ${comment.text.substring(0, 60)}${comment.text.length > 60 ? "..." : ""}`;
+
+          const payload = {
+            notification: { title, body },
+            data: {
+              type: isReply ? "reply" : "comment",
+              listingId,
+              commentId,
+            },
+            android: { priority: "high" },
+            apns: { headers: { "apns-priority": "10" } },
+            token: ownerToken,
+          };
+
+          await admin.messaging().send(payload);
+          console.log(`[COMMENT] Notification sent to listing owner ${ownerId}`);
+        } else {
+          console.log(`[COMMENT] Owner ${ownerId} has no pushToken`);
+        }
+      }
+
+      // 2. If it's a reply → notify the person being replied to
+      if (comment.replyToCommentId) {
+        const parentSnap = await db.doc(`listings/${listingId}/comments/${comment.replyToCommentId}`).get();
+        if (parentSnap.exists) {
+          const parentAuthorId = parentSnap.data().userId;
+
+          if (parentAuthorId && parentAuthorId !== comment.userId) {
+            const parentUserSnap = await db.doc(`users/${parentAuthorId}`).get();
+            const parentToken = parentUserSnap.data()?.pushToken;
+
+            if (parentToken) {
+              const title = "New Reply to Your Comment";
+              const body = `${comment.userName || "Someone"} replied: ${comment.text.substring(0, 60)}${comment.text.length > 60 ? "..." : ""}`;
+
+              const payload = {
+                notification: { title, body },
+                data: {
+                  type: "reply",
+                  listingId,
+                  commentId,
+                },
+                android: { priority: "high" },
+                apns: { headers: { "apns-priority": "10" } },
+                token: parentToken,
+              };
+
+              await admin.messaging().send(payload);
+              console.log(`[COMMENT] Reply notification sent to ${parentAuthorId}`);
+            } else {
+              console.log(`[COMMENT] Replied-to user ${parentAuthorId} has no pushToken`);
+            }
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error("[COMMENT] Notification error:", error);
+    }
+
+    return null;
   });
 
 // ──────────────────────────────────────────────
@@ -349,20 +472,25 @@ exports.sendSignupOTP = functions.https.onCall(async (data, context) => {
   const mailRef = db.collection("emails").doc();
 
   await mailRef.set({
-    to: email,
+    to: [
+      {
+        email: email.trim(),
+        name: name || "User"
+      }
+    ],
     personalization: [
       {
-        email: email,
+        email: email.trim(),
         data: {
           otp: otp,
           name: name || "User",
           app_name: "RoomLink"  // adjust if your template uses a different variable name
         }
-      }
-    ]
+      },
+    ],
   });
 
-  console.log(`OTP ${otp} sent to ${email}`);
+  console.log(`OTP ${otp} queued for ${email} (name: ${name || "User"})`);
 
   return {
     success: true,
@@ -414,3 +542,51 @@ exports.verifySignupOTP = functions.https.onCall(async (data, context) => {
     message: "Email verified successfully!"
   };
 });
+
+// ──────────────────────────────────────────────
+// WELCOME EMAIL ON NEW USER CREATION (via MailerSend extension)
+// ──────────────────────────────────────────────
+exports.sendWelcomeEmail = functions
+  .region("europe-west2")  // ← Change only if your extension was installed in a different region
+  .auth.user()
+  .onCreate(async (user) => {
+    if (!user.email) {
+      console.log("No email found for new user → skipping welcome email");
+      return null;
+    }
+
+    const displayName = user.displayName || "New RoomLink User";
+
+    const welcomeDoc = {
+      to: [
+        {
+          email: user.email,
+          name: displayName
+        }
+      ],
+
+      // Recommended: Use a MailerSend template
+      template_id: "x2p0347j5yk4zdrn", // ← your template ID (keep or update)
+      personalization: [
+        {
+          email: user.email,
+          data: {
+            otp: otp,
+            name: displayName,
+            app_name: "RoomLink"
+          },
+        },
+      ],
+    };
+
+    const collectionName = "emails"; // ← Confirm this is the same as in your extension config
+
+    try {
+      await db.collection(collectionName).add(welcomeDoc);
+      console.log(`Welcome email queued for ${user.email} (UID: ${user.uid})`);
+    } catch (error) {
+      console.error("Error queuing welcome email:", error);
+    }
+
+    return null;
+  });

@@ -71,7 +71,7 @@ export default function HomeTopHeader() {
   const menuItems = [
     { id: "1", label: "Identity Verification", icon: IdentityIcon, screen: "IdentityVerification" },
     { id: "2", label: "Settings", icon: SettingsIcon, screen: "Settings" },
-    { id: "3", label: "Ad Zone", icon: AdIcon, screen: "AdsZone" },
+    { id: "3", label: "Post on billboard", icon: AdIcon, screen: "AdsZone" },
     { id: "4", label: "Help / Support", icon: HelpIcon, screen: "HelpSupport" }, // ← Navigates here
     { id: "5", label: "Announcement / News", icon: NewsIcon, screen: "Announcements" },
   ];

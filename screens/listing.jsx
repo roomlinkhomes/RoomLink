@@ -1,4 +1,4 @@
-// screens/Listing.jsx — FULLY FIXED (All JSX syntax errors resolved)
+// screens/Listing.jsx
 import React, { useRef, useEffect } from "react";
 import {
   View,
@@ -20,17 +20,18 @@ import { useListing } from "../context/ListingContext";
 import { homeCategories } from "./Config/Categories";
 import { useUser } from "../context/UserContext";
 import { useListingTab } from "../context/ListingTabContext";
-import HotelListingForm from "../component/HotelListingForm"; // ← Imported
+import HotelListingForm from "../component/HotelListingForm";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
-// Houses & Apartments Form — full and complete
+// ────────────────────────────────────────────────
+// Houses & Apartments Form (unchanged)
+// ────────────────────────────────────────────────
 const HousesForm = () => {
   const { addListing } = useListing();
   const { user } = useUser();
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
-
   const [images, setImages] = React.useState([]);
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
@@ -77,7 +78,6 @@ const HousesForm = () => {
     data.append("file", { uri, type: "image/jpeg", name: "upload.jpg" });
     data.append("upload_preset", "roomlink_preset");
     data.append("cloud_name", "drserbss8");
-
     try {
       const res = await fetch("https://api.cloudinary.com/v1_1/drserbss8/image/upload", {
         method: "POST",
@@ -97,13 +97,11 @@ const HousesForm = () => {
       Alert.alert("Permission required", "We need gallery access to continue.");
       return;
     }
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsMultipleSelection: true,
       quality: 1,
     });
-
     if (!result.canceled) {
       setImages((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
     }
@@ -115,12 +113,10 @@ const HousesForm = () => {
       Alert.alert("Permission required", "We need camera access to continue.");
       return;
     }
-
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 1,
     });
-
     if (!result.canceled) {
       setImages((prev) => [...prev, result.assets[0].uri]);
     }
@@ -133,17 +129,14 @@ const HousesForm = () => {
       Alert.alert("Error", "You must be logged in to create a listing.");
       return;
     }
-
     if (!title || !description || !location || !category) {
       Alert.alert("Error", "Please fill all required fields and select a category.");
       return;
     }
-
     if (!priceMonthly.trim() && !priceYearly.trim()) {
       Alert.alert("Price Required", "Please enter either a monthly or yearly price (or both).");
       return;
     }
-
     if (priceMonthly.trim()) {
       const monthlyNum = parseInt(priceMonthly.replace(/[^0-9]/g, ""), 10);
       if (isNaN(monthlyNum) || monthlyNum <= 0) {
@@ -151,7 +144,6 @@ const HousesForm = () => {
         return;
       }
     }
-
     if (priceYearly.trim()) {
       const yearlyNum = parseInt(priceYearly.replace(/[^0-9]/g, ""), 10);
       if (isNaN(yearlyNum) || yearlyNum <= 0) {
@@ -159,7 +151,6 @@ const HousesForm = () => {
         return;
       }
     }
-
     setUploading(true);
     try {
       const uploadedUrls = [];
@@ -167,13 +158,11 @@ const HousesForm = () => {
         const url = await uploadImage(img);
         if (url) uploadedUrls.push(url);
       }
-
       if (uploadedUrls.length === 0) {
         Alert.alert("Error", "Please upload at least one image.");
         setUploading(false);
         return;
       }
-
       await addListing({
         title,
         description,
@@ -185,9 +174,7 @@ const HousesForm = () => {
         userId: user.id,
         listingType: "houses",
       });
-
       Alert.alert("Success!", `Your listing "${title}" has been created!`, [{ text: "Done" }]);
-
       setTitle("");
       setDescription("");
       setLocation("");
@@ -334,7 +321,11 @@ const HousesForm = () => {
         ]}
         onPress={() => setTitleModalVisible(true)}
       >
-        <Text style={{ color: title ? (isDark ? "#e0e0e0" : "#212529") : (isDark ? "#6c757d" : "#adb5bd") }}>
+        <Text
+          style={{
+            color: title ? (isDark ? "#e0e0e0" : "#212529") : (isDark ? "#6c757d" : "#adb5bd"),
+          }}
+        >
           {title || "Select a title"}
         </Text>
       </TouchableOpacity>
@@ -429,7 +420,11 @@ const HousesForm = () => {
         ]}
         onPress={() => setCategoryModalVisible(true)}
       >
-        <Text style={{ color: category ? (isDark ? "#e0e0e0" : "#212529") : (isDark ? "#6c757d" : "#adb5bd") }}>
+        <Text
+          style={{
+            color: category ? (isDark ? "#e0e0e0" : "#212529") : (isDark ? "#6c757d" : "#adb5bd"),
+          }}
+        >
           {category ? category.name : "Select a category"}
         </Text>
       </TouchableOpacity>
@@ -452,11 +447,22 @@ const HousesForm = () => {
       </TouchableOpacity>
 
       {/* Title Modal */}
-      <Modal visible={titleModalVisible} transparent animationType="slide" onRequestClose={() => setTitleModalVisible(false)}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPressOut={() => setTitleModalVisible(false)}>
+      <Modal
+        visible={titleModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setTitleModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPressOut={() => setTitleModalVisible(false)}
+        >
           <View style={[styles.bottomSheet, { backgroundColor: isDark ? "#1e1e1e" : "#ffffff" }]}>
             <View style={styles.sheetHeader}>
-              <Text style={[styles.sheetTitle, { color: isDark ? "#e0e0e0" : "#212529" }]}>Select Title</Text>
+              <Text style={[styles.sheetTitle, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+                Select Title
+              </Text>
               <TouchableOpacity onPress={() => setTitleModalVisible(false)}>
                 <Ionicons name="close-outline" size={24} color={isDark ? "#a0a0a0" : "#6c757d"} />
               </TouchableOpacity>
@@ -472,11 +478,22 @@ const HousesForm = () => {
       </Modal>
 
       {/* Category Modal */}
-      <Modal visible={categoryModalVisible} transparent animationType="slide" onRequestClose={() => setCategoryModalVisible(false)}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPressOut={() => setCategoryModalVisible(false)}>
+      <Modal
+        visible={categoryModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCategoryModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPressOut={() => setCategoryModalVisible(false)}
+        >
           <View style={[styles.bottomSheet, { backgroundColor: isDark ? "#1e1e1e" : "#ffffff" }]}>
             <View style={styles.sheetHeader}>
-              <Text style={[styles.sheetTitle, { color: isDark ? "#e0e0e0" : "#212529" }]}>Select Category</Text>
+              <Text style={[styles.sheetTitle, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+                Select Category
+              </Text>
               <TouchableOpacity onPress={() => setCategoryModalVisible(false)}>
                 <Ionicons name="close-outline" size={24} color={isDark ? "#a0a0a0" : "#6c757d"} />
               </TouchableOpacity>
@@ -494,19 +511,22 @@ const HousesForm = () => {
   );
 };
 
-// Main Listing Screen — Swipe + Tab Sync (NO HEADER)
+// ────────────────────────────────────────────────
+// Main Listing Screen — Fixed version
+// ────────────────────────────────────────────────
 export default function Listing({ navigation }) {
   const { activeTab, setActiveTab } = useListingTab();
   const flatListRef = useRef(null);
-  const isScrollingProgrammatically = useRef(false);
+  const isProgrammaticScroll = useRef(false);
 
   const pages = [
     { key: "houses", component: HousesForm },
     { key: "hotels", component: () => <HotelListingForm navigation={navigation} /> },
   ];
 
-  const handleScroll = (event) => {
-    if (isScrollingProgrammatically.current) return;
+  // Only update tab when scroll has fully settled (prevents bounce loop)
+  const handleMomentumScrollEnd = (event) => {
+    if (isProgrammaticScroll.current) return;
 
     const offsetX = event.nativeEvent.contentOffset.x;
     const index = Math.round(offsetX / SCREEN_WIDTH);
@@ -517,19 +537,22 @@ export default function Listing({ navigation }) {
     }
   };
 
+  // When tab changes via header → scroll to correct page
   useEffect(() => {
-    const index = activeTab === "houses" ? 0 : 1;
+    const targetIndex = activeTab === "houses" ? 0 : 1;
+    const targetOffset = targetIndex * SCREEN_WIDTH;
 
-    isScrollingProgrammatically.current = true;
+    isProgrammaticScroll.current = true;
 
     flatListRef.current?.scrollToOffset({
-      offset: index * SCREEN_WIDTH,
+      offset: targetOffset,
       animated: true,
     });
 
+    // Reset flag after animation should have finished
     const timeout = setTimeout(() => {
-      isScrollingProgrammatically.current = false;
-    }, 400);
+      isProgrammaticScroll.current = false;
+    }, 600); // 600 ms is usually safe on most devices
 
     return () => clearTimeout(timeout);
   }, [activeTab]);
@@ -552,10 +575,15 @@ export default function Listing({ navigation }) {
       horizontal
       pagingEnabled
       showsHorizontalScrollIndicator={false}
-      onScroll={handleScroll}
+      onMomentumScrollEnd={handleMomentumScrollEnd}
       scrollEventThrottle={16}
       bounces={false}
-      scrollEnabled={!isScrollingProgrammatically.current}
+      decelerationRate="fast"
+      snapToInterval={SCREEN_WIDTH}
+      snapToAlignment="center"
+      disableIntervalMomentum={true}
+      // Important: always allow scrolling
+      scrollEnabled={true}
     />
   );
 }

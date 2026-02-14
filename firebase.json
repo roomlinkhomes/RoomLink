@@ -15,5 +15,10 @@
         "npm --prefix \"$RESOURCE_DIR\" run lint"
       ]
     }
-  ]
+  ],
+  "extensions": {
+    "mailersend-email": "mailersend/mailersend-email@0.2.1",
+    "mailersend-email-qwik": "mailersend/mailersend-email@0.2.1",
+    "mailersend-email-am9n": "mailersend/mailersend-email@0.2.1"
+  }
 }

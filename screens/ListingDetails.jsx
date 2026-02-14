@@ -1,4 +1,4 @@
-// screens/ListingDetails.jsx — FIXED: No duplicate safeCategory + safe rendering
+// screens/ListingDetails.jsx — FIXED: CTA styled + replyToCommentId for Cloud Functions notifications
 import React, { useContext, useState, useEffect, useCallback } from "react";
 import {
   View,
@@ -36,6 +36,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useFocusEffect } from "@react-navigation/native";
+
 // SVG Badges
 import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
@@ -43,14 +44,12 @@ import RedBadge from "../assets/icons/red.svg";
 
 const { width, height } = Dimensions.get("window");
 
-// Helper to safely display category (handles object vs string) - ONLY DECLARED ONCE
 const safeCategory = (cat) => {
   if (!cat) return "Not specified";
   if (typeof cat === "string") return cat;
   return cat?.name || "Not specified";
 };
 
-// VIEW COUNTER
 const useRecordView = (listingId, ownerId) => {
   const { user: currentUser } = useContext(UserContext);
   useFocusEffect(
@@ -86,7 +85,6 @@ const getFullName = (userData) => {
   return "User";
 };
 
-// Badge component
 const VerificationBadge = ({ type }) => {
   if (!type) return null;
   const badgeStyle = { marginLeft: 8 };
@@ -105,7 +103,15 @@ export default function ListingDetails() {
 
   useRecordView(listing?.id, posterId);
 
-  const [poster, setPoster] = useState({ name: "Loading...", avatar: null, verificationType: null });
+  const [poster, setPoster] = useState({
+    name: "Loading...",
+    avatar: null,
+    verificationType: null,
+    averageRating: 0,
+    reviewCount: 0,
+  });
+  const [loadingSeller, setLoadingSeller] = useState(true);
+
   const [comments, setComments] = useState([]);
   const [loadingComments, setLoadingComments] = useState(true);
   const [userCache, setUserCache] = useState({});
@@ -113,6 +119,7 @@ export default function ListingDetails() {
   const [showCommentModal, setShowCommentModal] = useState(false);
   const [newComment, setNewComment] = useState("");
   const [replyToUser, setReplyToUser] = useState(null);
+  const [replyToCommentId, setReplyToCommentId] = useState(null); // For Cloud Functions to detect replies
   const [attachedImage, setAttachedImage] = useState(null);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerUri, setImageViewerUri] = useState(null);
@@ -145,59 +152,86 @@ export default function ListingDetails() {
     }, 0);
   };
 
-  const totalRatings = comments.reduce((sum, c) => {
-    let ratingSum = (c.rating || 0);
-    if (c.children) {
-      ratingSum += c.children.reduce((childSum, child) => childSum + (child.rating || 0), 0);
-    }
-    return sum + ratingSum;
-  }, 0);
+  const rootComments = comments.filter((c) => !c.replyToCommentId); // Updated to use replyToCommentId
 
-  const totalCommentsForRating = getTotalCommentsCount(comments);
-  const avgRating = totalCommentsForRating > 0 ? (totalRatings / totalCommentsForRating).toFixed(1) : "0.0";
+  const hasSellerRating = poster.averageRating > 0 || poster.reviewCount > 0;
 
-  const rootComments = comments.filter(c => !c.replyToUser);
-
-  const goToProfile = (userId) => {
-    if (!userId) return;
-    navigation.navigate("HomeTabs", { screen: "Profile", params: { userId } });
-  };
-
-  const toggleExpanded = (id) => {
-    setExpandedComments(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  // Fetch poster + verification type
+  // Fetch poster with rating info
   useEffect(() => {
-    if (!posterId) return;
+    if (!posterId) {
+      setPoster({
+        name: "User",
+        avatar: null,
+        verificationType: null,
+        averageRating: 0,
+        reviewCount: 0,
+      });
+      setLoadingSeller(false);
+      return;
+    }
+
+    let isMounted = true;
+
     const fetchPoster = async () => {
       try {
+        setLoadingSeller(true);
+
         let userData = await getUserById?.(posterId);
         if (!userData) {
           const snap = await getDoc(doc(db, "users", posterId));
           userData = snap.exists() ? snap.data() : null;
         }
-        if (userData) {
-          setPoster({
-            name: getFullName(userData),
-            avatar: userData.photoURL || userData.profileImage || userData.avatar || null,
-            verificationType: userData.verificationType || null,
-          });
-        } else {
-          setPoster({ name: "User", avatar: null, verificationType: null });
+
+        if (isMounted) {
+          if (userData) {
+            setPoster({
+              name: getFullName(userData),
+              avatar: userData.photoURL || userData.profileImage || userData.avatar || null,
+              verificationType: userData.verificationType || null,
+              averageRating: userData.averageRating || 0,
+              reviewCount: userData.reviewCount || 0,
+            });
+          } else {
+            setPoster({
+              name: "User",
+              avatar: null,
+              verificationType: null,
+              averageRating: 0,
+              reviewCount: 0,
+            });
+          }
         }
       } catch (e) {
-        setPoster({ name: "User", avatar: null, verificationType: null });
+        console.error("Poster fetch failed:", e);
+        if (isMounted) {
+          setPoster({
+            name: "User",
+            avatar: null,
+            verificationType: null,
+            averageRating: 0,
+            reviewCount: 0,
+          });
+        }
+      } finally {
+        if (isMounted) setLoadingSeller(false);
       }
     };
-    fetchPoster();
-  }, [posterId]);
 
-  // Comments + verification type for each author
+    fetchPoster();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [posterId, getUserById]);
+
+  // Comments fetching – updated to support replyToCommentId
   useEffect(() => {
     if (!listing?.id) return;
+
     setLoadingComments(true);
+
     const q = query(collection(db, "listings", listing.id, "comments"), orderBy("timestamp", "asc"));
+
     const unsub = onSnapshot(q, async (snap) => {
       try {
         if (snap.empty) {
@@ -205,12 +239,14 @@ export default function ListingDetails() {
           setLoadingComments(false);
           return;
         }
-        const userIds = snap.docs.map(doc => doc.data().userId).filter(Boolean);
+
+        const userIds = snap.docs.map((doc) => doc.data().userId).filter(Boolean);
         const uniqueUserIds = [...new Set(userIds)];
         const newUserCache = { ...userCache };
-        const missingUserIds = uniqueUserIds.filter(id => !userCache[id]);
+        const missingUserIds = uniqueUserIds.filter((id) => !userCache[id]);
+
         if (missingUserIds.length > 0) {
-          const userPromises = missingUserIds.map(id => getDoc(doc(db, "users", id)).catch(() => null));
+          const userPromises = missingUserIds.map((id) => getDoc(doc(db, "users", id)).catch(() => null));
           const userSnaps = await Promise.all(userPromises);
           userSnaps.forEach((userSnap, index) => {
             const userId = missingUserIds[index];
@@ -225,9 +261,11 @@ export default function ListingDetails() {
           });
           setUserCache(newUserCache);
         }
+
         const commentMap = {};
         const roots = [];
-        snap.docs.forEach(docSnap => {
+
+        snap.docs.forEach((docSnap) => {
           const data = docSnap.data();
           const userId = data.userId;
           const cachedUser = newUserCache[userId] || userCache[userId];
@@ -240,17 +278,20 @@ export default function ListingDetails() {
             children: [],
           };
           commentMap[comment.id] = comment;
-          if (data.replyToUser) {
-            const parent = Object.values(commentMap).find(c => c.userName === data.replyToUser);
+
+          if (data.replyToCommentId) {
+            const parent = commentMap[data.replyToCommentId];
             if (parent) parent.children.push(comment);
             else roots.push(comment);
           } else {
             roots.push(comment);
           }
         });
+
         const sortByTime = (a, b) => (a.timestamp?.toDate() || 0) - (b.timestamp?.toDate() || 0);
         roots.sort(sortByTime);
-        roots.forEach(root => root.children.sort(sortByTime));
+        roots.forEach((root) => root.children.sort(sortByTime));
+
         setComments(roots);
       } catch (error) {
         console.error("Comments fetch error:", error);
@@ -258,8 +299,18 @@ export default function ListingDetails() {
         setLoadingComments(false);
       }
     });
+
     return () => unsub();
   }, [listing?.id]);
+
+  const goToProfile = (userId) => {
+    if (!userId) return;
+    navigation.navigate("HomeTabs", { screen: "Profile", params: { userId } });
+  };
+
+  const toggleExpanded = (id) => {
+    setExpandedComments((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
   const pickCommentImage = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({
@@ -274,26 +325,36 @@ export default function ListingDetails() {
     const text = newComment.trim();
     if (!text && !attachedImage) return;
     setSendStatus("sending");
+
     try {
       const fullName = getFullName(user || {});
       const photoURL = user?.photoURL || user?.profileImage || user?.avatar || null;
-      await addDoc(collection(db, "listings", listing.id, "comments"), {
-        userId: user?.uid || user?.id,
+
+      const commentData = {
+        userId: user?.uid,
         userName: fullName,
         userAvatar: photoURL,
         text,
         image: attachedImage || null,
-        replyToUser: replyToUser || null,
         timestamp: serverTimestamp(),
-      });
+        replyToUser: replyToUser || null,
+        replyToCommentId: replyToCommentId || null, // For Cloud Functions to detect replies
+      };
+
+      await addDoc(collection(db, "listings", listing.id, "comments"), commentData);
+
+      // No client-side FCM – Cloud Function will handle notifications
+
       setNewComment("");
       setReplyToUser(null);
+      setReplyToCommentId(null);
       setAttachedImage(null);
       Keyboard.dismiss();
       setSendStatus("success");
       setTimeout(() => setSendStatus("idle"), 2000);
     } catch (error) {
       console.error("Send failed:", error);
+      Alert.alert("Error", "Failed to send comment. Try again.");
       setSendStatus("idle");
     }
   };
@@ -346,7 +407,10 @@ export default function ListingDetails() {
               <Text style={[styles.commentTime, { color: theme.textSecondary }]}>
                 {comment.timestamp ? timeAgo(comment.timestamp.toDate()) : "Just now"}
               </Text>
-              <TouchableOpacity onPress={() => setReplyToUser(comment.userName)}>
+              <TouchableOpacity onPress={() => {
+                setReplyToUser(comment.userName);
+                setReplyToCommentId(comment.id);
+              }}>
                 <Text style={[styles.replyButton, { color: theme.primary }]}>Reply</Text>
               </TouchableOpacity>
               {depth === 0 && hasReplies && (
@@ -364,7 +428,7 @@ export default function ListingDetails() {
                 </TouchableOpacity>
               )}
             </View>
-            {isExpanded && comment.children.map(child => renderComment(child, depth + 1))}
+            {isExpanded && comment.children.map((child) => renderComment(child, depth + 1))}
           </View>
         </View>
       </View>
@@ -378,8 +442,8 @@ export default function ListingDetails() {
           <View style={styles.skeletonAvatar} />
           <View style={{ marginLeft: 12, flex: 1 }}>
             <View style={styles.skeletonLine1} />
-            <View style={[styles.skeletonLine2, { marginTop: 8, width: '70%' }]} />
-            <View style={[styles.skeletonLine3, { marginTop: 12, width: '50%' }]} />
+            <View style={[styles.skeletonLine2, { marginTop: 8, width: "70%" }]} />
+            <View style={[styles.skeletonLine3, { marginTop: 12, width: "50%" }]} />
           </View>
         </View>
       </View>
@@ -388,11 +452,19 @@ export default function ListingDetails() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bgColor }}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
         <View style={styles.imageWrapper}>
-          <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={onMainMomentumScroll}>
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={onMainMomentumScroll}
+          >
             {(listing?.images || []).map((img, i) => (
-              <TouchableOpacity key={i} onPress={() => navigation.navigate("GalleryScreen", { images: listing.images, startIndex: i })}>
+              <TouchableOpacity
+                key={i}
+                onPress={() => navigation.navigate("GalleryScreen", { images: listing.images, startIndex: i })}
+              >
                 <Image source={{ uri: getImageUri(img) }} style={styles.image} />
               </TouchableOpacity>
             ))}
@@ -407,7 +479,6 @@ export default function ListingDetails() {
         <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
           <Text style={[styles.title, { color: textColor }]}>{listing?.title || "No title"}</Text>
           {listing?.price && <Text style={styles.price}>₦{Number(listing.price).toLocaleString()}</Text>}
-          {/* FIXED: Safe category rendering - no more object crash */}
           {listing?.category && (
             <Text style={[styles.category, { color: secondaryText }]}>
               Category: {safeCategory(listing.category)}
@@ -416,16 +487,55 @@ export default function ListingDetails() {
           {listing?.description && <Text style={[styles.description, { color: secondaryText }]}>{listing.description}</Text>}
         </View>
 
-        {/* Owner with badge */}
-        <TouchableOpacity onPress={() => goToProfile(posterId)} style={[styles.vendorBox, { borderColor }]}>
+        {/* Seller section with real rating */}
+        <TouchableOpacity
+          onPress={() => goToProfile(posterId)}
+          style={[styles.vendorBox, { borderColor }]}
+        >
           <Avatar uri={poster.avatar} size={50} />
+
           <View style={{ marginLeft: 12, flex: 1 }}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <Text style={[styles.vendorName, { color: textColor }]}>{poster.name}</Text>
               <VerificationBadge type={poster.verificationType} />
             </View>
+
+            {/* Tiny seller rating */}
+            {loadingSeller ? (
+              <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 6 }} />
+            ) : hasSellerRating ? (
+              <View style={styles.ratingRow}>
+                {[1, 2, 3, 4, 5].map((s) => (
+                  <Ionicons
+                    key={s}
+                    name={
+                      s <= Math.floor(poster.averageRating || 0)
+                        ? "star"
+                        : s <= (poster.averageRating || 0)
+                        ? "star-half"
+                        : "star-outline"
+                    }
+                    size={13}
+                    color={s <= (poster.averageRating || 0) ? "#FFA41C" : "#888"}
+                    style={{ marginRight: 2 }}
+                  />
+                ))}
+                <Text style={styles.ratingNumber}>
+                  {poster.averageRating?.toFixed(1) || "0.0"}
+                </Text>
+                <Text style={styles.reviewCountText}>
+                  • ({poster.reviewCount || 0})
+                </Text>
+              </View>
+            ) : (
+              <Text style={{ fontSize: 13, color: secondaryText, fontStyle: "italic", marginTop: 6 }}>
+                No ratings yet
+              </Text>
+            )}
+
             <Text style={{ color: secondaryText }}>Tap to view profile</Text>
           </View>
+
           <Ionicons name="chevron-forward" size={20} color={secondaryText} />
         </TouchableOpacity>
 
@@ -436,16 +546,9 @@ export default function ListingDetails() {
               {loadingComments ? "Loading..." : `${getTotalCommentsCount(comments)} Comments`}
             </Text>
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Text style={{ fontWeight: "600", marginRight: 8, color: textColor }}>
-              {loadingComments ? "4.2" : avgRating}
-            </Text>
-            {[1, 2, 3, 4, 5].map(i => (
-              <Ionicons key={i} name="star" size={16} color="#FFD700" style={{ marginLeft: 2 }} />
-            ))}
-          </View>
         </View>
 
+        {/* Comments Preview */}
         <View style={{ paddingHorizontal: 16 }}>
           {loadingComments ? (
             renderSkeletonComments()
@@ -482,7 +585,7 @@ export default function ListingDetails() {
           )}
         </View>
 
-        {/* Fixed action row */}
+        {/* Fixed CTA row – Rating | Comment | Report – your requested style */}
         <View style={[styles.actionRowFixed, { borderTopColor: borderColor }]}>
           <TouchableOpacity
             style={styles.actionButtonFixed}
@@ -494,16 +597,16 @@ export default function ListingDetails() {
               navigation.navigate("RatingScreen", { targetUserId: posterId });
             }}
           >
-            <View style={[styles.shieldPillFixed, { backgroundColor: `rgba(1,122,107,0.1)`, borderColor: theme.primary }]}>
-              <Ionicons name="star" size={18} color={theme.primary} />
-              <Text style={[styles.actionLabelFixed, { color: theme.primary }]}>Rating</Text>
+            <View style={styles.ctaPill}>
+              <Ionicons name="star-outline" size={18} color="#888" />
+              <Text style={styles.ctaText}>Rating</Text>
             </View>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.actionButtonFixed} onPress={() => setShowCommentModal(true)}>
-            <View style={[styles.shieldPillFixed, { backgroundColor: `rgba(1,122,107,0.1)`, borderColor: theme.primary }]}>
-              <Ionicons name="chatbubble-outline" size={18} color={theme.primary} />
-              <Text style={[styles.actionLabelFixed, { color: theme.primary }]}>Comment</Text>
+            <View style={styles.ctaPill}>
+              <Ionicons name="chatbubble-outline" size={18} color="#888" />
+              <Text style={styles.ctaText}>Comment</Text>
             </View>
           </TouchableOpacity>
 
@@ -511,9 +614,9 @@ export default function ListingDetails() {
             style={styles.actionButtonFixed}
             onPress={() => navigation.navigate("ReportScreen", { listingId: listing?.id, title: listing?.title })}
           >
-            <View style={[styles.shieldPillFixed, { backgroundColor: `rgba(239,68,68,0.1)`, borderColor: theme.danger }]}>
-              <Ionicons name="flag-outline" size={18} color={theme.danger} />
-              <Text style={[styles.actionLabelFixed, { color: theme.danger }]}>Report</Text>
+            <View style={styles.ctaPill}>
+              <Ionicons name="flag-outline" size={18} color="#888" />
+              <Text style={styles.ctaText}>Report</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -536,7 +639,6 @@ export default function ListingDetails() {
                 <Ionicons name="close-outline" size={24} color={theme.textSecondary} />
               </TouchableOpacity>
             </View>
-
             <View style={styles.commentsListContainerFixed}>
               <KeyboardAwareScrollView
                 contentContainerStyle={styles.commentsListContent}
@@ -558,7 +660,7 @@ export default function ListingDetails() {
                     </Text>
                   </View>
                 ) : (
-                  comments.map(comment => renderComment(comment))
+                  comments.map((comment) => renderComment(comment))
                 )}
                 <View style={{ height: 100 }} />
               </KeyboardAwareScrollView>
@@ -578,7 +680,10 @@ export default function ListingDetails() {
                   <Text style={[styles.replyIndicatorText, { color: theme.primary }]}>
                     Replying to {replyToUser}
                   </Text>
-                  <TouchableOpacity onPress={() => setReplyToUser(null)}>
+                  <TouchableOpacity onPress={() => {
+                    setReplyToUser(null);
+                    setReplyToCommentId(null);
+                  }}>
                     <Ionicons name="close-outline" size={18} color={theme.textSecondary} />
                   </TouchableOpacity>
                 </View>
@@ -596,11 +701,14 @@ export default function ListingDetails() {
                   <Ionicons name="image-outline" size={24} color={theme.primary} />
                 </TouchableOpacity>
                 <TextInput
-                  style={[styles.commentInput, {
-                    backgroundColor: theme.inputBg,
-                    borderColor: theme.border,
-                    color: theme.text
-                  }]}
+                  style={[
+                    styles.commentInput,
+                    {
+                      backgroundColor: theme.inputBg,
+                      borderColor: theme.border,
+                      color: theme.text,
+                    },
+                  ]}
                   placeholder={replyToUser ? `Reply to ${replyToUser}...` : "Add a comment..."}
                   placeholderTextColor={theme.textSecondary}
                   value={newComment}
@@ -611,9 +719,9 @@ export default function ListingDetails() {
                 <TouchableOpacity
                   style={[
                     styles.sendButton,
-                    (newComment.trim() || attachedImage) ?
-                      [styles.sendButtonActive, { backgroundColor: theme.primary }] :
-                      [styles.sendButtonInactive, { backgroundColor: theme.border }]
+                    (newComment.trim() || attachedImage)
+                      ? [styles.sendButtonActive, { backgroundColor: theme.primary }]
+                      : [styles.sendButtonInactive, { backgroundColor: theme.border }],
                   ]}
                   onPress={handleSendComment}
                   disabled={sendStatus === "sending" || (!newComment.trim() && !attachedImage)}
@@ -621,7 +729,11 @@ export default function ListingDetails() {
                   {sendStatus === "sending" ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <Ionicons name="send" size={24} color={(newComment.trim() || attachedImage) ? "#fff" : theme.textSecondary} />
+                    <Ionicons
+                      name="send"
+                      size={24}
+                      color={(newComment.trim() || attachedImage) ? "#fff" : theme.textSecondary}
+                    />
                   )}
                 </TouchableOpacity>
               </View>
@@ -633,10 +745,18 @@ export default function ListingDetails() {
       {/* Image Viewer Modal */}
       <Modal visible={imageViewerVisible} transparent>
         <View style={{ flex: 1, backgroundColor: "#000" }}>
-          <TouchableOpacity style={{ position: "absolute", top: 50, right: 20, zIndex: 10 }} onPress={() => setImageViewerVisible(false)}>
+          <TouchableOpacity
+            style={{ position: "absolute", top: 50, right: 20, zIndex: 10 }}
+            onPress={() => setImageViewerVisible(false)}
+          >
             <Ionicons name="close" size={40} color="#fff" />
           </TouchableOpacity>
-          {imageViewerUri && <Image source={{ uri: getImageUri(imageViewerUri) }} style={{ width, height, resizeMode: "contain" }} />}
+          {imageViewerUri && (
+            <Image
+              source={{ uri: getImageUri(imageViewerUri) }}
+              style={{ width, height, resizeMode: "contain" }}
+            />
+          )}
         </View>
       </Modal>
     </SafeAreaView>
@@ -644,33 +764,116 @@ export default function ListingDetails() {
 }
 
 const styles = StyleSheet.create({
-  imageWrapper: { width, height: height * 0.5, backgroundColor: "#000", borderBottomLeftRadius: 20, borderBottomRightRadius: 20, overflow: "hidden" },
+  imageWrapper: {
+    width,
+    height: height * 0.5,
+    backgroundColor: "#000",
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    overflow: "hidden",
+  },
   image: { width, height: height * 0.5, resizeMode: "cover" },
-  imageCounterContainer: { position: "absolute", right: 12, bottom: 12, backgroundColor: "rgba(0,0,0,0.65)", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
+  imageCounterContainer: {
+    position: "absolute",
+    right: 12,
+    bottom: 12,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
   imageCounterText: { color: "#fff", fontWeight: "bold", fontSize: 14 },
   title: { fontSize: 24, fontWeight: "bold" },
   price: { fontSize: 23, fontWeight: "800", color: "#017a6b", marginVertical: 6 },
   category: { fontSize: 15, marginBottom: 4 },
   description: { fontSize: 16, lineHeight: 24 },
-  vendorBox: { flexDirection: "row", alignItems: "center", padding: 16, borderTopWidth: 1, borderBottomWidth: 1, marginTop: 12 },
+  vendorBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    padding: 16,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    marginTop: 12,
+  },
   vendorName: { fontSize: 18, fontWeight: "bold" },
+  ratingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 6,
+  },
+  ratingNumber: {
+    marginLeft: 6,
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#FFA41C",
+  },
+  reviewCountText: {
+    fontSize: 12.5,
+    color: "#888",
+    fontWeight: "400",
+  },
   inlineStats: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 16, marginVertical: 16 },
-  actionRowFixed: { flexDirection: "row", justifyContent: "space-evenly", paddingHorizontal: 12, paddingVertical: 20, borderTopWidth: 1 },
-  actionButtonFixed: { flex: 1, marginHorizontal: 4 },
-  shieldPillFixed: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 16, paddingVertical: 12, borderRadius: 25, borderWidth: 1 },
-  actionLabelFixed: { marginLeft: 8, fontSize: 14, fontWeight: "600" },
+  actionRowFixed: {
+    flexDirection: "row",
+    justifyContent: "space-evenly",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    backgroundColor: "transparent",
+  },
+  actionButtonFixed: {
+    flex: 1,
+    marginHorizontal: 6,
+  },
+  ctaPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(240,240,240,0.85)", // light gray semi-transparent
+    borderRadius: 24,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: "rgba(200,200,200,0.6)",
+  },
+  ctaText: {
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#888", // gray text
+  },
+  // Dark theme override
+  ctaPillDark: {
+    backgroundColor: "rgba(50,50,50,0.85)",
+    borderColor: "rgba(100,100,100,0.6)",
+  },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
-  modalContainerFixed: { borderTopLeftRadius: 28, borderTopRightRadius: 28, height: height * 0.75, maxHeight: height * 0.90, overflow: "hidden" },
+  modalContainerFixed: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    height: height * 0.75,
+    maxHeight: height * 0.90,
+    overflow: "hidden",
+  },
   modalHandle: { width: 48, height: 5, borderRadius: 3, alignSelf: "center", marginTop: 12, marginBottom: 8 },
-  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1 },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderBottomWidth: 1,
+  },
   modalHeaderContent: { flexDirection: "row", alignItems: "center" },
   modalTitle: { fontSize: 20, fontWeight: "800", marginLeft: 12 },
   commentsListContainerFixed: { flex: 1 },
   commentsListContent: { paddingHorizontal: 20, paddingVertical: 16, paddingBottom: 20, flexGrow: 1 },
   skeletonAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#e0e0e0" },
   skeletonLine1: { width: 120, height: 16, borderRadius: 8, backgroundColor: "#e0e0e0" },
-  skeletonLine2: { width: '85%', height: 14, borderRadius: 7, backgroundColor: "#e0e0e0" },
-  skeletonLine3: { width: '60%', height: 12, borderRadius: 6, backgroundColor: "#e0e0e0" },
+  skeletonLine2: { width: "85%", height: 14, borderRadius: 7, backgroundColor: "#e0e0e0" },
+  skeletonLine3: { width: "60%", height: 12, borderRadius: 6, backgroundColor: "#e0e0e0" },
   commentContainer: {},
   commentRow: { flexDirection: "row", alignItems: "flex-start" },
   commentContent: { marginLeft: 12, flex: 1 },
@@ -690,16 +893,49 @@ const styles = StyleSheet.create({
   noCommentsPreview: { justifyContent: "center", alignItems: "center", paddingVertical: 40 },
   noCommentsText: { fontSize: 16, marginTop: 12, textAlign: "center" },
   commentInputSectionFixed: { borderTopWidth: 1, paddingTop: 16, paddingBottom: 20 },
-  successMessage: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 12, paddingHorizontal: 20, borderRadius: 16, marginHorizontal: 16, marginBottom: 16 },
+  successMessage: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
   successText: { fontSize: 15, fontWeight: "600", marginLeft: 8 },
-  replyIndicatorContainer: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, marginHorizontal: 16, marginBottom: 16, alignSelf: "flex-start" },
+  replyIndicatorContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 20,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    alignSelf: "flex-start",
+  },
   replyIndicatorText: { fontSize: 13.5, marginLeft: 8, flex: 1 },
-  attachedImageContainer: { position: "relative", marginBottom: 12, alignSelf: "flex-start", marginHorizontal: 16 },
+  attachedImageContainer: {
+    position: "relative",
+    marginBottom: 12,
+    alignSelf: "flex-start",
+    marginHorizontal: 16,
+  },
   attachedImage: { width: 84, height: 84, borderRadius: 14 },
   removeImageButton: { position: "absolute", top: -10, right: -10 },
   commentInputWrapper: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 16, paddingVertical: 12 },
   imagePickerButton: { padding: 12 },
-  commentInput: { flex: 1, marginHorizontal: 14, borderRadius: 30, paddingHorizontal: 20, paddingVertical: 16, fontSize: 16, minHeight: 54, maxHeight: 120, borderWidth: 1 },
+  commentInput: {
+    flex: 1,
+    marginHorizontal: 14,
+    borderRadius: 30,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    fontSize: 16,
+    minHeight: 54,
+    maxHeight: 120,
+    borderWidth: 1,
+  },
   sendButton: { width: 54, height: 54, borderRadius: 27, justifyContent: "center", alignItems: "center" },
   sendButtonActive: { shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 12, elevation: 6 },
   sendButtonInactive: {},
