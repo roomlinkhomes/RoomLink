@@ -1,5 +1,5 @@
-// screens/Conversation.jsx — FIXED: Instant navigation + background read receipts
-import React, { useState, useEffect, useCallback } from "react";
+// screens/Conversation.jsx — FIXED: Re-fetch conversations on real auth user change
+import React, { useState, useEffect, useCallback, useContext } from "react";
 import {
   View,
   Text,
@@ -17,7 +17,7 @@ import {
   RefreshControl,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { useUser } from "../context/UserContext";
+import { AuthContext } from "../context/AuthContext"; // ← FIXED: real auth user
 import {
   collection,
   query,
@@ -102,8 +102,8 @@ const VerificationBadge = ({ type }) => {
 // ── MAIN COMPONENT ─────────────────────────────────────
 export default function Conversation() {
   const navigation = useNavigation();
-  const { user: currentUser } = useUser();
-  const userId = currentUser?._id || currentUser?.uid;
+  const { user: authUser } = useContext(AuthContext); // ← FIXED: real logged-in user
+  const userId = authUser?.uid; // ← use uid directly
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
 
@@ -115,9 +115,21 @@ export default function Conversation() {
   const [selectedConvo, setSelectedConvo] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Pinned/Archived listener
+  // Debug log
   useEffect(() => {
-    if (!userId) return;
+    console.log('[CONVERSATION DEBUG] Auth user:', authUser ? authUser.uid : 'NO USER');
+  }, [authUser]);
+
+  // Pinned/Archived listener — re-run on userId change
+  useEffect(() => {
+    if (!userId) {
+      setPinnedConvos([]);
+      setArchivedConvos([]);
+      return;
+    }
+
+    console.log('[CONVERSATION] Fetching pinned/archived settings for UID:', userId);
+
     const settingsRef = doc(db, "users", userId, "settings", "conversations");
     const unsub = onSnapshot(settingsRef, (snap) => {
       if (snap.exists()) {
@@ -129,10 +141,11 @@ export default function Conversation() {
         setArchivedConvos([]);
       }
     });
+
     return unsub;
   }, [userId]);
 
-  // Update settings
+  // Update settings (unchanged)
   const updateConvoSettings = async (field, convoKey, add = true) => {
     if (!userId) return;
     const settingsRef = doc(db, "users", userId, "settings", "conversations");
@@ -147,6 +160,7 @@ export default function Conversation() {
     }
   };
 
+  // Modal handlers (unchanged)
   const handlePin = async () => {
     if (!selectedConvo) return;
     const isPinned = pinnedConvos.includes(selectedConvo.convoKey);
@@ -218,7 +232,7 @@ export default function Conversation() {
       )
     );
 
-    // 2. Navigate INSTANTLY - this is what the user experiences
+    // 2. Navigate INSTANTLY
     navigation.navigate("Message", {
       listingId: item.listingId,
       listingOwnerId: item.otherUserId,
@@ -226,7 +240,7 @@ export default function Conversation() {
       otherUserPhoto: item.otherUserPhoto,
     });
 
-    // 3. Mark messages as read in the background (non-blocking)
+    // 3. Mark messages as read in background
     Promise.resolve().then(async () => {
       try {
         const unreadQuery = query(
@@ -250,17 +264,21 @@ export default function Conversation() {
           console.log("✅ Background: Marked", snapshot.size, "messages as read");
         }
       } catch (error) {
-        console.warn("⚠️ Background mark-as-read failed (non-critical):", error);
+        console.warn("⚠️ Background mark-as-read failed:", error);
       }
     });
   }, [navigation, userId]);
 
-  // Real-time listener — uses readBy for accurate unread count
-  const loadConversations = () => {
+  // FIXED: Load conversations with real auth dependency
+  const loadConversations = useCallback(() => {
     if (!userId) {
+      console.log('[CONVERSATION] No userId → clearing conversations');
+      setConversations([]);
       setLoading(false);
       return () => {};
     }
+
+    console.log('[CONVERSATION] Loading conversations for UID:', userId);
 
     const convoMap = new Map();
 
@@ -313,6 +331,7 @@ export default function Conversation() {
 
       setConversations([...pinned, ...unpinned]);
       setLoading(false);
+      console.log('[CONVERSATION] Loaded conversations count:', filtered.length);
     };
 
     const sentQuery = query(
@@ -334,19 +353,20 @@ export default function Conversation() {
       unsubSent();
       unsubReceived();
     };
-  };
-
-  useEffect(() => {
-    const unsub = loadConversations();
-    return unsub;
   }, [userId, pinnedConvos, archivedConvos]);
+
+  // FIXED: Re-run loadConversations when userId changes
+  useEffect(() => {
+    const cleanup = loadConversations();
+    return cleanup;
+  }, [loadConversations]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    const unsub = loadConversations();
+    const cleanup = loadConversations();
     setTimeout(() => {
       setRefreshing(false);
-      if (unsub) unsub();
+      if (cleanup) cleanup();
     }, 1000);
   };
 
@@ -499,7 +519,7 @@ export default function Conversation() {
   );
 }
 
-// ── STYLES ─────────────────────────────────────────────
+// ── STYLES ───────────────────────────────────────────── (unchanged)
 const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 20,

@@ -1,4 +1,4 @@
-// component/HotelFeed.jsx — FIXED: smaller gray price text
+// component/HotelFeed.jsx
 import React, { useContext, useMemo, useEffect, useState } from "react";
 import {
   View,
@@ -20,7 +20,6 @@ import { ListingContext } from "../context/ListingContext";
 import { UserContext } from "../context/UserContext";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
-
 import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
 import RedBadge from "../assets/icons/red.svg";
@@ -66,10 +65,8 @@ const safeString = (value, fallback = "Not specified") => {
 export default function HotelFeed({ navigation, scrollY, onScroll }) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
-
   const { listings = [] } = useContext(ListingContext) || {};
   const { user: currentUser } = useContext(UserContext) || {};
-
   const [posts, setPosts] = useState([]);
   const [menuVisible, setMenuVisible] = useState(null);
   const [userInfoMap, setUserInfoMap] = useState({});
@@ -83,7 +80,6 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
     const fetchUserInfo = async () => {
       const uniqueUserIds = [...new Set(posts.map((p) => p.userId).filter(Boolean))];
       const newInfo = {};
-
       await Promise.all(
         uniqueUserIds.map(async (uid) => {
           if (!userInfoMap[uid]) {
@@ -119,12 +115,10 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
           }
         })
       );
-
       setUserInfoMap((prev) => ({ ...prev, ...newInfo }));
     };
-
     if (posts.length > 0) fetchUserInfo();
-  }, [posts]);
+  }, [posts, userInfoMap]);
 
   const dynamicStyles = useMemo(
     () => ({
@@ -133,7 +127,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
       cardBorder: { borderBottomColor: isDark ? "#444" : "#ddd" },
       textColor: { color: isDark ? "#fff" : "#000" },
       secondaryText: { color: isDark ? "#aaa" : "gray" },
-      priceColor: { color: isDark ? "#aaa" : "#888" }, // ← CHANGED: gray instead of green
+      priceColor: { color: isDark ? "#aaa" : "#888" },
       noImageBg: { backgroundColor: isDark ? "#3a3a3a" : "#eee" },
       dropdownBg: { backgroundColor: isDark ? "#333" : "#fff" },
       dropdownText: { color: isDark ? "#fff" : "#111" },
@@ -178,9 +172,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
     const avatarUri =
       userInfo.avatar || (isMyPost ? currentUser?.photoURL || currentUser?.avatar : null);
     const verificationType = userInfo.verificationType;
-
     const hasRating = userInfo.averageRating > 0 || userInfo.reviewCount > 0;
-
     const images = Array.isArray(item.images) && item.images.length > 0 ? item.images : [];
     const isBoosted = item.boostedUntil && new Date(item.boostedUntil) > new Date();
 
@@ -241,7 +233,6 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
                     </Text>
                   </View>
                 )}
-
                 <Text style={[dynamicStyles.secondaryText, styles.timestamp]}>
                   {timeAgo(item.createdAt)}
                   {hasRating && " • "}
@@ -249,6 +240,26 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
                 </Text>
               </View>
             </View>
+
+            {/* ← 3-dot menu moved here — same position as in Home.jsx */}
+            <TouchableOpacity
+              onPress={() => setMenuVisible(menuVisible === index ? null : index)}
+              style={styles.menuButton}
+              hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}
+            >
+              <Ionicons name="ellipsis-vertical" size={20} color={isDark ? "#fff" : "#000"} />
+            </TouchableOpacity>
+
+            {menuVisible === index && (
+              <View style={[styles.dropdownContainer, dynamicStyles.dropdownBg]}>
+                <TouchableOpacity onPress={() => handleShare(item)}>
+                  <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Share</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleCopy(item)}>
+                  <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Copy Link</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
 
           <TouchableOpacity
@@ -281,7 +292,6 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
                 {item.title || "Untitled Listing"}
               </Text>
 
-              {/* PRICE TEXT – NOW SMALLER & GRAY */}
               <Text style={[styles.price, dynamicStyles.priceColor]}>
                 {formatPricePerNight(item.pricePerNight)}
               </Text>
@@ -298,30 +308,10 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
                 </Text>
               </View>
 
-              <View style={styles.buttonRow}>
-                <TouchableOpacity style={styles.reserveButton} onPress={() => handleReserve(item)}>
-                  <Ionicons name="calendar-outline" size={18} color="#fff" />
-                  <Text style={styles.reserveText}>Reserve Now</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setMenuVisible(menuVisible === index ? null : index)}
-                  style={styles.menuShield}
-                >
-                  <Ionicons name="ellipsis-vertical" size={20} color={isDark ? "#fff" : "#000"} />
-                </TouchableOpacity>
-              </View>
-
-              {menuVisible === index && (
-                <View style={[styles.dropdownContainer, dynamicStyles.dropdownBg]}>
-                  <TouchableOpacity onPress={() => handleShare(item)}>
-                    <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Share</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => handleCopy(item)}>
-                    <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Copy Link</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+              <TouchableOpacity style={styles.reserveButton} onPress={() => handleReserve(item)}>
+                <Ionicons name="calendar-outline" size={18} color="#888" />
+                <Text style={styles.reserveText}>Reserve Now</Text>
+              </TouchableOpacity>
             </View>
           </TouchableOpacity>
         </View>
@@ -331,7 +321,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
 
   return (
     <View style={[styles.container, dynamicStyles.containerBg]}>
-      <AnimatedFlatList
+      <Animated.FlatList
         data={posts}
         keyExtractor={(item, index) => `${item.id || "hotel-unknown"}-${index}`}
         renderItem={renderPost}
@@ -366,9 +356,10 @@ const styles = StyleSheet.create({
 
   userRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    padding: 10,
-    marginBottom: 6,
+    alignItems: "center",
+    padding: 12,
+    paddingRight: 8,
+    marginBottom: 4,
   },
 
   avatar: { width: 44, height: 44, borderRadius: 22 },
@@ -427,67 +418,57 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
+  // ← Re-added from Home.jsx style (same look & feel)
+  menuButton: {
+    padding: 8,
+    marginLeft: 8,
+    borderRadius: 20,
+  },
+
   postImage: { width: SCREEN_WIDTH, height: 250 },
 
   listingInfo: { padding: 10 },
 
   listingTitle: { fontSize: 18, fontWeight: "800", lineHeight: 24, marginBottom: 8 },
 
-  // PRICE STYLES – NOW SMALLER & GRAY
   price: {
-    fontSize: 14,           // ← smaller size
-    fontWeight: "500",      // ← less bold
+    fontSize: 14,
+    fontWeight: "500",
     letterSpacing: 0.2,
-    marginBottom: 4,
+    marginBottom: 8,
   },
 
   locationRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 4,
+    marginBottom: 12,
   },
 
   locationIcon: {
     marginRight: 6,
   },
 
-  buttonRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 10,
-  },
-
   reserveButton: {
-    flex: 1,
-    backgroundColor: "#017a6b",
+    backgroundColor: "#e0e0e0",
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginRight: 10,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginTop: 12,
   },
 
   reserveText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 14,
+    color: "#000",
+    fontWeight: "600",
+    fontSize: 15,
     marginLeft: 8,
-  },
-
-  menuShield: {
-    padding: 8,
-    borderRadius: 12,
-    backgroundColor: "rgba(1,122,107,0.2)",
-    borderColor: "#888",
-    borderWidth: 1,
   },
 
   dropdownContainer: {
     position: "absolute",
-    top: 40,
-    right: 10,
+    top: 44,
+    right: 12,
     borderRadius: 12,
     paddingVertical: 12,
     paddingHorizontal: 16,
@@ -499,7 +480,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
 
-  dropdownItem: { paddingVertical: 10, fontSize: 15 },
+  dropdownItem: { paddingVertical: 8, fontSize: 16 },
 
   boostedBadge: {
     flexDirection: "row",
@@ -511,7 +492,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     marginBottom: 8,
     marginLeft: 10,
-    marginTop: 10,
+    marginTop: 6,
   },
 
   boostedBadgeText: {

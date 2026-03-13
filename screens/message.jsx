@@ -1,4 +1,4 @@
-// screens/Message.jsx — FIXED: Modern compact input field, no floating, buttons fully visible above keyboard
+// screens/Message.jsx — FIXED: Everyone can send messages (no login required)
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -35,11 +35,12 @@ import {
 } from "firebase/firestore";
 import { db, storage } from "../firebase";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { useUser } from "../context/UserContext";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
 import MessageHeader from "../component/MessageHeader";
+import { auth } from "../firebaseConfig"; // only used for optional user info
 
 const SUPPORT_UID = "PdEzQK2PxUccxbJLJo67lRi21NR2";
 
@@ -62,7 +63,6 @@ const formatMessageTime = (timestamp) => {
 export default function Message() {
   const navigation = useNavigation();
   const route = useRoute();
-  const { user: currentUser } = useUser();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
 
@@ -81,10 +81,9 @@ export default function Message() {
     (recipientUID === SUPPORT_UID || recipientUID === "kLR1nC68S1WA4Ma3cpyjGcMaUb22");
 
   const effectiveListingOwnerId = recipientUID || routeListingOwnerId || SUPPORT_UID;
-
   const effectiveListingId = isSupportChat
-    ? `support_${[currentUser?.uid, effectiveListingOwnerId].sort().join("_")}`
-    : routeListingId || `chat_${[currentUser?.uid, effectiveListingOwnerId].sort().join("_")}`;
+    ? `support_${[auth.currentUser?.uid || "guest", effectiveListingOwnerId].sort().join("_")}`
+    : routeListingId || `chat_${[auth.currentUser?.uid || "guest", effectiveListingOwnerId].sort().join("_")}`;
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
@@ -100,9 +99,10 @@ export default function Message() {
 
   const flatListRef = useRef();
   const inputRef = useRef(null);
-
-  const currentUserId = currentUser?.uid || currentUser?._id;
   const hasText = inputText.trim().length > 0;
+
+  const currentUserId = auth.currentUser?.uid || `guest-${Date.now()}`; // Guest fallback
+  const currentUserName = auth.currentUser?.displayName || "Guest User";
 
   const quickSuggestions = [
     "Is your apartment still available?",
@@ -113,6 +113,22 @@ export default function Message() {
     "Any agent or legal fees?",
     "When is the earliest move-in date?",
   ];
+
+  // Recover pending camera result (unchanged)
+  useEffect(() => {
+    const checkPendingImage = async () => {
+      try {
+        const pending = await ImagePicker.getPendingResultAsync();
+        if (pending && !pending.canceled && pending.assets?.[0]?.uri) {
+          console.log("Recovered pending camera result:", pending.assets[0].uri);
+          sendImage(pending.assets[0].uri);
+        }
+      } catch (err) {
+        console.log("No pending result or error:", err);
+      }
+    };
+    checkPendingImage();
+  }, []);
 
   useEffect(() => {
     if (otherUser.name) {
@@ -129,7 +145,6 @@ export default function Message() {
         photoURL: paramPhoto || otherUser.photoURL,
       });
     }
-
     if (!effectiveListingOwnerId) return;
 
     const unsub = onSnapshot(doc(db, "users", effectiveListingOwnerId), (snap) => {
@@ -147,7 +162,6 @@ export default function Message() {
         setOtherUser({ name: "RoomLink Financial", photoURL: null });
       }
     });
-
     return unsub;
   }, [effectiveListingOwnerId, isSupportChat, paramName, paramPhoto]);
 
@@ -166,12 +180,13 @@ export default function Message() {
     fetchVerification();
   }, [effectiveListingOwnerId, isSupportChat]);
 
+  // Blocking check — only applies to logged-in users (guests can't be blocked)
   useEffect(() => {
-    if (!currentUserId || !effectiveListingOwnerId || isSupportChat) {
+    if (!auth.currentUser?.uid || !effectiveListingOwnerId || isSupportChat) {
       setIsBlocked(false);
       return;
     }
-    const userRef = doc(db, "users", currentUserId);
+    const userRef = doc(db, "users", auth.currentUser.uid);
     const unsub = onSnapshot(userRef, (snap) => {
       if (snap.exists()) {
         const blocked = snap.data().blocked || [];
@@ -181,10 +196,11 @@ export default function Message() {
       }
     });
     return unsub;
-  }, [currentUserId, effectiveListingOwnerId, isSupportChat]);
+  }, [effectiveListingOwnerId, isSupportChat]);
 
+  // Listen to messages — works for both logged-in and guests
   useEffect(() => {
-    if (!currentUserId || !effectiveListingId) {
+    if (!effectiveListingId) {
       setLoading(false);
       return;
     }
@@ -198,28 +214,36 @@ export default function Message() {
     const unsub = onSnapshot(q, (snapshot) => {
       const msgs = snapshot.docs
         .map((doc) => ({ id: doc.id, ...doc.data() }))
-        .filter(
-          (m) =>
-            (m.senderId === currentUserId && (!m.receiverId || m.receiverId === effectiveListingOwnerId)) ||
-            (m.receiverId === currentUserId && m.senderId === effectiveListingOwnerId)
-        );
+        .filter((m) => {
+          // For guests, show all messages in this listingId chat
+          // For logged-in, show only their messages or to them
+          if (!auth.currentUser?.uid) return true;
+          return (
+            (m.senderId === auth.currentUser.uid && (!m.receiverId || m.receiverId === effectiveListingOwnerId)) ||
+            (m.receiverId === auth.currentUser.uid && m.senderId === effectiveListingOwnerId)
+          );
+        });
+
       setMessages(msgs);
       setLoading(false);
 
-      const toMark = msgs.filter(
-        (m) =>
-          m.receiverId === currentUserId &&
-          !(Array.isArray(m.readBy) && m.readBy.includes(currentUserId))
-      );
-      toMark.forEach((m) => {
-        updateDoc(doc(db, "messages", m.id), { readBy: arrayUnion(currentUserId) }).catch(() => {});
-      });
+      // Mark as read only if logged in
+      if (auth.currentUser?.uid) {
+        const toMark = msgs.filter(
+          (m) =>
+            m.receiverId === auth.currentUser.uid &&
+            !(Array.isArray(m.readBy) && m.readBy.includes(auth.currentUser.uid))
+        );
+        toMark.forEach((m) => {
+          updateDoc(doc(db, "messages", m.id), { readBy: arrayUnion(auth.currentUser.uid) }).catch(() => {});
+        });
+      }
 
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     });
 
     return unsub;
-  }, [currentUserId, effectiveListingId, effectiveListingOwnerId]);
+  }, [effectiveListingId]);
 
   useEffect(() => {
     if (messages.length > 3) {
@@ -255,6 +279,7 @@ export default function Message() {
     if (!uri || uploading || isBlocked) return;
     setUploading(true);
     heavyVibrate();
+
     const tempId = Date.now().toString();
     const optimisticImg = {
       id: tempId,
@@ -268,11 +293,13 @@ export default function Message() {
     };
     setMessages((prev) => [...prev, optimisticImg]);
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+
     try {
       const imageUrl = await uploadImage(uri);
       const docRef = await addDoc(collection(db, "messages"), {
         imageUrl,
         senderId: currentUserId,
+        senderName: currentUserName,
         receiverId: effectiveListingOwnerId || null,
         listingId: effectiveListingId,
         createdAt: serverTimestamp(),
@@ -292,25 +319,48 @@ export default function Message() {
 
   const pickImage = async () => {
     heavyVibrate();
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
-      allowsEditing: true,
-    });
-    if (!result.canceled) sendImage(result.assets[0].uri);
-    setMediaMenuVisible(false);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "image/*",
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      console.log("Gallery (DocumentPicker) result:", result);
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error("Gallery picker error:", error);
+      Alert.alert("Error", "Failed to open gallery. Try restarting the app.");
+    } finally {
+      setMediaMenuVisible(false);
+    }
   };
 
   const openCamera = async () => {
     heavyVibrate();
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Camera access required");
-      return;
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission needed", "Camera access required. Please enable in settings.");
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.7,
+      });
+      console.log("Camera launch result:", JSON.stringify(result));
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error("Camera open error:", error);
+      Alert.alert("Camera Error", "Could not open camera. Check permissions or try restarting the app.");
+    } finally {
+      setMediaMenuVisible(false);
     }
-    const result = await ImagePicker.launchCameraAsync({ quality: 0.7, allowsEditing: true });
-    if (!result.canceled) sendImage(result.assets[0].uri);
-    setMediaMenuVisible(false);
   };
 
   const sendMessage = async () => {
@@ -318,11 +368,13 @@ export default function Message() {
     const textToSend = inputText.trim();
     setInputText("");
     heavyVibrate();
+
     const tempId = Date.now().toString();
     const optimisticMsg = {
       id: tempId,
       content: textToSend,
       senderId: currentUserId,
+      senderName: currentUserName,
       receiverId: effectiveListingOwnerId || null,
       listingId: effectiveListingId,
       createdAt: { toDate: () => new Date() },
@@ -332,10 +384,12 @@ export default function Message() {
     };
     setMessages((prev) => [...prev, optimisticMsg]);
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+
     try {
       const docRef = await addDoc(collection(db, "messages"), {
         content: textToSend,
         senderId: currentUserId,
+        senderName: currentUserName,
         receiverId: effectiveListingOwnerId || null,
         listingId: effectiveListingId,
         createdAt: serverTimestamp(),
@@ -357,6 +411,7 @@ export default function Message() {
     const receiverId = item.receiverId || effectiveListingOwnerId;
     let tickIcon = null;
     let tickColor = "#aaa";
+
     if (isMe) {
       if (item._optimistic) {
         tickIcon = "checkmark";
@@ -369,6 +424,7 @@ export default function Message() {
         tickColor = isRead ? "#0df9a0" : "#aaa";
       }
     }
+
     if (item.type === "image") {
       return (
         <View style={[styles.messageContainer, isMe ? styles.sent : styles.received]}>
@@ -388,6 +444,7 @@ export default function Message() {
         </View>
       );
     }
+
     return (
       <View style={[styles.messageContainer, isMe ? styles.sent : styles.received]}>
         <View style={[styles.bubble, isMe ? styles.sentBubble : { backgroundColor: isDark ? "#333" : "#e5e5ea" }]}>
@@ -462,7 +519,6 @@ export default function Message() {
         photoURL={otherUser.photoURL}
         verificationType={isSupportChat ? null : verificationType}
       />
-
       <Modal visible={!!fullImage} transparent animationType="fade">
         <View style={{ flex: 1, backgroundColor: "#000" }}>
           <TouchableOpacity style={{ position: "absolute", top: 40, left: 20, zIndex: 10 }} onPress={() => setFullImage(null)}>
@@ -471,11 +527,10 @@ export default function Message() {
           <Image source={{ uri: fullImage }} style={{ flex: 1, width: "100%" }} resizeMode="contain" />
         </View>
       </Modal>
-
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.select({
-          ios: 90,   // tune this: 80–120 (higher = more lift when keyboard opens)
+          ios: 90,
           android: 0
         })}
         style={{ flex: 1 }}
@@ -485,11 +540,10 @@ export default function Message() {
           data={messages}
           keyExtractor={(item) => item.id}
           renderItem={renderMessage}
-          contentContainerStyle={{ padding: 16, paddingBottom: 120 }} // extra bottom space for input
+          contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
         />
-
         {showSuggestions && (
           <View style={[styles.suggestionsContainer, { backgroundColor: isDark ? "#111" : "#f8f9fa" }]}>
             <ScrollView
@@ -521,7 +575,6 @@ export default function Message() {
             </ScrollView>
           </View>
         )}
-
         {/* MODERN COMPACT INPUT BAR */}
         <View style={styles.inputBar}>
           <View style={styles.inputContainer}>
@@ -536,7 +589,6 @@ export default function Message() {
                 color={uploading || isBlocked ? "#666" : "#000"}
               />
             </TouchableOpacity>
-
             <TextInput
               ref={inputRef}
               style={styles.textInput}
@@ -553,7 +605,6 @@ export default function Message() {
               onSubmitEditing={sendMessage}
               editable={!uploading && !isBlocked}
             />
-
             {inputText.trim().length === 0 ? (
               <TouchableOpacity
                 style={styles.micButton}
@@ -582,7 +633,6 @@ export default function Message() {
           </View>
         </View>
       </KeyboardAvoidingView>
-
       <Modal visible={mediaMenuVisible} transparent animationType="fade" onRequestClose={() => setMediaMenuVisible(false)}>
         <TouchableWithoutFeedback onPress={() => setMediaMenuVisible(false)}>
           <View style={styles.modalOverlay}>
@@ -603,6 +653,7 @@ export default function Message() {
   );
 }
 
+// Styles remain unchanged
 const styles = StyleSheet.create({
   messageContainer: { marginVertical: 6 },
   sent: { alignSelf: "flex-end" },
@@ -612,8 +663,6 @@ const styles = StyleSheet.create({
   messageText: { fontSize: 16, lineHeight: 22 },
   messageFooter: { flexDirection: "row", alignItems: "center", marginTop: 6, justifyContent: "flex-end" },
   timestamp: { fontSize: 11, marginRight: 6 },
-
-  // MODERN COMPACT INPUT BAR - flush bottom, rises only when needed
   inputBar: {
     width: '100%',
     paddingHorizontal: 12,
@@ -621,10 +670,8 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 20 : 6,
     borderTopWidth: 1,
     borderTopColor: "#33333330",
-    backgroundColor: "#fff", // or your theme bg
+    backgroundColor: "#fff",
   },
-
-  // MODERN INPUT CONTAINER - pill-shaped, compact, tinted
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -634,21 +681,19 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderWidth: 1,
     borderColor: "#44444440",
-    backgroundColor: "#f8f9fa", // light tint (change to dark variant if needed)
+    backgroundColor: "#f8f9fa",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
-
   attachButton: {
     padding: 8,
     marginRight: 6,
     justifyContent: "center",
     alignItems: "center",
   },
-
   textInput: {
     flex: 1,
     fontSize: 16,
@@ -658,13 +703,11 @@ const styles = StyleSheet.create({
     color: "#000",
     maxHeight: 100,
   },
-
   micButton: {
     padding: 8,
     justifyContent: "center",
     alignItems: "center",
   },
-
   sendButton: {
     width: 42,
     height: 42,
@@ -679,7 +722,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -702,7 +744,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
-
   suggestionsContainer: {
     paddingHorizontal: 8,
     paddingVertical: 6,

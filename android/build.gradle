@@ -6,7 +6,7 @@ buildscript {
     mavenCentral()
   }
   dependencies {
-        classpath 'com.google.gms:google-services:4.4.1'
+    classpath 'com.google.gms:google-services:4.4.1'
     classpath('com.android.tools.build:gradle')
     classpath('com.facebook.react:react-native-gradle-plugin')
     classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
@@ -27,6 +27,13 @@ allprojects {
       // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
       url(reactNativeAndroidDir)
     }
+
+    // ────────────────────────────────────────────────
+    // Added for Notifee – this fixes "app.notifee:core:+ not found"
+    maven {
+      url "$rootDir/../node_modules/@notifee/react-native/android/libs"
+    }
+    // ────────────────────────────────────────────────
 
     google()
     mavenCentral()

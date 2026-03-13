@@ -19,7 +19,7 @@ import { useNavigation } from "@react-navigation/native";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
-// Amenity icons & labels
+// Amenity icons & labels (unchanged)
 const amenityIcons = {
   wifi: { icon: "wifi", color: "#4CAF50" },
   ac: { icon: "snow-outline", color: "#2196F3" },
@@ -104,7 +104,7 @@ const amenityLabels = {
   concierge: "Concierge Service",
 };
 
-// House Rules icons & labels
+// House Rules icons & labels (unchanged)
 const houseRuleIcons = {
   nosmoking: { icon: "close-circle-outline", color: "#F44336" },
   noparties: { icon: "beer-outline", color: "#9C27B0" },
@@ -170,14 +170,28 @@ export default function HotelBookingScreen({ route }) {
   const navigation = useNavigation();
 
   const images = listing?.images || [];
-  const pricePerNight = listing?.pricePerNight || 0;
+  const originalPricePerNight = listing?.pricePerNight || 0;
+
+  const cancellationPolicy = listing?.cancellationPolicy || "refundable";
+  const discountPercent = listing?.nonRefundableDiscountPercent || 0;
+  const isNonRefundable = cancellationPolicy === "nonRefundable";
+
+  // Calculate discounted price only for non-refundable bookings
+  const finalPricePerNight =
+    isNonRefundable && discountPercent > 0
+      ? Math.round(originalPricePerNight * (1 - discountPercent / 100))
+      : originalPricePerNight;
 
   const amenities = Array.isArray(listing?.amenities)
-    ? listing.amenities.map(a => typeof a === 'string' ? a.toLowerCase() : (a?.name?.toLowerCase() || 'unknown'))
+    ? listing.amenities.map((a) =>
+        typeof a === "string" ? a.toLowerCase() : a?.name?.toLowerCase() || "unknown"
+      )
     : [];
 
   const houseRules = Array.isArray(listing?.houseRules)
-    ? listing.houseRules.map(r => typeof r === 'string' ? r.toLowerCase() : (r?.name?.toLowerCase() || 'unknown'))
+    ? listing.houseRules.map((r) =>
+        typeof r === "string" ? r.toLowerCase() : r?.name?.toLowerCase() || "unknown"
+      )
     : [];
 
   const [showMoreAmenities, setShowMoreAmenities] = useState(false);
@@ -215,7 +229,7 @@ export default function HotelBookingScreen({ route }) {
   };
 
   const nights = calculateNights();
-  const totalPrice = nights * pricePerNight;
+  const totalPrice = nights * finalPricePerNight;
 
   const formatDate = (date) => {
     if (!date) return "Select date";
@@ -236,41 +250,41 @@ export default function HotelBookingScreen({ route }) {
       Alert.alert("Select Dates", "Please choose check-in and check-out dates.");
       return;
     }
-
     if (nights < 1) {
       Alert.alert("Invalid Dates", "Check-out must be after check-in.");
       return;
     }
-
     navigation.navigate("GuestDetails", {
       listing,
       checkIn: checkIn.toISOString(),
       checkOut: checkOut.toISOString(),
       nights,
-      pricePerNight,
-      totalAmount: totalPrice,
-      // Feel free to pass more if your GuestDetails screen needs them:
-      // listingTitle: listing.title,
-      // listingLocation: listing.location,
-      // thumbnail: images[0] || null,
+      pricePerNight: originalPricePerNight,           // original for reference
+      totalAmount: totalPrice,                        // discounted total
+      isNonRefundable,
+      discountPercent,
     });
   };
 
   if (!listing) {
     return (
       <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
-        <Text style={{ color: isDark ? "#fff" : "#000", fontSize: 18 }}>No listing selected</Text>
+        <Text style={{ color: isDark ? "#fff" : "#000", fontSize: 18 }}>
+          No listing selected
+        </Text>
       </View>
     );
   }
 
   const displayedAmenities = showMoreAmenities ? amenities : amenities.slice(0, 10);
   const displayedRules = showMoreRules ? houseRules : houseRules.slice(0, 10);
-
   const hasDates = checkIn && checkOut && nights > 0;
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: isDark ? "#121212" : "#fff" }]}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: isDark ? "#121212" : "#fff" }]}
+      contentContainerStyle={{ paddingBottom: 80 }}
+    >
       {/* Curved Bottom Gallery */}
       <View style={styles.imageGalleryContainer}>
         <TouchableOpacity activeOpacity={0.95} onPress={openGallery}>
@@ -298,7 +312,7 @@ export default function HotelBookingScreen({ route }) {
           </View>
         </TouchableOpacity>
 
-        {/* Clean Back Arrow */}
+        {/* Back Arrow */}
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backButtonOverlay}
@@ -326,25 +340,60 @@ export default function HotelBookingScreen({ route }) {
 
       <View style={styles.content}>
         <Text style={[styles.title, { color: isDark ? "#fff" : "#000" }]}>{listing.title}</Text>
+
         <Text style={[styles.location, { color: isDark ? "#aaa" : "#666" }]}>
-          <Ionicons name="location-outline" size={16} color="#017a6b" />
-          {" "}{listing.location}
+          <Ionicons name="location-outline" size={16} color="#017a6b" /> {listing.location}
         </Text>
-        <Text style={styles.price}>
-          ₦{pricePerNight.toLocaleString()}
-          <Text style={styles.perNight}> / night</Text>
-        </Text>
+
+        {/* Price display with discount */}
+        <View style={styles.priceContainer}>
+          {isNonRefundable && discountPercent > 0 ? (
+            <>
+              <Text style={styles.originalPrice}>
+                ₦{originalPricePerNight.toLocaleString()}
+              </Text>
+              <Text style={styles.discountedPrice}>
+                ₦{finalPricePerNight.toLocaleString()}
+                <Text style={styles.perNight}> / night</Text>
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.price}>
+              ₦{originalPricePerNight.toLocaleString()}
+              <Text style={styles.perNight}> / night</Text>
+            </Text>
+          )}
+
+          {isNonRefundable && discountPercent > 0 && (
+            <View style={styles.discountBadge}>
+              <Text style={styles.discountText}>
+                Non-refundable • {discountPercent}% off
+              </Text>
+            </View>
+          )}
+        </View>
 
         {/* Date Selection */}
         <View style={styles.dateSection}>
-          <Text style={[styles.sectionTitle, { color: isDark ? "#fff" : "#000" }]}>Select Dates</Text>
+          <Text style={[styles.sectionTitle, { color: isDark ? "#fff" : "#000" }]}>
+            Select Dates
+          </Text>
+
           <View style={styles.dateRow}>
-            <TouchableOpacity style={styles.datePicker} onPress={() => setShowCheckIn(true)}>
+            <TouchableOpacity
+              style={[styles.datePicker, styles.dateBoxLeft]}
+              onPress={() => setShowCheckIn(true)}
+            >
               <Ionicons name="calendar-outline" size={20} color="#017a6b" />
               <Text style={styles.dateText}>Check-in: {formatDate(checkIn)}</Text>
             </TouchableOpacity>
+
+            <View style={styles.dateSeparator}>
+              <Ionicons name="arrow-forward" size={20} color="#017a6b" />
+            </View>
+
             <TouchableOpacity
-              style={styles.datePicker}
+              style={[styles.datePicker, styles.dateBoxRight]}
               onPress={() => setShowCheckOut(true)}
               disabled={!checkIn}
             >
@@ -357,7 +406,9 @@ export default function HotelBookingScreen({ route }) {
 
           {nights > 0 && (
             <View style={styles.totalBox}>
-              <Text style={styles.totalLabel}>Total for {nights} night{nights > 1 ? "s" : ""}</Text>
+              <Text style={styles.totalLabel}>
+                Total for {nights} {nights > 1 ? "nights" : "night"}
+              </Text>
               <Text style={styles.totalPrice}>₦{totalPrice.toLocaleString()}</Text>
             </View>
           )}
@@ -366,23 +417,29 @@ export default function HotelBookingScreen({ route }) {
         {/* Amenities */}
         {amenities.length > 0 && (
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: isDark ? "#fff" : "#000" }]}>Amenities</Text>
+            <Text style={[styles.sectionTitle, { color: isDark ? "#fff" : "#000" }]}>
+              Amenities
+            </Text>
             <View style={styles.listContainer}>
               {displayedAmenities.map((amenity, index) => {
                 const amenityStr = amenity.toLowerCase();
-                const iconData = amenityIcons[amenityStr] || { icon: "checkmark-circle-outline", color: "#757575" };
+                const iconData =
+                  amenityIcons[amenityStr] || { icon: "checkmark-circle-outline", color: "#757575" };
                 return (
                   <View key={index} style={styles.listItem}>
                     <Ionicons name={iconData.icon} size={28} color={iconData.color} />
                     <Text style={[styles.listText, { color: isDark ? "#ddd" : "#333" }]}>
-                      {amenityLabels[amenityStr] || amenityStr.charAt(0).toUpperCase() + amenityStr.slice(1)}
+                      {amenityLabels[amenityStr] ||
+                        amenityStr.charAt(0).toUpperCase() + amenityStr.slice(1)}
                     </Text>
                   </View>
                 );
               })}
               {amenities.length > 10 && !showMoreAmenities && (
                 <TouchableOpacity onPress={() => setShowMoreAmenities(true)}>
-                  <Text style={styles.viewMoreText}>View More Amenities ({amenities.length - 10} more)</Text>
+                  <Text style={styles.viewMoreText}>
+                    View More Amenities ({amenities.length - 10} more)
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -392,63 +449,63 @@ export default function HotelBookingScreen({ route }) {
         {/* House Rules */}
         {houseRules.length > 0 && (
           <View style={[styles.section, { marginTop: 40 }]}>
-            <Text style={[styles.sectionTitle, { color: isDark ? "#fff" : "#000" }]}>House Rules</Text>
+            <Text style={[styles.sectionTitle, { color: isDark ? "#fff" : "#000" }]}>
+              House Rules
+            </Text>
             <View style={styles.listContainer}>
               {displayedRules.map((rule, index) => {
                 const ruleStr = rule.toLowerCase();
-                const iconData = houseRuleIcons[ruleStr] || { icon: "information-circle-outline", color: "#757575" };
+                const iconData =
+                  houseRuleIcons[ruleStr] || { icon: "information-circle-outline", color: "#757575" };
                 return (
                   <View key={index} style={styles.listItem}>
                     <Ionicons name={iconData.icon} size={28} color={iconData.color} />
                     <Text style={[styles.listText, { color: isDark ? "#ddd" : "#333" }]}>
-                      {houseRuleLabels[ruleStr] || ruleStr.charAt(0).toUpperCase() + ruleStr.slice(1)}
+                      {houseRuleLabels[ruleStr] ||
+                        ruleStr.charAt(0).toUpperCase() + ruleStr.slice(1)}
                     </Text>
                   </View>
                 );
               })}
               {houseRules.length > 10 && !showMoreRules && (
                 <TouchableOpacity onPress={() => setShowMoreRules(true)}>
-                  <Text style={styles.viewMoreText}>View More Rules ({houseRules.length - 10} more)</Text>
+                  <Text style={styles.viewMoreText}>
+                    View More Rules ({houseRules.length - 10} more)
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>
           </View>
         )}
 
-        {/* Warning */}
-        <View style={styles.warningBox}>
-          <Ionicons name="alert-circle-outline" size={28} color="#FF9500" />
-          <Text style={styles.warningText}>
-            Booking is final and non-refundable after payment. Please enter correct guest details on the next screen.
-          </Text>
+        {/* Continue Button */}
+        <View style={styles.buttonWrapper}>
+          <TouchableOpacity
+            style={[
+              styles.payButton,
+              !hasDates && { opacity: 0.6, backgroundColor: "#999" },
+            ]}
+            onPress={handleContinue}
+            disabled={loading || !hasDates}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons
+                  name={hasDates ? "arrow-forward" : "calendar-outline"}
+                  size={24}
+                  color="#fff"
+                />
+                <Text style={styles.payButtonText}>
+                  {hasDates ? "Continue to Guest Details" : "Select Dates to Continue"}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
 
-        {/* Continue Button */}
-        <TouchableOpacity
-          style={[
-            styles.payButton,
-            !hasDates && { opacity: 0.6, backgroundColor: "#999" },
-          ]}
-          onPress={handleContinue}
-          disabled={loading || !hasDates}
-        >
-          {loading ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <>
-              <Ionicons
-                name={hasDates ? "arrow-forward" : "calendar-outline"}
-                size={24}
-                color="#fff"
-              />
-              <Text style={styles.payButtonText}>
-                {hasDates ? "Continue" : "Select Dates to Continue"}
-              </Text>
-            </>
-          )}
-        </TouchableOpacity>
-
-        <View style={{ height: 100 }} />
+        <View style={{ height: 120 }} />
       </View>
 
       {/* Date Pickers */}
@@ -460,6 +517,7 @@ export default function HotelBookingScreen({ route }) {
           onChange={onChangeCheckIn}
         />
       )}
+
       {showCheckOut && (
         <DateTimePicker
           value={checkOut || new Date(checkIn?.getTime() + 86400000 || Date.now())}
@@ -473,8 +531,9 @@ export default function HotelBookingScreen({ route }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-
+  container: {
+    flex: 1,
+  },
   imageGalleryContainer: {
     position: "relative",
     width: "100%",
@@ -496,15 +555,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  noImageText: { marginTop: 12, fontSize: 16, color: "#999" },
-
+  noImageText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#999",
+  },
   backButtonOverlay: {
     position: "absolute",
     top: Platform.OS === "ios" ? 50 : 20,
     left: 16,
     zIndex: 10,
   },
-
   imageCounter: {
     position: "absolute",
     bottom: 28,
@@ -514,8 +575,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
   },
-  counterText: { color: "#fff", fontSize: 14, fontWeight: "bold" },
-
+  counterText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "bold",
+  },
   fullscreenHint: {
     position: "absolute",
     top: Platform.OS === "ios" ? 50 : 20,
@@ -524,25 +588,110 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 20,
   },
-
-  content: { padding: 20, paddingTop: 28 },
-  title: { fontSize: 26, fontWeight: "800", marginBottom: 8 },
-  location: { fontSize: 16, marginBottom: 20, fontWeight: "500" },
-  price: { fontSize: 25, fontWeight: "700", color: "#017a6b", marginBottom: 24 },
-  perNight: { fontSize: 18, fontWeight: "normal", color: "#666" },
-  dateSection: { marginBottom: 36 },
-  sectionTitle: { fontSize: 20, fontWeight: "700", marginBottom: 16 },
-  dateRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 20 },
-  datePicker: {
-    flex: 1,
+  content: {
+    padding: 20,
+    paddingTop: 28,
+    paddingBottom: 40,
+  },
+  title: {
+    fontSize: 26,
+    fontWeight: "800",
+    marginBottom: 8,
+  },
+  location: {
+    fontSize: 16,
+    marginBottom: 20,
+    fontWeight: "500",
+  },
+  priceContainer: {
+    marginBottom: 32,
+  },
+  price: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#017a6b",
+  },
+  originalPrice: {
+    fontSize: 20,
+    color: "#999",
+    textDecorationLine: "line-through",
+    marginBottom: 4,
+  },
+  discountedPrice: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#017a6b",
+  },
+  perNight: {
+    fontSize: 18,
+    fontWeight: "normal",
+    color: "#666",
+  },
+  discountBadge: {
+    backgroundColor: "#dcfce7",
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginTop: 8,
+  },
+  discountText: {
+    color: "#15803d",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  dateSection: {
+    marginBottom: 40,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 16,
+  },
+  dateRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f9fa",
-    padding: 16,
-    borderRadius: 12,
-    marginHorizontal: 6,
+    justifyContent: "center",
+    marginBottom: 20,
+    gap: 12,
   },
-  dateText: { marginLeft: 12, fontSize: 16 },
+  datePicker: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  dateBoxLeft: {
+    flex: 1,
+    backgroundColor: "#f8f9fa",
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderTopRightRadius: 0,
+    borderBottomRightRadius: 0,
+    maxWidth: SCREEN_WIDTH * 0.45,
+  },
+  dateBoxRight: {
+    flex: 1,
+    backgroundColor: "#f8f9fa",
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    maxWidth: SCREEN_WIDTH * 0.45,
+  },
+  dateSeparator: {
+    backgroundColor: "#017a6b",
+    padding: 12,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  dateText: {
+    marginLeft: 12,
+    fontSize: 15,
+    fontWeight: "500",
+    flex: 1,
+  },
   totalBox: {
     backgroundColor: "#000",
     padding: 20,
@@ -550,9 +699,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
   },
-  totalLabel: { color: "#fff", fontSize: 18, fontWeight: "600" },
-  totalPrice: { color: "#fff", fontSize: 32, fontWeight: "900", marginTop: 8 },
-  listContainer: { marginTop: 8 },
+  totalLabel: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "600",
+  },
+  totalPrice: {
+    color: "#fff",
+    fontSize: 32,
+    fontWeight: "900",
+    marginTop: 8,
+  },
+  section: {
+    marginTop: 40,
+  },
+  listContainer: {
+    marginTop: 8,
+  },
   listItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -560,7 +723,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
   },
-  listText: { marginLeft: 16, fontSize: 16, flex: 1 },
+  listText: {
+    marginLeft: 16,
+    fontSize: 16,
+    flex: 1,
+  },
   viewMoreText: {
     color: "#017a6b",
     fontWeight: "600",
@@ -569,23 +736,10 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 8,
   },
-  warningBox: {
-    flexDirection: "row",
-    backgroundColor: "#fff8f0",
-    padding: 20,
-    borderRadius: 16,
-    marginVertical: 40,
-    alignItems: "flex-start",
-    borderWidth: 1,
-    borderColor: "#ffd8a8",
-  },
-  warningText: {
-    marginLeft: 12,
-    flex: 1,
-    fontSize: 15,
-    color: "#888",
-    lineHeight: 22,
-    fontWeight: "500",
+  buttonWrapper: {
+    marginTop: 48,
+    marginBottom: 80,
+    paddingHorizontal: 20,
   },
   payButton: {
     backgroundColor: "#017a6b",
@@ -593,13 +747,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingVertical: 18,
-    borderRadius: 20,
+    borderRadius: 30,
     elevation: 6,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 10,
-    marginBottom: 20,
   },
   payButtonText: {
     color: "#fff",

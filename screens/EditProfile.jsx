@@ -1,4 +1,4 @@
-// screens/EditProfile.jsx — FIXED: Avatar uploads to /profile_photos/{uid}/... to match your rules
+// screens/EditProfile.jsx — FIXED: Back to separate First Name + Last Name + 6-month lock + stable avatar picker + auth-safe uploads
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -15,18 +15,20 @@ import {
   Alert,
   SafeAreaView,
 } from "react-native";
-import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useUser } from "../context/UserContext";
 import { db } from "../firebaseConfig";
 import { collection, query, where, getDocs, writeBatch } from "firebase/firestore";
 
-// Firebase Storage imports
+// Firebase Storage & Auth
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { getAuth } from "firebase/auth";
 
 export default function EditProfile({ navigation }) {
   const { user, updateUser } = useUser();
   const isDark = useColorScheme() === "dark";
+  const auth = getAuth();
 
   const [modalVisible, setModalVisible] = useState(false);
   const [currentField, setCurrentField] = useState("");
@@ -34,7 +36,7 @@ export default function EditProfile({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  // Capture original names once when screen loads — baseline for "changed" check
+  // Track original names for 6-month lock
   const [originalNames, setOriginalNames] = useState({
     firstName: "",
     lastName: "",
@@ -64,6 +66,8 @@ export default function EditProfile({ navigation }) {
         ...prev,
         ...user,
         avatar: user.avatar || prev.avatar,
+        firstName: user.firstName || prev.firstName || "",
+        lastName: user.lastName || prev.lastName || "",
       }));
 
       if (originalNames.firstName === "" && originalNames.lastName === "") {
@@ -75,59 +79,66 @@ export default function EditProfile({ navigation }) {
     }
   }, [user]);
 
+  // Avatar picker + upload with proper auth check
   const pickAvatar = async () => {
     try {
-      // Request permission (good practice)
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert("Permission denied", "We need access to your photos to upload an avatar.");
+      // Critical: Ensure user is authenticated
+      const currentUser = auth.currentUser;
+      if (!currentUser || !currentUser.uid) {
+        Alert.alert("Login Required", "Please log in to change your profile picture.");
         return;
       }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "image/*",
+        copyToCacheDirectory: true,
+        multiple: false,
       });
 
-      if (result.canceled || !result.assets?.[0]?.uri) return;
+      console.log("Avatar picker result:", result);
+
+      if (result.canceled || !result.assets?.[0]?.uri) {
+        return;
+      }
 
       const localUri = result.assets[0].uri;
 
-      // Optimistic UI: show local image immediately
+      // Optimistic UI update
       setProfile((prev) => ({ ...prev, avatar: localUri }));
       setUploadingAvatar(true);
 
-      // Prepare file name (unique per user + timestamp)
       const timestamp = Date.now();
-      const fileName = `avatar-${user?.uid || "anon"}-${timestamp}.jpg`;
+      const fileName = `avatar-${currentUser.uid}-${timestamp}.jpg`;
 
-      // Get Firebase Storage
       const storage = getStorage();
-      // FIXED: Changed path to match your existing rules (/profile_photos/{userId}/...)
-      const storageRef = ref(storage, `profile_photos/${user?.uid || "users"}/${fileName}`);
+      // Use currentUser.uid for folder — never fallback to "users" for path
+      const storageRef = ref(storage, `profile_photos/users/${currentUser.uid}/${fileName}`);
 
-      // Fetch local file → convert to Blob (required for RN/Expo)
       const response = await fetch(localUri);
       const blob = await response.blob();
 
-      // Upload to Storage
       await uploadBytes(storageRef, blob);
 
-      // Get permanent public download URL
       const downloadURL = await getDownloadURL(storageRef);
 
-      // Save URL to user profile & sync to listings
+      // Update user context & Firestore
       await updateUser({ avatar: downloadURL });
       await syncListingsAvatar(downloadURL);
 
-      // Final state update with permanent URL
       setProfile((prev) => ({ ...prev, avatar: downloadURL }));
 
       Alert.alert("Success", "Profile picture updated!");
     } catch (err) {
       console.error("Avatar upload error:", err);
-      Alert.alert("Upload failed", "Could not upload profile picture. Please try again.");
+
+      let message = "Could not upload photo. Please try again.";
+      if (err.code === "storage/unauthorized" || err.message?.includes("permission")) {
+        message = "Permission denied. Make sure you're logged in with the correct account.";
+      } else if (err.message?.includes("network")) {
+        message = "Network error. Check your internet connection.";
+      }
+
+      Alert.alert("Upload Failed", message);
     } finally {
       setUploadingAvatar(false);
     }
@@ -149,45 +160,43 @@ export default function EditProfile({ navigation }) {
 
     const isNameField = currentField === "firstName" || currentField === "lastName";
 
-    const nameActuallyChanged =
-      (currentField === "firstName" && trimmed !== originalNames.firstName) ||
-      (currentField === "lastName" && trimmed !== originalNames.lastName);
+    if (isNameField) {
+      const originalValue =
+        currentField === "firstName" ? originalNames.firstName : originalNames.lastName;
 
-    if (isNameField && nameActuallyChanged) {
-      if (user?.nameChangedAt) {
-        const lastChange = new Date(user.nameChangedAt);
-        const sixMonthsLater = new Date(lastChange);
-        sixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6);
+      if (trimmed !== originalValue) {
+        if (user?.nameChangedAt) {
+          const lastChange = new Date(user.nameChangedAt);
+          const sixMonthsLater = new Date(lastChange);
+          sixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6);
 
-        if (new Date() < sixMonthsLater) {
-          const monthsLeft = Math.ceil(
-            (sixMonthsLater - new Date()) / (1000 * 60 * 60 * 24 * 30)
-          );
-          Alert.alert(
-            "Name Change Locked",
-            `You can only change your name once every 6 months.\nWait ${monthsLeft} more month(s).`
-          );
-          setSaving(false);
-          setModalVisible(false);
-          return;
+          if (new Date() < sixMonthsLater) {
+            const monthsLeft = Math.ceil(
+              (sixMonthsLater - new Date()) / (1000 * 60 * 60 * 24 * 30)
+            );
+            Alert.alert(
+              "Name Change Locked",
+              `You can only change your name once every 6 months.\nWait ${monthsLeft} more month(s).`
+            );
+            setSaving(false);
+            setModalVisible(false);
+            return;
+          }
         }
-      }
 
-      updates.nameChangedAt = new Date().toISOString();
+        updates.nameChangedAt = new Date().toISOString();
+      }
     }
 
     try {
       setProfile((prev) => ({ ...prev, ...updates }));
       await updateUser(updates);
 
-      if (nameActuallyChanged) {
-        setOriginalNames({
-          firstName: currentField === "firstName" ? trimmed : originalNames.firstName,
-          lastName: currentField === "lastName" ? trimmed : originalNames.lastName,
-        });
-      }
-
-      if (currentField === "firstName" || currentField === "lastName") {
+      if (isNameField) {
+        setOriginalNames((prev) => ({
+          ...prev,
+          [currentField]: trimmed,
+        }));
         await syncListingsName();
       }
     } catch (err) {
@@ -206,7 +215,7 @@ export default function EditProfile({ navigation }) {
       const snapshot = await getDocs(q);
       if (snapshot.empty) return;
 
-      const fullName = `${profile.firstName || user.firstName} ${profile.lastName || user.lastName}`.trim();
+      const fullName = `${profile.firstName || ""} ${profile.lastName || ""}`.trim();
       const batch = writeBatch(db);
       snapshot.forEach((doc) => batch.update(doc.ref, { userName: fullName }));
       await batch.commit();
@@ -257,17 +266,17 @@ export default function EditProfile({ navigation }) {
             style={{
               flexDirection: "row",
               alignItems: "center",
-              justifyContent: "flex-start",
+              justifyContent: "space-between",
               paddingHorizontal: 20,
               paddingTop: 50,
               paddingBottom: 32,
             }}
           >
             <TouchableOpacity onPress={() => navigation.goBack()} style={{ padding: 10 }} activeOpacity={0.6}>
-              <Ionicons name="arrow-back" size={28} color="#000000" />
+              <Ionicons name="arrow-back" size={28} color={isDark ? "#e0e0e0" : "#000000"} />
             </TouchableOpacity>
 
-            <View style={{ flex: 1, alignItems: "center", marginRight: 48 }}>
+            <View style={{ flex: 1, alignItems: "center" }}>
               <Text
                 style={{
                   fontSize: 24,
@@ -281,6 +290,7 @@ export default function EditProfile({ navigation }) {
                 @{user?.username || "user"}
               </Text>
             </View>
+            <View style={{ width: 48 }} />
           </View>
 
           {/* AVATAR */}
@@ -349,7 +359,7 @@ export default function EditProfile({ navigation }) {
                   borderBottomColor: isDark ? "#333" : "#eee",
                 }}
               >
-                <Ionicons name={field.icon} size={28} color="#000000" style={{ width: 50 }} />
+                <Ionicons name={field.icon} size={28} color={isDark ? "#e0e0e0" : "#000000"} style={{ width: 50 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: isDark ? "#aaa" : "#666", fontSize: 15, fontWeight: "500" }}>
                     {field.label}

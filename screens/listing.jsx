@@ -1,4 +1,4 @@
-// screens/Listing.jsx
+// screens/Listing.jsx — FIXED: Gallery now uses DocumentPicker (stable like IdentityVerification)
 import React, { useRef, useEffect } from "react";
 import {
   View,
@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker"; // <-- Added for stable gallery
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { useListing } from "../context/ListingContext";
 import { homeCategories } from "./Config/Categories";
@@ -25,13 +26,14 @@ import HotelListingForm from "../component/HotelListingForm";
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 // ────────────────────────────────────────────────
-// Houses & Apartments Form (unchanged)
+// Houses & Apartments Form
 // ────────────────────────────────────────────────
 const HousesForm = () => {
   const { addListing } = useListing();
   const { user } = useUser();
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
+
   const [images, setImages] = React.useState([]);
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
@@ -66,10 +68,11 @@ const HousesForm = () => {
     "Room-mate needed",
   ];
 
+  // Optional: Keep initial permission request (harmless, but DocumentPicker doesn't strictly need it)
   useEffect(() => {
     (async () => {
-      await ImagePicker.requestCameraPermissionsAsync();
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
+      await ImagePicker.requestCameraPermissionsAsync(); // only for camera
+      // No need for media library request here anymore
     })();
   }, []);
 
@@ -91,19 +94,24 @@ const HousesForm = () => {
     }
   };
 
+  // FIXED: Use DocumentPicker for gallery (same as IdentityVerification.jsx)
   const pickImages = async () => {
-    const lib = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (lib.status !== "granted") {
-      Alert.alert("Permission required", "We need gallery access to continue.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsMultipleSelection: true,
-      quality: 1,
-    });
-    if (!result.canceled) {
-      setImages((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "image/*",                    // restrict to images only
+        copyToCacheDirectory: true,
+        multiple: true,                     // keep multi-select
+      });
+
+      if (!result.canceled && result.assets?.length > 0) {
+        setImages((prev) => [
+          ...prev,
+          ...result.assets.map((asset) => asset.uri),
+        ]);
+      }
+    } catch (err) {
+      console.error("Gallery picker error:", err);
+      Alert.alert("Error", "Failed to open gallery. Try restarting the app.");
     }
   };
 
@@ -233,7 +241,7 @@ const HousesForm = () => {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      {/* Gallery Card */}
+      {/* Gallery Card - now uses DocumentPicker */}
       <TouchableOpacity
         style={[
           styles.galleryCard,
@@ -261,7 +269,7 @@ const HousesForm = () => {
         </Text>
       </TouchableOpacity>
 
-      {/* Camera Button */}
+      {/* Camera Button - unchanged */}
       <View style={styles.photoRow}>
         <TouchableOpacity
           style={[
@@ -284,7 +292,7 @@ const HousesForm = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Image Thumbnails */}
+      {/* Image Thumbnails - unchanged */}
       {images.length > 0 && (
         <FlatList
           horizontal
@@ -512,7 +520,7 @@ const HousesForm = () => {
 };
 
 // ────────────────────────────────────────────────
-// Main Listing Screen — Fixed version
+// Main Listing Screen — unchanged
 // ────────────────────────────────────────────────
 export default function Listing({ navigation }) {
   const { activeTab, setActiveTab } = useListingTab();
@@ -524,7 +532,6 @@ export default function Listing({ navigation }) {
     { key: "hotels", component: () => <HotelListingForm navigation={navigation} /> },
   ];
 
-  // Only update tab when scroll has fully settled (prevents bounce loop)
   const handleMomentumScrollEnd = (event) => {
     if (isProgrammaticScroll.current) return;
 
@@ -537,7 +544,6 @@ export default function Listing({ navigation }) {
     }
   };
 
-  // When tab changes via header → scroll to correct page
   useEffect(() => {
     const targetIndex = activeTab === "houses" ? 0 : 1;
     const targetOffset = targetIndex * SCREEN_WIDTH;
@@ -549,10 +555,9 @@ export default function Listing({ navigation }) {
       animated: true,
     });
 
-    // Reset flag after animation should have finished
     const timeout = setTimeout(() => {
       isProgrammaticScroll.current = false;
-    }, 600); // 600 ms is usually safe on most devices
+    }, 600);
 
     return () => clearTimeout(timeout);
   }, [activeTab]);
@@ -582,7 +587,6 @@ export default function Listing({ navigation }) {
       snapToInterval={SCREEN_WIDTH}
       snapToAlignment="center"
       disableIntervalMomentum={true}
-      // Important: always allow scrolling
       scrollEnabled={true}
     />
   );

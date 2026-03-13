@@ -99,7 +99,7 @@ export default function Privacy() {
             titleStyle={{ color: "#017a6b", fontWeight: "600" }}
             left={() => <Icon name="file-document-outline" size={24} color="#017a6b" />}
             right={() => <Icon name="open-in-new" size={22} color="#017a6b" />}
-            onPress={() => Linking.openURL("https://doc-hosting.flycricket.io/roomlink-privacy-policy/a6dd1327-c200-4adb-a491-e3812385b0e9/privacy")}
+            onPress={() => Linking.openURL("https://roomlink.homes/privacy")}
           />
 
         </View>

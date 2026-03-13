@@ -1,4 +1,7 @@
-// context/AuthContext.jsx — FIXED: Uses Firebase listener + real persistence
+// context/AuthContext.jsx
+// FIXED: Removed old Expo Notifications push token logic
+// Now relies on utils/pushNotifications.js (FCM) for push token handling
+
 import React, { createContext, useContext, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { auth, db } from "../firebaseConfig";
@@ -9,9 +12,7 @@ import {
   EmailAuthProvider,
   updatePassword,
 } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
-import * as Notifications from "expo-notifications";
-import * as Device from "expo-device";
+import { doc, getDoc } from "firebase/firestore";
 
 export const AuthContext = createContext();
 
@@ -21,7 +22,7 @@ export const AuthProvider = ({ children }) => {
   const [userCountry, setUserCountry] = useState("NG");
   const [userCurrency, setUserCurrency] = useState("₦");
 
-  // Core: Listen to Firebase auth state (this gives real long-term persistence)
+  // Core: Listen to Firebase auth state (real long-term persistence)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
@@ -46,11 +47,8 @@ export const AuthProvider = ({ children }) => {
 
           setUser(enhancedUser);
 
-          // Optional: backup minimal non-sensitive data
+          // Optional: backup minimal non-sensitive data locally
           await AsyncStorage.setItem("user", JSON.stringify(enhancedUser));
-
-          // Save push token
-          await savePushToken(firebaseUser.uid);
         } catch (err) {
           console.error("Failed to load profile:", err);
           setUser(null);
@@ -89,19 +87,6 @@ export const AuthProvider = ({ children }) => {
     };
     loadExtras();
   }, []);
-
-  const savePushToken = async (uid) => {
-    if (!Device.isDevice) return;
-    try {
-      const { status } = await Notifications.requestPermissionsAsync();
-      if (status !== "granted") return;
-      const token = (await Notifications.getExpoPushTokenAsync()).data;
-      await setDoc(doc(db, "users", uid), { expoPushToken: token }, { merge: true });
-      console.log("Push token saved:", token);
-    } catch (e) {
-      console.log("Failed to save token:", e);
-    }
-  };
 
   const logout = async () => {
     try {

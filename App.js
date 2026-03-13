@@ -1,8 +1,10 @@
-import 'intl';
-import 'intl/locale-data/jsonp/en'; 
+// App.js — FIXED: Persistent login + modular RN Firebase v22+ API + Notifee for Android channels
+
+import { Text, View, ActivityIndicator } from 'react-native';
 import 'react-native-gesture-handler';
 import 'react-native-reanimated';
 import 'react-native-svg';
+
 import React, { useEffect, useRef, useState } from "react";
 import {
   BackHandler,
@@ -12,12 +14,11 @@ import {
   useColorScheme,
   Image,
   StatusBar,
-  View,
-  ActivityIndicator,
   Animated,
   Alert,
   AppState,
 } from "react-native";
+
 import {
   NavigationContainer,
   getFocusedRouteNameFromRoute,
@@ -27,30 +28,29 @@ import {
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
-import * as Notifications from "expo-notifications";
 import * as ExpoSplashScreen from "expo-splash-screen";
 import * as Font from "expo-font";
 import { Ionicons } from "@expo/vector-icons";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "./firebaseConfig";
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from './firebaseConfig';
 
-ExpoSplashScreen.preventAutoHideAsync().catch(() => {});
+// Modular RN Firebase imports (no deprecations)
+import {
+  getMessaging,
+  requestPermission,
+  getToken,
+  onTokenRefresh,
+  AuthorizationStatus,
+} from '@react-native-firebase/messaging';
 
-global.getImageUri = (img) => {
-  if (!img) return "https://via.placeholder.com/400x300.png?text=No+Image";
-  if (typeof img === "string") return img;
-  if (img.uri) return img.uri;
-  if (img._url) return img._url;
-  if (img.url) return img.url;
-  if (img.downloadURL) return img.downloadURL;
-  return "https://via.placeholder.com/400x300.png?text=No+Image";
-};
+// Notifee for Android notification channels
+import notifee from '@notifee/react-native';
 
-WebBrowser.maybeCompleteAuthSession();
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth } from './firebaseConfig';
 
-// All Providers
+// Persistent login hook
+import useAuth from './hooks/useAuth';
+
+// Providers (unchanged)
 import { AuthProvider } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { ListingProvider } from "./context/ListingContext";
@@ -63,7 +63,7 @@ import { MessageProvider } from "./context/MessageProvider";
 import { ListingTabProvider } from "./context/ListingTabContext";
 import { TripCountProvider } from "./context/TripCountProvider";
 
-// Screens
+// Screens (unchanged)
 import SplashScreen from "./screens/splashscreen";
 import Welcome from './screens/welcome.jsx';
 import Login from "./screens/login";
@@ -115,7 +115,12 @@ import HelpSupport from './screens/HelpSupport.jsx';
 import GuestDetails from './screens/GuestDetails.jsx';
 import Announcements from './screens/Announcements.jsx';
 import HotelBookingScreen from "./screens/HotelBookingScreen";
+import ChangeEmail from './screens/ChangeEmail.jsx';
+import AboutApp from "./screens/AboutApp.jsx";
+import EventScheduler from "./screens/EventScheduler.jsx";
+import RefundScreen from "./screens/RefundScreen.jsx";
 
+// Components (unchanged)
 import HomeTopHeader from "./component/HomeTopHeader";
 import ProfileTopBar from "./component/ProfileTopBar";
 import VendorHeader from "./component/VendorHeader";
@@ -124,43 +129,26 @@ import SearchHeader from "./component/SearchHeader";
 import ConversationHeader from "./component/ConversationHeader";
 import ListingHeader from "./component/ListingHeader";
 import BackIcon from "./assets/icons/back.png";
-
 import AppTabs from "./navigation/AppTabs";
 import VendorTabs from "./navigation/VendorTabs";
 import { navigationRef } from "./navigation/RootNavigation";
-import AboutApp from "./screens/AboutApp.jsx";
+
+ExpoSplashScreen.preventAutoHideAsync().catch(() => {});
+
+global.getImageUri = (img) => {
+  if (!img) return "https://via.placeholder.com/400x300.png?text=No+Image";
+  if (typeof img === "string") return img;
+  if (img.uri) return img.uri;
+  if (img._url) return img._url;
+  if (img.url) return img.url;
+  if (img.downloadURL) return img.downloadURL;
+  return "https://via.placeholder.com/400x300.png?text=No+Image";
+};
+
+WebBrowser.maybeCompleteAuthSession();
 
 const Stack = createNativeStackNavigator();
 const prefix = Linking.createURL("/");
-
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
-
-if (Platform.OS === "android") {
-  Notifications.setNotificationChannelAsync("default", {
-    name: "default",
-    importance: Notifications.AndroidImportance.MAX,
-    vibrationPattern: [0, 250, 250, 250],
-    lightColor: "#036dd6",
-    sound: true,
-  });
-  Notifications.setNotificationChannelAsync("comments", {
-    name: "Comments & Replies",
-    importance: Notifications.AndroidImportance.HIGH,
-    vibrationPattern: [0, 250, 250, 250],
-    lightColor: "#017a6b",
-    sound: true,
-  });
-}
-
-function PaymentSuccessScreen() {
-  return null;
-}
 
 const linking = {
   prefixes: [prefix, "roomlink://", "https://roomlink.homes"],
@@ -198,81 +186,8 @@ const CustomDarkTheme = {
   },
 };
 
-function AuthGate() {
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState(null);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoading(false);
-    });
-    return unsubscribe;
-  }, []);
-
-  // Push notification setup + refresh + permission handling
-  useEffect(() => {
-    if (!user?.uid) return;
-
-    const setupPushNotifications = async () => {
-      try {
-        // Request permission if not granted
-        const { status: existingStatus } = await Notifications.getPermissionsAsync();
-        let finalStatus = existingStatus;
-        if (existingStatus !== 'granted') {
-          const { status } = await Notifications.requestPermissionsAsync();
-          finalStatus = status;
-        }
-
-        if (finalStatus !== 'granted') {
-          console.log('Push notification permission not granted');
-          return;
-        }
-
-        // Get current token
-        const tokenData = await Notifications.getDevicePushTokenAsync();
-        const token = tokenData.data;
-
-        if (token) {
-          await updateDoc(doc(db, 'users', user.uid), { pushToken: token });
-          console.log('Push token saved/updated for user:', user.uid);
-        }
-
-        // Listen for token refresh (very important - tokens expire/change)
-        const tokenListener = Notifications.addPushTokenListener(async (newTokenData) => {
-          const newToken = newTokenData.data;
-          if (newToken) {
-            await updateDoc(doc(db, 'users', user.uid), { pushToken: newToken });
-            console.log('Push token refreshed and saved:', newToken);
-          }
-        });
-
-        return () => tokenListener.remove();
-      } catch (error) {
-        console.error('Push notification setup failed:', error);
-      }
-    };
-
-    setupPushNotifications();
-
-    // Re-run setup when app comes to foreground
-    const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        setupPushNotifications();
-      }
-    });
-
-    return () => appStateSub.remove();
-  }, [user?.uid]);
-
-  if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" color="#036dd6" />
-      </View>
-    );
-  }
-  return user ? <AppTabs /> : <Login />;
+function PaymentSuccessScreen() {
+  return null;
 }
 
 function AppInner() {
@@ -282,6 +197,9 @@ function AppInner() {
   const [appReady, setAppReady] = useState(false);
   const translateY = useRef(new Animated.Value(0)).current;
 
+  const { user, loading: authLoading } = useAuth();
+
+  // Font + splash (unchanged)
   useEffect(() => {
     const prepareApp = async () => {
       try {
@@ -297,62 +215,85 @@ function AppInner() {
     prepareApp();
   }, []);
 
-  // Handle notification tap (deep linking for comments, messages, etc.)
+  // FCM setup — modular API + Notifee for Android channels
   useEffect(() => {
-    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data;
-      if (!navigationRef.isReady()) return;
+    if (!user?.uid) return;
 
-      console.log('Notification tapped:', data);
+    const messaging = getMessaging();
 
-      if (data?.type === "comment" || data?.type === "reply") {
-        if (data?.listingId) {
-          navigationRef.navigate("ListingDetails", { listing: { id: data.listingId } });
+    let unsubscribeTokenRefresh = null;
+    let appStateListener = null;
+
+    const setupPushNotifications = async () => {
+      try {
+        const authStatus = await requestPermission(messaging);
+
+        const enabled =
+          authStatus === AuthorizationStatus.AUTHORIZED ||
+          authStatus === AuthorizationStatus.PROVISIONAL;
+
+        if (!enabled) {
+          console.log('[FCM] Push permission not granted');
+          return;
         }
-      } else if (data?.type === "message") {
-        navigationRef.navigate("HomeTabs", { screen: "Messages" });
-      } else if (data?.type === "order") {
-        navigationRef.navigate("Orders");
-      } else if (data?.listingId) {
-        navigationRef.navigate("ListingDetails", { id: data.listingId });
+
+        console.log('[FCM] Permission granted');
+
+        if (Platform.OS === 'ios') {
+          await messaging.registerDeviceForRemoteMessages();
+        }
+
+        // Android: Create channel with Notifee (required for Android 8+)
+        if (Platform.OS === 'android') {
+          await notifee.createChannel({
+            id: 'default',
+            name: 'Default Notifications',
+            importance: 4,                // High → heads-up notifications
+            sound: 'default',
+            vibrationPattern: [250, 250, 250, 250], // FIXED: valid even-length positive values only
+            lights: true,
+            lightColor: '#017a6b',
+          });
+          console.log('[Notifee] Default notification channel created');
+        }
+
+        const token = await getToken(messaging);
+        if (token) {
+          await updateDoc(doc(db, 'users', user.uid), {
+            fcmToken: token,
+            fcmTokenUpdatedAt: serverTimestamp(),
+            platform: Platform.OS,
+            pushEnabled: true,
+          });
+        }
+
+        unsubscribeTokenRefresh = onTokenRefresh(messaging, async (newToken) => {
+          await updateDoc(doc(db, 'users', user.uid), {
+            fcmToken: newToken,
+            fcmTokenUpdatedAt: serverTimestamp(),
+          });
+        });
+
+      } catch (error) {
+        console.error('[FCM] Setup failed:', error);
+      }
+    };
+
+    setupPushNotifications();
+
+    appStateListener = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        setupPushNotifications();
       }
     });
 
-    return () => responseSubscription.remove();
-  }, []);
+    return () => {
+      if (appStateListener?.remove) appStateListener.remove();
+      if (unsubscribeTokenRefresh) unsubscribeTokenRefresh();
+    };
+  }, [user?.uid]);
 
-  // Foreground notification handler (show in-app alert for new comments/replies)
-  useEffect(() => {
-    const foregroundSub = Notifications.addNotificationReceivedListener((notification) => {
-      const data = notification.request.content.data;
-      console.log('Foreground notification received:', data);
-
-      if (data?.type === "comment" || data?.type === "reply") {
-        const title = data.type === "reply" ? "New Reply" : "New Comment";
-        const message = `${data.senderName || "Someone"} on your listing: ${data.preview || "Check it out"}`;
-
-        Alert.alert(
-          title,
-          message,
-          [
-            {
-              text: "View",
-              onPress: () => {
-                if (data?.listingId) {
-                  navigationRef.navigate("ListingDetails", { listing: { id: data.listingId } });
-                }
-              },
-            },
-            { text: "Later", style: "cancel" },
-          ]
-        );
-      }
-      // Your existing chat message foreground logic can stay here if you want
-    });
-
-    return () => foregroundSub.remove();
-  }, []);
-
+  // Deep linking handler (unchanged)
   useEffect(() => {
     const handleUrl = ({ url }) => {
       if (url?.includes("payment-success")) {
@@ -370,6 +311,7 @@ function AppInner() {
     return () => subscription.remove();
   }, []);
 
+  // Animated header (unchanged)
   useEffect(() => {
     const unsubscribe = navigationRef.addListener("state", () => {
       const state = navigationRef.getRootState();
@@ -384,11 +326,11 @@ function AppInner() {
     return unsubscribe;
   }, [translateY]);
 
+  // Android back handler (unchanged)
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
       const state = navigationRef.getRootState();
       const currentRoute = getFocusedRouteNameFromRoute(state?.routes[state.index]) ?? "Home";
-
       if (["Home", "Profile", "Messages", "ListingTab", "Vendor"].includes(currentRoute)) {
         if (backPressRef.current === 0) {
           backPressRef.current = 1;
@@ -404,7 +346,14 @@ function AppInner() {
     return () => sub.remove();
   }, []);
 
-  if (!appReady) return null;
+  if (!appReady || authLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#121212' : '#ffffff' }}>
+        <ActivityIndicator size="large" color="#017a6b" />
+        <Text style={{ marginTop: 20, color: isDarkMode ? '#ffffff' : '#1e293b' }}>Loading RoomLink...</Text>
+      </View>
+    );
+  }
 
   return (
     <Animated.View style={{ flex: 1, transform: [{ translateY }] }}>
@@ -413,104 +362,97 @@ function AppInner() {
         backgroundColor={isDarkMode ? "#121212" : "#ffffff"}
         barStyle={isDarkMode ? "light-content" : "dark-content"}
       />
-
       <NavigationContainer ref={navigationRef} theme={isDarkMode ? CustomDarkTheme : DefaultTheme} linking={linking}>
-        <Stack.Navigator initialRouteName="Splash" screenOptions={{ headerTitleAlign: "left" }}>
-          <Stack.Screen name="Splash" component={SplashScreen} options={{ headerShown: false }} />
-          <Stack.Screen name="AuthGate" component={AuthGate} options={{ headerShown: false }} />
-          <Stack.Screen name="Login" component={Login} options={{ headerShown: false }} />
-          <Stack.Screen name="Signup" component={Signup} options={{ headerShown: false }} />
-          <Stack.Screen name="ForgotPassword" component={ForgotPassword} options={{ headerShown: false }} />
-          <Stack.Screen name="RoleSelection" component={RoleSelection} options={{ headerShown: false }} />
-          <Stack.Screen name="OtpVerification" component={OtpVerification} options={{ headerShown: false }} />
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {user ? (
+            <Stack.Screen
+              name="HomeTabs"
+              component={AppTabs}
+              options={({ route }) => {
+                const routeName = getFocusedRouteNameFromRoute(route) ?? "Home";
+                const hideHeaderForMessages = routeName === "Message" || routeName === "Messages";
+                const showBack = !["Home", "Profile", "Messages", "ListingTab", "Vendor"].includes(routeName);
+                const hideHeaderFor = ["Cart", "Orders"];
+                return {
+                  headerShown: !hideHeaderFor.includes(routeName) && !hideHeaderForMessages,
+                  headerBackVisible: false,
+                  headerShadowVisible: false,
+                  headerStyle: { backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff", elevation: 0, height: 60 },
+                  headerTitleContainerStyle: { top: -5 },
+                  headerTitle:
+                    routeName === "Home"
+                      ? () => <HomeTopHeader />
+                      : routeName === "Profile"
+                      ? () => <ProfileTopBar />
+                      : routeName === "Messages" && !hideHeaderForMessages
+                      ? () => <ConversationHeader />
+                      : routeName === "ListingTab"
+                      ? () => <ListingHeader />
+                      : routeName === "Vendor"
+                      ? () => <VendorHeader />
+                      : () => null,
+                  headerLeft:
+                    showBack && routeName !== "Vendor"
+                      ? () => (
+                          <TouchableOpacity
+                            onPress={() =>
+                              navigationRef.canGoBack()
+                                ? navigationRef.goBack()
+                                : navigationRef.navigate("HomeTabs", { screen: "Home" })
+                            }
+                            style={{ marginLeft: 5, paddingRight: 15 }}
+                          >
+                            <Image source={BackIcon} style={{ width: 24, height: 24 }} />
+                          </TouchableOpacity>
+                        )
+                      : undefined,
+                };
+              }}
+            />
+          ) : (
+            <>
+              <Stack.Screen name="Splash" component={SplashScreen} options={{ headerShown: false }} />
+              <Stack.Screen name="Welcome" component={Welcome} options={{ headerShown: false }} />
+              <Stack.Screen name="Login" component={Login} options={{ headerShown: false }} />
+              <Stack.Screen name="Signup" component={Signup} options={{ headerShown: false }} />
+              <Stack.Screen name="ForgotPassword" component={ForgotPassword} options={{ headerShown: false }} />
+              <Stack.Screen name="RoleSelection" component={RoleSelection} options={{ headerShown: false }} />
+              <Stack.Screen name="OtpVerification" component={OtpVerification} options={{ headerShown: false }} />
+            </>
+          )}
+
+          {/* Shared screens — unchanged */}
           <Stack.Screen name="Wallet" component={Wallet} options={{ headerShown: false }} />
           <Stack.Screen name="Privacy" component={Privacy} options={{ title: "Privacy" }} />
           <Stack.Screen name="Payments" component={Payments} options={{ title: "Payments" }} />
           <Stack.Screen name="Accessibility" component={Accessibility} options={{ title: "Accessibility" }} />
           <Stack.Screen name="SwitchAccount" component={SwitchAccount} options={{ title: "Switch account" }} />
           <Stack.Screen name="AboutApp" component={AboutApp} options={{ title: "About app" }} />
-
           <Stack.Screen name="BoostPost" component={BoostPost} options={{ headerShown: false }} />
           <Stack.Screen name="BoostInsights" component={BoostInsights} options={{ headerShown: false }} />
           <Stack.Screen name="GuestDetails" component={GuestDetails} options={{ headerShown: false }} />
+          <Stack.Screen name="EventScheduler" component={EventScheduler} options={{ headerShown: false }} />
           <Stack.Screen name="Announcements" component={Announcements} options={{ headerShown: true }} />
-
-          <Stack.Screen 
-            name="HotelBookingScreen" 
-            component={HotelBookingScreen} 
-            options={{ 
-              title: 'Book Hotel', 
-              headerShown: false,
-              headerTintColor: '#000',
-            }} 
-          />
-          <Stack.Screen 
-            name="HelpSupport" 
-            component={HelpSupport} 
-            options={{ 
-              title: 'Get Help', 
-              headerShown: false,
-              headerTintColor: '#000',
-            }} 
-          />
-          <Stack.Screen 
-            name="Welcome" 
-            component={Welcome} 
-            options={{ 
-              title: 'Welcome', 
-              headerShown: false,
-              headerTintColor: '#000',
-            }} 
-          />
-
+          <Stack.Screen name="RefundScreen" component={RefundScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="ChangeEmail" component={ChangeEmail} options={{ title: "Change your email address", headerShadowVisible: false, headerStyle: { backgroundColor: isDarkMode ? "#1e1e1e" : "#fff" }, headerTintColor: isDarkMode ? "#fff" : "#000" }} />
           <Stack.Screen
-            name="HomeTabs"
-            component={AppTabs}
-            options={({ route }) => {
-              const routeName = getFocusedRouteNameFromRoute(route) ?? "Home";
-
-              const hideHeaderForMessages = routeName === "Message" || routeName === "Messages";
-
-              const showBack = !["Home", "Profile", "Messages", "ListingTab", "Vendor"].includes(routeName);
-              const hideHeaderFor = ["Cart", "Orders"];
-
-              return {
-                headerShown: !hideHeaderFor.includes(routeName) && !hideHeaderForMessages,
-                headerBackVisible: false,
-                headerShadowVisible: false,
-                headerStyle: { backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff", elevation: 0, height: 60 },
-                headerTitleContainerStyle: { top: -5 },
-                headerTitle:
-                  routeName === "Home"
-                    ? () => <HomeTopHeader />
-                    : routeName === "Profile"
-                    ? () => <ProfileTopBar />
-                    : routeName === "Messages" && !hideHeaderForMessages
-                    ? () => <ConversationHeader />
-                    : routeName === "ListingTab"
-                    ? () => <ListingHeader />
-                    : routeName === "Vendor"
-                    ? () => <VendorHeader />
-                    : () => null,
-                headerLeft:
-                  showBack && routeName !== "Vendor"
-                    ? () => (
-                        <TouchableOpacity
-                          onPress={() =>
-                            navigationRef.canGoBack()
-                              ? navigationRef.goBack()
-                              : navigationRef.navigate("HomeTabs", { screen: "Home" })
-                          }
-                          style={{ marginLeft: 5, paddingRight: 15 }}
-                        >
-                          <Image source={BackIcon} style={{ width: 24, height: 24 }} />
-                        </TouchableOpacity>
-                      )
-                    : undefined,
-              };
+            name="HotelBookingScreen"
+            component={HotelBookingScreen}
+            options={{
+              title: 'Book Hotel',
+              headerShown: false,
+              headerTintColor: '#000',
             }}
           />
-
+          <Stack.Screen
+            name="HelpSupport"
+            component={HelpSupport}
+            options={{
+              title: 'Get Help',
+              headerShown: false,
+              headerTintColor: '#000',
+            }}
+          />
           <Stack.Screen name="Vendor" component={VendorTabs} options={{ headerShown: false }} />
           <Stack.Screen name="VendorSearch" component={VendorSearch} options={{ headerTitle: () => <VendorSearchHeader />, headerStyle: { height: 80, backgroundColor: isDarkMode ? "#1e1e1e" : "#fff" } }} />
           <Stack.Screen name="Search" component={Search} options={{ headerTitle: () => <SearchHeader />, headerStyle: { height: 80, backgroundColor: isDarkMode ? "#1e1e1e" : "#fff" } }} />
@@ -526,22 +468,19 @@ function AppInner() {
           <Stack.Screen name="OrderSummary" component={OrderSummary} options={{ title: "Order Summary", headerShadowVisible: false, headerStyle: { backgroundColor: isDarkMode ? "#1e1e1e" : "#fff" }, headerTintColor: isDarkMode ? "#fff" : "#000" }} />
           <Stack.Screen name="FlutterwavePayment" component={FlutterwavePayment} options={{ title: "Payment", headerShadowVisible: false, headerStyle: { backgroundColor: isDarkMode ? "#1e1e1e" : "#fff" }, headerTintColor: isDarkMode ? "#fff" : "#000" }} />
           <Stack.Screen name="PaystackWebView" component={PaystackWebView} options={{ title: "Complete Payment", headerShadowVisible: false, headerStyle: { backgroundColor: isDarkMode ? "#1e1e1e" : "#fff" }, headerTintColor: isDarkMode ? "#fff" : "#000" }} />
-          
           <Stack.Screen name="GalleryScreen" component={GalleryScreen} options={{ headerShown: false }} />
           <Stack.Screen name="RatingScreen" component={RatingScreen} options={{ headerShown: false }} />
           <Stack.Screen name="WriteReview" component={WriteReview} />
           <Stack.Screen name="ReportScreen" component={ReportScreen} options={{ headerShown: false }} />
           <Stack.Screen name="Notification" component={Notification} />
           <Stack.Screen name="BecomeVendor" component={BecomeVendor} options={{ headerShown: false }} />
-          <Stack.Screen name="EditListing" component={EditListing} options={{ headerShown: false}} />
+          <Stack.Screen name="EditListing" component={EditListing} options={{ headerShown: false }} />
           <Stack.Screen name="PublicProfile" component={PublicProfileScreen} />
           <Stack.Screen name="EditProfile" component={EditProfile} options={{ headerShown: false }} />
-          
           <Stack.Screen name="Settings" component={Settings} options={{ headerShown: false }} />
-          
-          <Stack.Screen name="ChangePassword" component={ChangePassword} />
+          <Stack.Screen name="ChangePassword" component={ChangePassword} options={{ title: "Change your password", headerShadowVisible: false, headerStyle: { backgroundColor: isDarkMode ? "#1e1e1e" : "#fff" }, headerTintColor: isDarkMode ? "#fff" : "#000" }} />
           <Stack.Screen name="GetVerified" component={GetVerified} options={{ headerShown: false }} />
-          <Stack.Screen name="IdentityVerification" component={IdentityVerification} />
+          <Stack.Screen name="IdentityVerification" component={IdentityVerification} options={{ headerShown: false }} />
           <Stack.Screen name="ProfileListingsScreen" component={ProfileListingsScreen} options={{ headerShown: false }} />
           <Stack.Screen name="MyListings" component={MyListings} />
           <Stack.Screen name="PaymentSuccess" component={PaymentSuccessScreen} options={{ headerShown: false }} />

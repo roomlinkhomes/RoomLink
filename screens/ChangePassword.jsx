@@ -22,28 +22,25 @@ export default function ChangePassword({ navigation }) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
-
   const [showOld, setShowOld] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
-  // ✅ password rules
+  // Password strength rules
   const hasMinLength = newPassword.length >= 6;
   const hasUppercase = /[A-Z]/.test(newPassword);
   const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(newPassword);
 
-  // ✅ calculate strength score
   let strengthScore = 0;
   if (hasMinLength) strengthScore++;
   if (hasUppercase) strengthScore++;
   if (hasSpecial) strengthScore++;
 
-  // ✅ map score to color
   let indicatorColor = "red";
   if (strengthScore === 2) indicatorColor = "orange";
   if (strengthScore === 3) indicatorColor = "green";
 
-  // 🆕 RLMARKET Theme (Rebranded to light mode)
+  // Light theme (as per your original design)
   const theme = {
     background: "#fafafa",
     card: "#ffffff",
@@ -54,26 +51,42 @@ export default function ChangePassword({ navigation }) {
   };
 
   const handleSubmit = async () => {
+    // 1. New password must match confirmation
     if (newPassword !== confirmPassword) {
-      Alert.alert("Error", "New passwords do not match.");
+      Alert.alert("Mismatch", "New passwords do not match.");
       return;
     }
 
+    // 2. New password cannot be the same as current password
+    if (newPassword === oldPassword && oldPassword !== "") {
+      Alert.alert(
+        "Invalid Choice",
+        "Your new password cannot be the same as your current password.\nPlease choose a different one."
+      );
+      return;
+    }
+
+    // 3. Enforce minimum strength
     if (strengthScore < 3) {
       Alert.alert(
-        "Weak Password",
-        "Password must be at least 6 characters, include one uppercase letter and one special character."
+        "Password Too Weak",
+        "New password must be at least 6 characters long and include:\n• One uppercase letter\n• One special character (!@#$%^&* etc.)"
       );
       return;
     }
 
     setLoading(true);
+
     try {
       await changePassword(oldPassword, newPassword);
-      Alert.alert("Success", "Password changed successfully.");
-      navigation.goBack();
+      Alert.alert("Success", "Your password has been updated successfully.", [
+        { text: "OK", onPress: () => navigation.goBack() },
+      ]);
     } catch (err) {
-      Alert.alert("Error", err.toString());
+      Alert.alert(
+        "Change Failed",
+        err.message || "Unable to update password. Please check your current password and try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -81,7 +94,6 @@ export default function ChangePassword({ navigation }) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-      {/* MOVABLE CONTENT */}
       <KeyboardAvoidingView
         style={styles.keyboardView}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -92,70 +104,31 @@ export default function ChangePassword({ navigation }) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* 🆕 RLMARKET Header */}
+          {/* Minimal header – just helpful subtitle */}
           <View style={styles.header}>
-            <View
-              style={[
-                styles.rlBadge,
-                {
-                  backgroundColor: "rgba(1, 122, 107, 0.08)",
-                  borderColor: theme.primary,
-                },
-              ]}
-            >
-              <Text style={[styles.rlText, { color: theme.primary }]}>RL</Text>
-            </View>
-
-            <View style={styles.headerContent}>
-              <Text style={[styles.welcomeTitle, { color: theme.text }]}>
-                Change Password
-              </Text>
-              <Text style={[styles.welcomeSubtitle, { color: theme.textSecondary }]}>
-                Securely update your account credentials
-              </Text>
-            </View>
+            <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+              Update your password securely
+            </Text>
           </View>
 
-          {/* 🆕 Change Password Card */}
-          <View
-            style={[
-              styles.loginCard,
-              {
-                backgroundColor: theme.card,
-                borderColor: theme.border,
-                shadowColor: "#000",
-              },
-            ]}
-          >
-            {/* Old Password Input */}
-            <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={20}
-                  color={theme.primary}
-                />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>
-                  Current Password
-                </Text>
+          {/* Form card */}
+          <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            {/* Current Password */}
+            <View style={styles.inputGroup}>
+              <View style={styles.labelRow}>
+                <Ionicons name="lock-closed-outline" size={20} color={theme.primary} />
+                <Text style={[styles.label, { color: theme.text }]}>Current Password</Text>
               </View>
               <TextInput
                 value={oldPassword}
                 onChangeText={setOldPassword}
                 secureTextEntry={!showOld}
                 mode="outlined"
-                placeholder="Enter your current password"
+                placeholder="Enter current password"
                 placeholderTextColor={theme.textSecondary}
-                style={[styles.textInput, { color: theme.text }]}
+                style={[styles.input, { color: theme.text }]}
                 outlineColor={theme.border}
                 activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
-                theme={{
-                  colors: {
-                    onSurfaceVariant: theme.border,
-                    primary: theme.primary,
-                  },
-                }}
                 right={
                   <TextInput.Icon
                     icon={showOld ? "eye-off" : "eye"}
@@ -166,35 +139,22 @@ export default function ChangePassword({ navigation }) {
               />
             </View>
 
-            {/* New Password Input */}
-            <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={20}
-                  color={theme.primary}
-                />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>
-                  New Password
-                </Text>
+            {/* New Password */}
+            <View style={styles.inputGroup}>
+              <View style={styles.labelRow}>
+                <Ionicons name="lock-closed-outline" size={20} color={theme.primary} />
+                <Text style={[styles.label, { color: theme.text }]}>New Password</Text>
               </View>
               <TextInput
                 value={newPassword}
                 onChangeText={setNewPassword}
                 secureTextEntry={!showNew}
                 mode="outlined"
-                placeholder="Enter your new password"
+                placeholder="Enter new password"
                 placeholderTextColor={theme.textSecondary}
-                style={[styles.textInput, { color: theme.text }]}
+                style={[styles.input, { color: theme.text }]}
                 outlineColor={theme.border}
                 activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
-                theme={{
-                  colors: {
-                    onSurfaceVariant: theme.border,
-                    primary: theme.primary,
-                  },
-                }}
                 right={
                   <TextInput.Icon
                     icon={showNew ? "eye-off" : "eye"}
@@ -203,47 +163,33 @@ export default function ChangePassword({ navigation }) {
                   />
                 }
               />
+
+              {newPassword.length > 0 && (
+                <View
+                  style={[
+                    styles.strengthBar,
+                    { backgroundColor: indicatorColor, width: `${strengthScore * 33.33}%` },
+                  ]}
+                />
+              )}
             </View>
 
-            {/* ✅ show progressive indicator only when typing */}
-            {newPassword.length > 0 && (
-              <View
-                style={[
-                  styles.indicator,
-                  { backgroundColor: indicatorColor, width: `${strengthScore * 33.3}%` },
-                ]}
-              />
-            )}
-
-            {/* Confirm Password Input */}
-            <View style={styles.inputContainer}>
-              <View style={styles.inputHeader}>
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={20}
-                  color={theme.primary}
-                />
-                <Text style={[styles.inputLabel, { color: theme.text }]}>
-                  Confirm New Password
-                </Text>
+            {/* Confirm New Password */}
+            <View style={styles.inputGroup}>
+              <View style={styles.labelRow}>
+                <Ionicons name="lock-closed-outline" size={20} color={theme.primary} />
+                <Text style={[styles.label, { color: theme.text }]}>Confirm New Password</Text>
               </View>
               <TextInput
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
                 secureTextEntry={!showConfirm}
                 mode="outlined"
-                placeholder="Confirm your new password"
+                placeholder="Confirm new password"
                 placeholderTextColor={theme.textSecondary}
-                style={[styles.textInput, { color: theme.text }]}
+                style={[styles.input, { color: theme.text }]}
                 outlineColor={theme.border}
                 activeOutlineColor={theme.primary}
-                contentStyle={{ color: theme.text }}
-                theme={{
-                  colors: {
-                    onSurfaceVariant: theme.border,
-                    primary: theme.primary,
-                  },
-                }}
                 right={
                   <TextInput.Icon
                     icon={showConfirm ? "eye-off" : "eye"}
@@ -254,44 +200,29 @@ export default function ChangePassword({ navigation }) {
               />
             </View>
 
-            {/* 🆕 Change Button */}
+            {/* Action Button */}
             <TouchableOpacity
-              style={[styles.loginButton, { backgroundColor: theme.primary }]}
+              style={[styles.submitButton, { backgroundColor: theme.primary }]}
               onPress={handleSubmit}
               disabled={loading}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               {loading ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="small" color="#ffffff" />
-                  <Text style={[styles.loginButtonText, { color: "#ffffff" }]}>Changing...</Text>
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator size="small" color="#fff" />
+                  <Text style={styles.buttonText}>Updating...</Text>
                 </View>
               ) : (
-                <>
-                  <Ionicons name="refresh-outline" size={20} color="#ffffff" />
-                  <Text style={[styles.loginButtonText, { color: "#ffffff" }]}>Change Password</Text>
-                </>
+                <Text style={styles.buttonText}>Update Password</Text>
               )}
             </TouchableOpacity>
           </View>
 
-          {/* 🆕 Security Badge */}
-          <View
-            style={[
-              styles.securityBadge,
-              {
-                backgroundColor: "rgba(1, 122, 107, 0.05)",
-                borderColor: "rgba(1, 122, 107, 0.1)",
-              },
-            ]}
-          >
-            <Ionicons
-              name="shield-checkmark-outline"
-              size={20}
-              color={theme.primary}
-            />
-            <Text style={[styles.securityText, { color: theme.textSecondary }]}>
-              Your data is secured with encryption
+          {/* Small security note at bottom */}
+          <View style={styles.footerNote}>
+            <Ionicons name="shield-checkmark-outline" size={16} color={theme.primary} />
+            <Text style={[styles.noteText, { color: theme.textSecondary }]}>
+              Your connection is encrypted
             </Text>
           </View>
         </ScrollView>
@@ -300,83 +231,77 @@ export default function ChangePassword({ navigation }) {
   );
 }
 
-/* ---------------- STYLES (ADAPTED FROM LOGIN) ---------------- */
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
   keyboardView: { flex: 1 },
-  scrollContainer: { flexGrow: 1, padding: 24, paddingTop: 20, paddingBottom: 140 },
-  header: { flexDirection: "row", alignItems: "center", marginBottom: 32 },
-  rlBadge: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1.5,
-    marginRight: 16,
+  scrollContainer: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: 40,
+    paddingBottom: 80,
   },
-  rlText: { fontSize: 24, fontWeight: "900", letterSpacing: -1.5 },
-  headerContent: { flex: 1 },
-  welcomeTitle: { fontSize: 28, fontWeight: "800", letterSpacing: 0.5, lineHeight: 34 },
-  welcomeSubtitle: { fontSize: 16, fontWeight: "500", marginTop: 6, lineHeight: 22 },
-  loginCard: {
-    borderRadius: 24,
+  header: {
+    alignItems: "center",
+    marginBottom: 32,
+  },
+  subtitle: {
+    fontSize: 16,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  card: {
+    borderRadius: 20,
     padding: 24,
-    marginBottom: 24,
     borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    elevation: 8,
   },
-  inputContainer: { marginBottom: 20 },
-  inputHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
-  inputLabel: { fontSize: 16, fontWeight: "700", marginLeft: 10, letterSpacing: 0.3 },
-  textInput: { fontSize: 16, fontWeight: "500" },
-  indicator: {
-    height: 6,
-    borderRadius: 3,
-    marginBottom: 15,
-    marginHorizontal: 5,
-    alignSelf: "flex-start", // keeps it left-aligned like a progress bar
-  },
-  loginButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 18,
-    borderRadius: 16,
-    marginTop: 8,
-    minHeight: 56,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  loginButtonText: {
-    fontSize: 18,
-    fontWeight: "800",
-    marginLeft: 12,
-    letterSpacing: 0.5,
-  },
-  loadingContainer: { flexDirection: "row", alignItems: "center", justifyContent: "center" },
-  securityBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 16,
-    borderWidth: 1,
+  inputGroup: {
     marginBottom: 24,
   },
-  securityText: {
-    fontSize: 14,
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  label: {
+    fontSize: 15,
     fontWeight: "600",
-    marginLeft: 12,
-    lineHeight: 18,
+    marginLeft: 8,
+  },
+  input: {
+    fontSize: 16,
+  },
+  strengthBar: {
+    height: 4,
+    borderRadius: 2,
+    marginTop: 8,
+    marginHorizontal: 2,
+  },
+  submitButton: {
+    marginTop: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  buttonText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  loadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  footerNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 32,
+    gap: 6,
+  },
+  noteText: {
+    fontSize: 13,
+    fontWeight: "500",
   },
 });

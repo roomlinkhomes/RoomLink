@@ -1,4 +1,4 @@
-// screens/Home.jsx — FIXED: Pull-to-refresh + loading/empty states + safe areas
+// screens/Home.jsx — FIXED: Re-filter posts on auth user change + context sync
 import React, { useState, useEffect, useContext, useMemo, useRef, useCallback } from "react";
 import {
   View,
@@ -21,7 +21,7 @@ import {
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 import { ListingContext } from "../context/ListingContext";
-import { UserContext } from "../context/UserContext";
+import { AuthContext } from "../context/AuthContext"; // ← FIXED: use real auth user
 import Filter from "../component/Filter";
 import Billboard from "../component/Billboard";
 import ListingHeader from "../component/ListingHeader";
@@ -87,9 +87,8 @@ export default function Home({ navigation }) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const { listings = [], loading: contextLoading } = useContext(ListingContext) || {};
-  const { user: currentUser } = useContext(UserContext) || {};
+  const { user: authUser } = useContext(AuthContext); // ← FIXED: real logged-in user
   const { activeTab, setActiveTab } = useListingTab();
-
   const insets = useSafeAreaInsets();
 
   const [posts, setPosts] = useState([]);
@@ -101,35 +100,47 @@ export default function Home({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  // Re-filter when focused or listings change
-  useFocusEffect(
-    useCallback(() => {
-      console.log("[Home] Focused – re-filtering posts");
-      if (activeTab === "hotels") {
-        setPosts([]);
-        return;
-      }
-      const filtered = listings.filter((l) => l.listingType !== "hotels");
-      setPosts(filtered);
-    }, [listings, activeTab])
-  );
-
+  // Debug: Log auth user state
   useEffect(() => {
-    const timer = setTimeout(() => setShowSkeleton(false), 3000);
-    return () => clearTimeout(timer);
-  }, []);
+    console.log('[HOME DEBUG] Auth user:', authUser ? authUser.uid : 'NO USER');
+  }, [authUser]);
 
+  // Re-filter/update posts when user, listings, tab, or category changes
   useEffect(() => {
-    if (activeTab === "hotels") {
+    console.log('[HOME] Triggering post update → user:', authUser?.uid || 'none');
+
+    if (!authUser?.uid || contextLoading) {
+      console.log('[HOME] No user or loading → clearing posts');
       setPosts([]);
       return;
     }
 
-    const filtered = listings.filter((l) => l.listingType !== "hotels");
-    setPosts(filtered);
+    let filtered = listings.filter((l) => l.listingType !== "hotels");
 
+    if (activeTab === "hotels") {
+      filtered = []; // or load hotels if you have separate logic
+      console.log('[HOME] Active tab is hotels → cleared posts');
+    }
+
+    if (activeCategory !== "All") {
+      const search = activeCategory.toString().toLowerCase();
+      filtered = filtered.filter((item) => {
+        const title = (item.title || "").toLowerCase();
+        const desc = (item.description || "").toLowerCase();
+        const catName = (item.category?.name || item.category || "").toLowerCase();
+        return title.includes(search) || desc.includes(search) || catName === search;
+      });
+      console.log('[HOME] Applied category filter:', activeCategory, '→', filtered.length, 'posts');
+    }
+
+    console.log('[HOME] Final filtered posts count:', filtered.length);
+    setPosts(filtered);
+  }, [listings, authUser?.uid, activeTab, activeCategory, contextLoading]);
+
+  // Fetch missing user info for avatars/ratings
+  useEffect(() => {
     const fetchMissingUserInfo = async () => {
-      const uniqueUserIds = [...new Set(filtered.map((p) => p.userId).filter(Boolean))];
+      const uniqueUserIds = [...new Set(posts.map((p) => p.userId).filter(Boolean))];
       const missingIds = uniqueUserIds.filter((uid) => !userInfoMap[uid]);
 
       if (missingIds.length === 0) return;
@@ -162,28 +173,34 @@ export default function Home({ navigation }) {
       setUserInfoMap((prev) => ({ ...prev, ...newInfo }));
     };
 
-    if (filtered.length > 0) {
+    if (posts.length > 0) {
       fetchMissingUserInfo();
     }
-  }, [listings, activeTab, userInfoMap]);
+  }, [posts]);
 
+  // Skeleton timeout
+  useEffect(() => {
+    const timer = setTimeout(() => setShowSkeleton(false), 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Global filter/scroll functions
   useEffect(() => {
     global.scrollToTop = () => {};
     global.openFilter = () => setFilterVisible(true);
     global.applyCategory = (category) => {
       setActiveCategory(category || "All");
-      if (!category || category === "All") {
-        setPosts(listings.filter((l) => l.listingType !== "hotels"));
-        return;
+      // Re-filter immediately
+      let filtered = listings.filter((l) => l.listingType !== "hotels");
+      if (category && category !== "All") {
+        const search = category.toString().toLowerCase();
+        filtered = filtered.filter((item) => {
+          const title = (item.title || "").toLowerCase();
+          const desc = (item.description || "").toLowerCase();
+          const catName = (item.category?.name || item.category || "").toLowerCase();
+          return title.includes(search) || desc.includes(search) || catName === search;
+        });
       }
-      const search = category.toString().toLowerCase();
-      const filtered = listings.filter((item) => {
-        if (item.listingType === "hotels") return false;
-        const title = (item.title || "").toLowerCase();
-        const desc = (item.description || "").toLowerCase();
-        const catName = (item.category?.name || item.category || "").toLowerCase();
-        return title.includes(search) || desc.includes(search) || catName === search;
-      });
       setPosts(filtered);
     };
     return () => {
@@ -231,85 +248,36 @@ export default function Home({ navigation }) {
       <View style={styles.userRow}>
         <View style={[styles.avatar, dynamicStyles.skeletonBg]} />
         <View style={{ marginLeft: 10, flex: 1 }}>
-          <View
-            style={{
-              width: 140,
-              height: 16,
-              backgroundColor: dynamicStyles.skeletonBg.backgroundColor,
-              borderRadius: 8,
-            }}
-          />
-          <View
-            style={{
-              width: 80,
-              height: 12,
-              backgroundColor: dynamicStyles.skeletonBg.backgroundColor,
-              borderRadius: 6,
-              marginTop: 6,
-            }}
-          />
+          <View style={{ width: 140, height: 16, backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 8 }} />
+          <View style={{ width: 80, height: 12, backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 6, marginTop: 6 }} />
         </View>
       </View>
-      <View
-        style={{
-          width: SCREEN_WIDTH,
-          height: 250,
-          backgroundColor: dynamicStyles.skeletonBg.backgroundColor,
-          borderRadius: 12,
-        }}
-      />
+      <View style={{ width: SCREEN_WIDTH, height: 250, backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 12 }} />
       <View style={{ padding: 10 }}>
-        <View
-          style={{
-            height: 20,
-            width: "80%",
-            backgroundColor: dynamicStyles.skeletonBg.backgroundColor,
-            borderRadius: 8,
-            marginBottom: 8,
-          }}
-        />
-        <View
-          style={{
-            height: 24,
-            width: "60%",
-            backgroundColor: dynamicStyles.skeletonBg.backgroundColor,
-            borderRadius: 8,
-            marginBottom: 8,
-          }}
-        />
-        <View
-          style={{
-            height: 16,
-            width: "40%",
-            backgroundColor: dynamicStyles.skeletonBg.backgroundColor,
-            borderRadius: 6,
-          }}
-        />
+        <View style={{ height: 20, width: "80%", backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 8, marginBottom: 8 }} />
+        <View style={{ height: 24, width: "60%", backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 8, marginBottom: 8 }} />
+        <View style={{ height: 16, width: "40%", backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 6 }} />
       </View>
     </View>
   );
 
   const renderPost = ({ item, index }) => {
-    const isMyPost = item.userId === currentUser?.uid;
+    const isMyPost = item.userId === authUser?.uid;
     const ownerId = item.userId || item.user?.id || item.user?._id || item.author;
     const userInfo = userInfoMap[ownerId] || {};
 
     let avatarUri = item.userAvatar;
     if (!avatarUri) {
-      avatarUri = userInfo.avatar || (isMyPost ? currentUser?.avatar || currentUser?.photoURL : null);
+      avatarUri = userInfo.avatar || (isMyPost ? authUser?.avatar || authUser?.photoURL : null);
     }
-    if (avatarUri) {
-      avatarUri = `${avatarUri}?v=${Date.now()}`;
-    }
+    if (avatarUri) avatarUri = `${avatarUri}?v=${Date.now()}`;
 
-    const fullName = userInfo.name || getFullName(currentUser) || "User";
+    const fullName = userInfo.name || getFullName(authUser) || "User";
     const verificationType = userInfo.verificationType;
 
     const images = Array.isArray(item.images) && item.images.length > 0
       ? item.images
-      : item.image
-      ? [item.image]
-      : [];
+      : item.image ? [item.image] : [];
     const hasMultiple = images.length > 1;
     const imageCount = images.length;
 
@@ -317,8 +285,8 @@ export default function Home({ navigation }) {
     const hasRating = userInfo.averageRating > 0 || userInfo.reviewCount > 0;
 
     const handlePressListing = () => {
-      if (currentUser && currentUser.uid !== ownerId) {
-        const viewRef = doc(db, "listings", item.id, "views", currentUser.uid);
+      if (authUser && authUser.uid !== ownerId) {
+        const viewRef = doc(db, "listings", item.id, "views", authUser.uid);
         setDoc(viewRef, { timestamp: Date.now() }, { merge: true }).catch(() => {});
       }
       navigation.navigate("ListingDetails", { listing: item });
@@ -338,12 +306,7 @@ export default function Home({ navigation }) {
               }}
             >
               {avatarUri ? (
-                <Image
-                  source={{ uri: avatarUri }}
-                  style={styles.avatar}
-                  resizeMode="cover"
-                  defaultSource={require('../assets/default-avatar.png')}
-                />
+                <Image source={{ uri: avatarUri }} style={styles.avatar} resizeMode="cover" defaultSource={require('../assets/default-avatar.png')} />
               ) : userInfoMap[ownerId] ? (
                 <View style={[styles.avatar, styles.defaultAvatar]}>
                   <Text style={styles.defaultAvatarText}>{getDefaultAvatar(fullName)}</Text>
@@ -367,21 +330,13 @@ export default function Home({ navigation }) {
                     {[1, 2, 3, 4, 5].map((s) => (
                       <Ionicons
                         key={s}
-                        name={
-                          s <= Math.floor(userInfo.averageRating || 0)
-                            ? "star"
-                            : s <= (userInfo.averageRating || 0)
-                            ? "star-half"
-                            : "star-outline"
-                        }
+                        name={s <= Math.floor(userInfo.averageRating || 0) ? "star" : s <= (userInfo.averageRating || 0) ? "star-half" : "star-outline"}
                         size={11}
-                        color={s <= (userInfo.averageRating || 0) ? "#FFA41C" : "#888"}
+                        color={s <= (userInfo.averageRating || 0) ? "#017a6b" : "#888"}
                         style={{ marginRight: 1 }}
                       />
                     ))}
-                    <Text style={styles.ratingText}>
-                      {userInfo.averageRating?.toFixed(1) || "0.0"}
-                    </Text>
+                    <Text style={styles.ratingText}>{userInfo.averageRating?.toFixed(1) || "0.0"}</Text>
                   </View>
                 )}
                 <Text style={[dynamicStyles.secondaryText, styles.timestamp]}>
@@ -391,6 +346,25 @@ export default function Home({ navigation }) {
                 </Text>
               </View>
             </View>
+
+            <TouchableOpacity
+              onPress={() => setMenuVisible(menuVisible === index ? null : index)}
+              style={styles.menuButton}
+              hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}
+            >
+              <Ionicons name="ellipsis-vertical" size={20} color={isDark ? "#fff" : "#000"} />
+            </TouchableOpacity>
+
+            {menuVisible === index && (
+              <View style={[styles.dropdownContainer, dynamicStyles.dropdownBg]}>
+                <TouchableOpacity onPress={() => handleShare(item)}>
+                  <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Share</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleCopy(item)}>
+                  <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Copy Link</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
 
           <TouchableOpacity activeOpacity={0.95} onPress={handlePressListing}>
@@ -403,24 +377,13 @@ export default function Home({ navigation }) {
 
             {images.length > 0 ? (
               <View style={styles.imagesContainer}>
-                <ScrollView
-                  horizontal
-                  pagingEnabled
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.imageScroll}
-                >
+                <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={styles.imageScroll}>
                   {images.map((imgUri, imgIndex) => (
                     <View key={imgIndex} style={styles.imageWrapper}>
-                      <Image
-                        source={{ uri: imgUri }}
-                        style={styles.postImage}
-                        resizeMode="cover"
-                      />
+                      <Image source={{ uri: imgUri }} style={styles.postImage} resizeMode="cover" />
                       {hasMultiple && imgIndex === 0 && (
                         <View style={styles.imageCountBadge}>
-                          <Text style={styles.imageCountText}>
-                            1/{imageCount}
-                          </Text>
+                          <Text style={styles.imageCountText}>1/{imageCount}</Text>
                         </View>
                       )}
                     </View>
@@ -429,15 +392,7 @@ export default function Home({ navigation }) {
               </View>
             ) : (
               <View style={[styles.postImage, dynamicStyles.noImageBg, { justifyContent: "center", alignItems: "center" }]}>
-                <Text
-                  style={{
-                    color: isDark ? "#999" : "#777",
-                    fontSize: 14,
-                    fontWeight: "500",
-                  }}
-                >
-                  No Media
-                </Text>
+                <Text style={{ color: isDark ? "#ccc" : "gray" }}>No Media</Text>
               </View>
             )}
 
@@ -448,11 +403,9 @@ export default function Home({ navigation }) {
                 </View>
               )}
               <Text style={[styles.listingTitle, dynamicStyles.textColor]}>{item.title}</Text>
-
               <Text style={[styles.price, dynamicStyles.priceColor]}>
                 {formatPrice(item.priceMonthly, item.priceYearly)}
               </Text>
-
               <View style={styles.locationRow}>
                 <Ionicons name="location-outline" size={16} color={isDark ? "#aaa" : "#666"} style={styles.locationIcon} />
                 <Text style={dynamicStyles.secondaryText} numberOfLines={1}>
@@ -460,9 +413,9 @@ export default function Home({ navigation }) {
                 </Text>
               </View>
 
-              <View style={styles.buttonRow}>
+              <View style={styles.ctaContainer}>
                 <TouchableOpacity
-                  style={styles.chatButton}
+                  style={styles.messageHostButton}
                   onPress={() => {
                     if (!ownerId) return Alert.alert("Error", "Cannot message: User not found");
                     navigation.navigate("Messages", {
@@ -470,36 +423,30 @@ export default function Home({ navigation }) {
                       params: {
                         listingId: item.id,
                         listingOwnerId: ownerId,
-                        tenantId: currentUser?.uid || "",
+                        tenantId: authUser?.uid || "",
                         listingTitle: item.title,
                       },
                     });
                   }}
                 >
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <Ionicons name="chatbubble-ellipses" size={16} color="#017a6b" />
-                    <Text style={styles.chatText}>Message host</Text>
-                  </View>
+                  <Ionicons name="chatbubble-ellipses-outline" size={18} color="#888" />
+                  <Text style={styles.messageHostText}>Message Host</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  onPress={() => setMenuVisible(menuVisible === index ? null : index)}
-                  style={styles.menuShield}
+                  style={styles.scheduleVisitButton}
+                  onPress={() => {
+                    navigation.navigate("EventScheduler", {
+                      listingId: item.id,
+                      listingTitle: item.title,
+                      ownerId,
+                    });
+                  }}
                 >
-                  <Ionicons name="ellipsis-vertical" size={18} color={isDark ? "#fff" : "#000"} />
+                  <Ionicons name="calendar-outline" size={18} color="#888" />
+                  <Text style={styles.scheduleVisitText}>Schedule Visit</Text>
                 </TouchableOpacity>
               </View>
-
-              {menuVisible === index && (
-                <View style={[styles.dropdownContainer, dynamicStyles.dropdownBg]}>
-                  <TouchableOpacity onPress={() => handleShare(item)}>
-                    <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Share</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => handleCopy(item)}>
-                    <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Copy Link</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
             </View>
           </TouchableOpacity>
         </View>
@@ -527,18 +474,13 @@ export default function Home({ navigation }) {
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dx) > 10;
-      },
+      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dx) > 10,
       onPanResponderRelease: (_, gestureState) => {
         const { dx } = gestureState;
         const threshold = SCREEN_WIDTH * 0.2;
         if (Math.abs(dx) > threshold) {
-          if (dx < 0) {
-            setActiveTab("hotels");
-          } else {
-            setActiveTab("houses");
-          }
+          if (dx < 0) setActiveTab("hotels");
+          else setActiveTab("houses");
         }
       },
     })
@@ -546,18 +488,16 @@ export default function Home({ navigation }) {
 
   const onRefresh = () => {
     setRefreshing(true);
-    // Re-filter from latest context data
     if (activeTab !== "hotels") {
       const filtered = listings.filter((l) => l.listingType !== "hotels");
       setPosts(filtered);
     }
-    // Small delay to feel like real refresh
     setTimeout(() => setRefreshing(false), 1200);
   };
 
   return (
     <SafeAreaView
-      style={[styles.container, dynamicStyles.containerBg]}
+      style={[styles.container, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}
       edges={['left', 'right', 'bottom']}
       {...panResponder.panHandlers}
     >
@@ -570,7 +510,7 @@ export default function Home({ navigation }) {
         </View>
       ) : listings.length === 0 ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 }}>
-          <Ionicons name="cloud-off-outline" size={60} color={isDark ? '#666' : '#999'} />
+          <Ionicons name="cloud-offline-outline" size={60} color={isDark ? '#666' : '#999'} />
           <Text style={{ fontSize: 18, fontWeight: '600', color: isDark ? '#fff' : '#333', marginTop: 16, textAlign: 'center' }}>
             No listings available yet
           </Text>
@@ -583,11 +523,7 @@ export default function Home({ navigation }) {
           <Animated.View
             style={[
               styles.stickyHeader,
-              {
-                transform: [{ translateY: headerTranslateY }],
-                opacity: headerOpacity,
-                paddingTop: insets.top,
-              },
+              { transform: [{ translateY: headerTranslateY }], opacity: headerOpacity, paddingTop: insets.top },
             ]}
           >
             <ListingHeader />
@@ -603,10 +539,7 @@ export default function Home({ navigation }) {
               data={Array(6).fill({})}
               keyExtractor={(_, i) => `skeleton-${i}`}
               renderItem={() => <SkeletonPost />}
-              contentContainerStyle={{
-                paddingTop: insets.top + 180,
-                paddingBottom: insets.bottom + 40,
-              }}
+              contentContainerStyle={{ paddingTop: insets.top + 180, paddingBottom: insets.bottom + 40 }}
               onScroll={onScroll}
               scrollEventThrottle={16}
               refreshControl={
@@ -627,10 +560,7 @@ export default function Home({ navigation }) {
               renderItem={renderPost}
               refreshing={refreshing}
               onRefresh={onRefresh}
-              contentContainerStyle={{
-                paddingTop: insets.top + 180,
-                paddingBottom: insets.bottom + 40,
-              }}
+              contentContainerStyle={{ paddingTop: insets.top + 180, paddingBottom: insets.bottom + 40 }}
               onScroll={onScroll}
               scrollEventThrottle={16}
               refreshControl={
@@ -682,13 +612,15 @@ const styles = StyleSheet.create({
 
   userRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    padding: 10,
-    marginBottom: 6,
+    alignItems: "center",
+    padding: 12,
+    paddingRight: 8,
+    marginBottom: 4,
   },
   avatar: { width: 44, height: 44, borderRadius: 22 },
   defaultAvatar: { backgroundColor: "#017a6b", justifyContent: "center", alignItems: "center" },
   defaultAvatarText: { color: "#fff", fontWeight: "bold", fontSize: 20 },
+
   nameContainer: {
     marginLeft: 12,
     flex: 1,
@@ -728,31 +660,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
+  menuButton: {
+    padding: 8,
+    marginLeft: 8,
+    borderRadius: 20,
+  },
+
   listingInfo: { padding: 10 },
   listingTitle: { fontSize: 18, fontWeight: "800", lineHeight: 24, marginBottom: 8 },
+  price: { fontSize: 14, fontWeight: "500", letterSpacing: 0.2, marginBottom: 4 },
 
-  price: {
-    fontSize: 14,
-    fontWeight: "500",
-    letterSpacing: 0.2,
-    marginBottom: 4,
-  },
-
-  imagesContainer: {
-    position: "relative",
-  },
-  imageScroll: {
-    width: SCREEN_WIDTH,
-    height: 250,
-  },
-  imageWrapper: {
-    width: SCREEN_WIDTH,
-    height: 250,
-  },
-  postImage: {
-    width: "100%",
-    height: "100%",
-  },
+  imagesContainer: { position: "relative" },
+  imageScroll: { width: SCREEN_WIDTH, height: 250 },
+  imageWrapper: { width: SCREEN_WIDTH, height: 250 },
+  postImage: { width: "100%", height: "100%" },
   imageCountBadge: {
     position: "absolute",
     top: 12,
@@ -763,11 +684,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     zIndex: 10,
   },
-  imageCountText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "600",
-  },
+  imageCountText: { color: "#fff", fontSize: 13, fontWeight: "600" },
 
   locationRow: {
     flexDirection: "row",
@@ -775,36 +692,56 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   locationIcon: { marginRight: 6 },
-  buttonRow: {
+
+  ctaContainer: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 10,
+    marginTop: 16,
+    gap: 12,
   },
-  chatButton: {
+
+  messageHostButton: {
     flex: 1,
-    backgroundColor: "rgba(1,122,107,0.2)",
-    borderColor: "#888",
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 6,
-    marginRight: 10,
     flexDirection: "row",
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#e0e0e0",
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    gap: 8,
   },
-  chatText: { color: "#017a6b", marginLeft: 6, fontWeight: "bold", fontSize: 14 },
-  menuShield: {
-    padding: 8,
-    borderRadius: 12,
-    backgroundColor: "rgba(1,122,107,0.2)",
+
+  messageHostText: {
+    color: "#000",
+    fontWeight: "600",
+    fontSize: 15,
+  },
+
+  scheduleVisitButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
     borderColor: "#888",
-    borderWidth: 1,
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    gap: 8,
+    backgroundColor: "transparent",
   },
+
+  scheduleVisitText: {
+    color: "#000",
+    fontWeight: "600",
+    fontSize: 15,
+  },
+
   dropdownContainer: {
     position: "absolute",
-    top: 40,
-    right: 10,
+    top: 44,
+    right: 12,
     borderRadius: 12,
     paddingVertical: 12,
     paddingHorizontal: 16,
@@ -815,6 +752,11 @@ const styles = StyleSheet.create({
     minWidth: 140,
     zIndex: 10,
   },
+  dropdownItem: {
+    paddingVertical: 8,
+    fontSize: 16,
+  },
+
   rentedBadge: {
     backgroundColor: "red",
     paddingVertical: 3,
@@ -824,6 +766,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   rentedText: { color: "#fff", fontWeight: "bold", fontSize: 12 },
+
   boostedBadge: {
     flexDirection: "row",
     alignItems: "center",

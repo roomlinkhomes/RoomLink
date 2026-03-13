@@ -1,4 +1,4 @@
-// components/HomeTopHeader.jsx — FIXED: Help/Support navigation working + useNavigation imported
+// components/HomeTopHeader.jsx
 import React, { useRef, useState, useContext } from "react";
 import {
   View,
@@ -15,12 +15,12 @@ import {
   TextInput,
   useColorScheme,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native"; // ← FIXED: Imported here
+import { useNavigation } from "@react-navigation/native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { NotificationContext } from "../context/NotificationContext";
-import Icon from "react-native-vector-icons/MaterialCommunityIcons";
+import Icon from "react-native-vector-icons/MaterialCommunityIcons"; // ← MaterialCommunityIcons import
 
-// Menu item icons
+// Menu item icons (existing SVGs)
 import IdentityIcon from "../assets/icons/svg/identity.svg";
 import SettingsIcon from "../assets/icons/svg/settings.svg";
 import AdIcon from "../assets/icons/svg/ad.svg";
@@ -32,7 +32,7 @@ const TOP_OFFSET =
   Platform.OS === "android" ? StatusBar.currentHeight || 35 : 70;
 
 export default function HomeTopHeader() {
-  const navigation = useNavigation(); // ← Now properly defined
+  const navigation = useNavigation();
   const { notifications } = useContext(NotificationContext);
   const [menuVisible, setMenuVisible] = useState(false);
   const colorScheme = useColorScheme();
@@ -72,8 +72,17 @@ export default function HomeTopHeader() {
     { id: "1", label: "Identity Verification", icon: IdentityIcon, screen: "IdentityVerification" },
     { id: "2", label: "Settings", icon: SettingsIcon, screen: "Settings" },
     { id: "3", label: "Post on billboard", icon: AdIcon, screen: "AdsZone" },
-    { id: "4", label: "Help / Support", icon: HelpIcon, screen: "HelpSupport" }, // ← Navigates here
-    { id: "5", label: "Announcement / News", icon: NewsIcon, screen: "Announcements" },
+    { id: "4", label: "Wallet", icon: "wallet-outline", screen: "Wallet" },
+    {
+      id: "8",
+      label: "Refund / Cancellation",
+      icon: "cash-refund",                    // ← valid in MaterialCommunityIcons
+      iconFamily: "MaterialCommunityIcons",   // ← tells renderer which library to use
+      screen: "RefundScreen"
+    },
+    { id: "5", label: "Host on RoomLink", icon: "business-outline", screen: "BecomeVendor" },
+    { id: "6", label: "Help / Support", icon: HelpIcon, screen: "HelpSupport" },
+    { id: "7", label: "Announcement / News", icon: NewsIcon, screen: "Announcements" },
   ];
 
   const openMenu = () => {
@@ -99,7 +108,7 @@ export default function HomeTopHeader() {
   const handleMenuPress = (item) => {
     closeMenu(() => {
       if (item.screen) {
-        navigation.navigate(item.screen); // ← Works now with useNavigation
+        navigation.navigate(item.screen);
       }
     });
   };
@@ -124,14 +133,14 @@ export default function HomeTopHeader() {
 
   return (
     <>
-      {/* 🔹 Top Header — Shifted up a little (tighter) */}
+      {/* Top Header */}
       <View
         style={[
           styles.topRow,
-          { 
+          {
             paddingTop: TOP_OFFSET - 25,
             paddingBottom: 6,
-            backgroundColor: isDark ? "#1e1e1e" : "#ffffff" 
+            backgroundColor: isDark ? "#1e1e1e" : "#ffffff",
           },
         ]}
       >
@@ -144,7 +153,7 @@ export default function HomeTopHeader() {
             <Ionicons
               name={unreadCount > 0 ? "notifications" : "notifications-outline"}
               size={28}
-              color={unreadCount > 0 ? "#036dd6" : isDark ? "#fff" : "#666"}
+              color={unreadCount > 0 ? "#017a6b" : isDark ? "#fff" : "#666"}
             />
           </TouchableOpacity>
 
@@ -176,16 +185,22 @@ export default function HomeTopHeader() {
         <TouchableOpacity
           style={[
             styles.inlineSearchContainer,
-            { backgroundColor: isDark ? "#1e1e1e" : "#fff", borderColor: isDark ? "#fff" : "#000" },
+            {
+              backgroundColor: isDark ? "#2a2a2a" : "#f9fafb",
+              borderColor: isDark ? "#444" : "#d1d5db",
+            },
           ]}
-          activeOpacity={0.9}
+          activeOpacity={0.88}
           onPress={() => navigation.navigate("Search")}
         >
-          <Icon name="magnify" size={25} color="#444" style={{ marginRight: 6 }} />
+          <Icon name="magnify" size={22} color={isDark ? "#aaa" : "#6b7280"} style={{ marginRight: 6 }} />
           <TextInput
-            style={[styles.inlineSearchInput, { color: isDark ? "#fff" : "#111" }]}
-            placeholder="Search..."
-            placeholderTextColor={isDark ? "#888" : "#666"}
+            style={[
+              styles.inlineSearchInput,
+              { color: isDark ? "#e5e7eb" : "#111827" },
+            ]}
+            placeholder="Search rooms, hotels..."
+            placeholderTextColor={isDark ? "#6b7280" : "#9ca3af"}
             editable={false}
           />
         </TouchableOpacity>
@@ -273,7 +288,24 @@ export default function HomeTopHeader() {
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.listContent}
               renderItem={({ item }) => {
-                const IconComponent = item.icon;
+                let IconComponent;
+                if (typeof item.icon === "string") {
+                  // Choose icon library based on iconFamily
+                  const IconLib = item.iconFamily === "MaterialCommunityIcons" ? Icon : Ionicons;
+
+                  IconComponent = () => (
+                    <IconLib
+                      name={item.icon}
+                      size={24}
+                      color={isDark ? "#ccc" : "#9CA3AF"}
+                      style={{ marginRight: 12 }}
+                    />
+                  );
+                } else {
+                  // SVG component (your existing ones)
+                  IconComponent = item.icon;
+                }
+
                 return (
                   <TouchableOpacity
                     style={[
@@ -315,29 +347,37 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingBottom: 6,
   },
+
   inlineSearchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    flex: 1,
-    marginHorizontal: 12,
-    paddingVertical: 0,
+    flex: 2.65,
+    marginHorizontal: 10,
+    paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 50,
-    borderWidth: 1.5,
+    borderRadius: 1000,
+    borderWidth: 2,
     shadowColor: "#000",
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.07,
     shadowOffset: { width: 0, height: 1 },
     shadowRadius: 2,
-    elevation: 10,
+    elevation: 3,
   },
+
   inlineSearchInput: {
     flex: 1,
-    fontSize: 10,
+    fontSize: 14,
+    paddingVertical: 0,
   },
-  secondHeaderContainer: { flexDirection: "row", marginBottom: 10 },
+
+  secondHeaderContainer: {
+    flexDirection: "row",
+    marginBottom: 10,
+  },
+
   categoryButton: {
     paddingVertical: 6,
     paddingHorizontal: 14,
@@ -346,6 +386,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
   overlay: {
     position: "absolute",
     top: 0,
@@ -354,6 +395,7 @@ const styles = StyleSheet.create({
     height: SCREEN_HEIGHT,
     backgroundColor: "rgba(0,0,0,0.25)",
   },
+
   menuContainer: {
     position: "absolute",
     top: TOP_OFFSET,
@@ -363,7 +405,9 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 16,
     paddingTop: 12,
   },
+
   listContent: { paddingHorizontal: 14, paddingBottom: 24 },
+
   card: {
     flexDirection: "row",
     alignItems: "center",
@@ -373,5 +417,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: StyleSheet.hairlineWidth,
   },
+
   cardText: { fontSize: 16, fontWeight: "600" },
 });

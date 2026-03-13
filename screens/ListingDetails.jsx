@@ -1,4 +1,4 @@
-// screens/ListingDetails.jsx — FIXED: CTA styled + replyToCommentId for Cloud Functions notifications
+// screens/ListingDetails.jsx — FIXED: Comment image uploads to Firebase Storage + stable DocumentPicker
 import React, { useContext, useState, useEffect, useCallback } from "react";
 import {
   View,
@@ -21,7 +21,7 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { UserContext } from "../context/UserContext";
 import Avatar from "../component/avatar";
-import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker"; // Stable picker for comment images
 import { timeAgo } from "../utils/timeAgo";
 import {
   doc,
@@ -36,6 +36,9 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useFocusEffect } from "@react-navigation/native";
+
+// Firebase Storage imports
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 // SVG Badges
 import BlueBadge from "../assets/icons/blue.svg";
@@ -119,7 +122,7 @@ export default function ListingDetails() {
   const [showCommentModal, setShowCommentModal] = useState(false);
   const [newComment, setNewComment] = useState("");
   const [replyToUser, setReplyToUser] = useState(null);
-  const [replyToCommentId, setReplyToCommentId] = useState(null); // For Cloud Functions to detect replies
+  const [replyToCommentId, setReplyToCommentId] = useState(null);
   const [attachedImage, setAttachedImage] = useState(null);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerUri, setImageViewerUri] = useState(null);
@@ -152,7 +155,7 @@ export default function ListingDetails() {
     }, 0);
   };
 
-  const rootComments = comments.filter((c) => !c.replyToCommentId); // Updated to use replyToCommentId
+  const rootComments = comments.filter((c) => !c.replyToCommentId);
 
   const hasSellerRating = poster.averageRating > 0 || poster.reviewCount > 0;
 
@@ -224,7 +227,7 @@ export default function ListingDetails() {
     };
   }, [posterId, getUserById]);
 
-  // Comments fetching – updated to support replyToCommentId
+  // Comments fetching
   useEffect(() => {
     if (!listing?.id) return;
 
@@ -312,21 +315,71 @@ export default function ListingDetails() {
     setExpandedComments((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  // FIXED: Stable DocumentPicker for comment image attachment
   const pickCommentImage = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.7,
-    });
-    if (!res.canceled) setAttachedImage(res.assets[0].uri);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "image/*",
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      console.log("Comment image picker result:", JSON.stringify(result, null, 2));
+
+      if (result.canceled) {
+        console.log("Comment image picker canceled by user");
+        return;
+      }
+
+      if (!result.assets || !result.assets[0]?.uri) {
+        console.log("No image selected from picker");
+        Alert.alert("No Image", "Couldn't load the selected image. Try again.");
+        return;
+      }
+
+      const uri = result.assets[0].uri;
+      console.log("Selected comment image URI:", uri);
+
+      setAttachedImage(uri);
+    } catch (err) {
+      console.error("Comment image picker error:", err);
+      Alert.alert(
+        "Gallery Error",
+        "Failed to open gallery.\n\nTry:\n1. Restart app\n2. Settings > Apps > YourApp > Permissions > Photos > Allow all"
+      );
+    }
   };
 
+  // FIXED: Upload image to Firebase Storage BEFORE saving comment
   const handleSendComment = async () => {
     const text = newComment.trim();
     if (!text && !attachedImage) return;
+
     setSendStatus("sending");
 
+    let imageUrl = null;
+
     try {
+      // Upload image if attached
+      if (attachedImage) {
+        console.log("Uploading comment image to Firebase Storage...");
+
+        const response = await fetch(attachedImage);
+        const blob = await response.blob();
+
+        const timestamp = Date.now();
+        const fileName = `comment-image-${user?.uid || "anon"}-${timestamp}.jpg`;
+
+        const storage = getStorage();
+        const storageRef = ref(storage, `comment_images/${listing.id}/${fileName}`);
+
+        await uploadBytes(storageRef, blob);
+
+        imageUrl = await getDownloadURL(storageRef);
+        console.log("Comment image uploaded → public URL:", imageUrl);
+      }
+
+      // Prepare comment data with remote URL
       const fullName = getFullName(user || {});
       const photoURL = user?.photoURL || user?.profileImage || user?.avatar || null;
 
@@ -335,16 +388,18 @@ export default function ListingDetails() {
         userName: fullName,
         userAvatar: photoURL,
         text,
-        image: attachedImage || null,
+        image: imageUrl,  // ← now it's the public HTTPS URL
         timestamp: serverTimestamp(),
         replyToUser: replyToUser || null,
-        replyToCommentId: replyToCommentId || null, // For Cloud Functions to detect replies
+        replyToCommentId: replyToCommentId || null,
       };
 
+      // Save to Firestore
       await addDoc(collection(db, "listings", listing.id, "comments"), commentData);
 
-      // No client-side FCM – Cloud Function will handle notifications
+      console.log("Comment sent successfully");
 
+      // Reset UI
       setNewComment("");
       setReplyToUser(null);
       setReplyToCommentId(null);
@@ -352,9 +407,10 @@ export default function ListingDetails() {
       Keyboard.dismiss();
       setSendStatus("success");
       setTimeout(() => setSendStatus("idle"), 2000);
+
     } catch (error) {
-      console.error("Send failed:", error);
-      Alert.alert("Error", "Failed to send comment. Try again.");
+      console.error("Comment send failed:", error);
+      Alert.alert("Error", "Failed to send comment" + (attachedImage ? " (image upload failed)" : "") + ". Try again.");
       setSendStatus("idle");
     }
   };
@@ -487,7 +543,7 @@ export default function ListingDetails() {
           {listing?.description && <Text style={[styles.description, { color: secondaryText }]}>{listing.description}</Text>}
         </View>
 
-        {/* Seller section with real rating */}
+        {/* Seller section */}
         <TouchableOpacity
           onPress={() => goToProfile(posterId)}
           style={[styles.vendorBox, { borderColor }]}
@@ -500,7 +556,6 @@ export default function ListingDetails() {
               <VerificationBadge type={poster.verificationType} />
             </View>
 
-            {/* Tiny seller rating */}
             {loadingSeller ? (
               <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 6 }} />
             ) : hasSellerRating ? (
@@ -585,7 +640,7 @@ export default function ListingDetails() {
           )}
         </View>
 
-        {/* Fixed CTA row – Rating | Comment | Report – your requested style */}
+        {/* Fixed CTA row */}
         <View style={[styles.actionRowFixed, { borderTopColor: borderColor }]}>
           <TouchableOpacity
             style={styles.actionButtonFixed}
@@ -831,7 +886,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(240,240,240,0.85)", // light gray semi-transparent
+    backgroundColor: "rgba(240,240,240,0.85)",
     borderRadius: 24,
     paddingVertical: 10,
     paddingHorizontal: 16,
@@ -842,12 +897,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 14,
     fontWeight: "600",
-    color: "#888", // gray text
-  },
-  // Dark theme override
-  ctaPillDark: {
-    backgroundColor: "rgba(50,50,50,0.85)",
-    borderColor: "rgba(100,100,100,0.6)",
+    color: "#888",
   },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
   modalContainerFixed: {

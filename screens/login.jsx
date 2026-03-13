@@ -1,5 +1,8 @@
-// screens/Login.jsx — FIXED: Compatible with listener-based AuthContext (no login() function)
-// Ensures profile exists on every login + better error messages
+// screens/Login.jsx
+// FIXED: Direct FCM token save on login success (no delay/race)
+// Removed delayed setupPushNotifications() call
+// Ensures profile exists + better error messages
+
 import React, { useState, useContext } from "react";
 import {
   View,
@@ -16,17 +19,16 @@ import {
 } from "react-native";
 import { TextInput } from "react-native-paper";
 import { Ionicons } from "@expo/vector-icons";
-import { UserContext } from "../context/UserContext"; // remove if not needed anymore
+import { UserContext } from "../context/UserContext"; // remove if not needed
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth, db } from "../firebaseConfig";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { useNavigation } from "@react-navigation/native";
+import { getMessaging, getToken } from '@react-native-firebase/messaging';
 
-// Helper: Ensure user profile exists in Firestore & return full data
 const ensureUserProfile = async (uid, email) => {
   const userRef = doc(db, "users", uid);
   const userSnap = await getDoc(userRef);
-
   let userData = {
     id: uid,
     uid,
@@ -39,9 +41,7 @@ const ensureUserProfile = async (uid, email) => {
     isVendor: false,
     photoURL: null,
   };
-
   if (!userSnap.exists()) {
-    // Create default profile if missing (fixes old half-created accounts)
     await setDoc(userRef, {
       ...userData,
       createdAt: serverTimestamp(),
@@ -59,7 +59,6 @@ const ensureUserProfile = async (uid, email) => {
       photoURL: data.photoURL || null,
     };
   }
-
   return userData;
 };
 
@@ -71,10 +70,7 @@ export default function Login() {
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [generalError, setGeneralError] = useState("");
-
-  // Only keep if you still use a separate UserContext
   const { setUser } = useContext(UserContext) || { setUser: () => {} };
-
   const scheme = useColorScheme();
   const isDarkMode = scheme === "dark";
   const navigation = useNavigation();
@@ -93,7 +89,6 @@ export default function Login() {
     setEmailError("");
     setPasswordError("");
     setGeneralError("");
-
     const cleanEmail = email.trim().toLowerCase();
     const cleanPassword = password.trim();
 
@@ -116,26 +111,45 @@ export default function Login() {
       );
       const user = userCredential.user;
 
-      // Reload to ensure fresh token/state
+      // Force refresh ID token
+      await user.getIdToken(true);
+
+      // Reload user object
       await user.reload();
       const refreshedUser = auth.currentUser;
 
-      // Ensure profile exists & get full data (fixes old accounts)
-      const userData = await ensureUserProfile(refreshedUser.uid, refreshedUser.email);
+      console.log("[Login] Successful sign-in. UID:", refreshedUser?.uid);
 
-      // Optional: only if you still have separate UserContext
+      // Ensure profile exists & get full data
+      const userData = await ensureUserProfile(refreshedUser.uid, refreshedUser.email);
       setUser(userData);
 
-      // IMPORTANT: Do NOT save to AsyncStorage here — AuthContext listener handles persistence
-      // Do NOT call login() — it doesn't exist anymore
+      // ── DIRECT FCM TOKEN SAVE ── Reliable post-login
+      try {
+        const messaging = getMessaging();
+        const token = await getToken(messaging);
 
+        if (token) {
+          await updateDoc(doc(db, 'users', refreshedUser.uid), {
+            fcmToken: token,
+            fcmTokenUpdatedAt: new Date().toISOString(),
+            platform: Platform.OS,
+            pushEnabled: true,
+          });
+          console.log('[Login] FCM token DIRECTLY saved to Firestore:', token.substring(0, 20) + '...');
+        } else {
+          console.log('[Login] No FCM token available');
+        }
+      } catch (pushErr) {
+        console.error('[Login] FCM token save failed:', pushErr.code || pushErr.message);
+      }
+
+      // Navigate to home
       navigation.replace("HomeTabs");
     } catch (error) {
       console.error("LOGIN FAILED:", error.code, error.message);
-
       let message = "An error occurred. Please try again.";
       let fieldError = null;
-
       switch (error.code) {
         case "auth/invalid-credential":
           message = "Invalid email or password (account may not exist or credentials are wrong). Try 'Forgot Password' if this is an older account.";
@@ -159,11 +173,9 @@ export default function Login() {
         default:
           message = `${error.code || "Unknown error"}: ${error.message || "Login failed"}`;
       }
-
       if (fieldError === "email") setEmailError(message);
       else if (fieldError === "password") setPasswordError(message);
       else setGeneralError(message);
-
       Alert.alert("Login Issue", message);
     } finally {
       setLoading(false);

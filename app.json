@@ -20,7 +20,14 @@
     },
     "android": {
       "package": "com.roomlink.app",
+      "versionCode": 2,
       "googleServicesFile": "./firebase-config/google-services.json",
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE",
+        "POST_NOTIFICATIONS"  
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -43,7 +50,15 @@
       "@react-native-firebase/app",
       "@react-native-firebase/messaging",
       "expo-audio",
-      "@react-native-firebase/auth"
+      "@react-native-firebase/auth",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow RoomLink to use Face ID for quick and secure login."
+        }
+      ]
+    
     ]
   }
 }

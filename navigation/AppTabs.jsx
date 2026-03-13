@@ -19,19 +19,20 @@ import { useUser } from "../context/UserContext";
 import { onSnapshot, doc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useMessageCount } from "../context/MessageProvider.jsx";
-import { useTripCount } from "../context/TripCountProvider"; // ← NEW: import for Trips badge
+import { useTripCount } from "../context/TripCountProvider";
 
 // Screens
 import Home from "../screens/home";
 import ListingScreen from "../screens/listing";
 import MyProfileScreen from "../screens/Profile/MyProfileScreen.jsx";
 import MessagesStack from "./MessagesStack";
-import Trips from "../screens/Trips"; // ← Your Trips screen
+import Trips from "../screens/Trips";
 
 const Tab = createBottomTabNavigator();
 
 const SIZES = {
-  default: 26, // uniform size for all tabs
+  icon: 22,     // smaller icons
+  avatar: 24,   // avatar slightly larger than icons
 };
 
 export default function AppTabs() {
@@ -39,7 +40,7 @@ export default function AppTabs() {
   const { user } = useUser();
   const [liveUser, setLiveUser] = useState(null);
   const { unreadConversations: unreadCount } = useMessageCount();
-  const { upcomingCount } = useTripCount(); // ← NEW: get count for Trips badge
+  const { upcomingCount } = useTripCount();
   const scheme = useColorScheme();
   const isDarkMode = scheme === "dark";
 
@@ -64,9 +65,9 @@ export default function AppTabs() {
 
   const tabBarStyle = {
     backgroundColor: theme.tabBarBackground,
-    height: Platform.OS === "ios" ? 70 : 65,
-    paddingBottom: Platform.OS === "ios" ? 24 : 8,
-    paddingTop: 8,
+    height: Platform.OS === "ios" ? 64 : 60,           // slightly shorter
+    paddingBottom: Platform.OS === "ios" ? 20 : 6,
+    paddingTop: 6,
   };
 
   const screenOptions = useMemo(
@@ -90,7 +91,7 @@ export default function AppTabs() {
         headerShown: false,
         tabBarActiveTintColor: theme.tabBarActive,
         tabBarInactiveTintColor: theme.tabBarInactive,
-        tabBarLabelStyle: styles.tabLabel,
+        tabBarLabelStyle: [styles.tabLabel],
         tabBarStyle: isHidden ? { display: "none" } : tabBarStyle,
         tabBarHideOnKeyboard: true,
         tabBarPressColor: "transparent",
@@ -115,7 +116,7 @@ export default function AppTabs() {
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 70 : 0}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0} // match new tab height
       enabled={Platform.OS === "ios"}
     >
       <Tab.Navigator
@@ -130,7 +131,7 @@ export default function AppTabs() {
             tabBarIcon: ({ focused }) => (
               <Ionicons
                 name={focused ? "home" : "home-outline"}
-                size={SIZES.default}
+                size={SIZES.icon}
                 color={focused ? theme.tabBarActive : theme.tabBarInactive}
               />
             ),
@@ -146,7 +147,7 @@ export default function AppTabs() {
               <View style={styles.iconContainer}>
                 <Ionicons
                   name={focused ? "chatbubble" : "chatbubble-outline"}
-                  size={SIZES.default}
+                  size={SIZES.icon}
                   color={focused ? theme.tabBarActive : theme.tabBarInactive}
                 />
                 <MessageBadge count={unreadCount} />
@@ -163,24 +164,23 @@ export default function AppTabs() {
             tabBarIcon: ({ focused }) => (
               <Ionicons
                 name={focused ? "add-circle" : "add-circle-outline"}
-                size={SIZES.default}
+                size={SIZES.icon}
                 color={focused ? theme.tabBarActive : theme.tabBarInactive}
               />
             ),
           }}
         />
 
-        {/* Trips tab with badge */}
         <Tab.Screen
-          name="Trips"
+          name="Events"
           component={Trips}
           options={{
-            tabBarLabel: "Trips",
+            tabBarLabel: "Events",
             tabBarIcon: ({ focused }) => (
               <View style={styles.iconContainer}>
                 <Ionicons
-                  name={focused ? "calendar" : "calendar-outline"} // or "suitcase"
-                  size={SIZES.default}
+                  name={focused ? "calendar" : "calendar-outline"}
+                  size={SIZES.icon}
                   color={focused ? theme.tabBarActive : theme.tabBarInactive}
                 />
                 {upcomingCount > 0 && (
@@ -208,7 +208,9 @@ export default function AppTabs() {
                   style={[
                     styles.avatar,
                     {
-                      borderWidth: focused ? 3 : 1,
+                      width: SIZES.avatar,
+                      height: SIZES.avatar,
+                      borderWidth: focused ? 2.5 : 1,
                       borderColor: focused
                         ? theme.tabBarActive
                         : theme.tabBarInactive,
@@ -218,7 +220,7 @@ export default function AppTabs() {
               ) : (
                 <Ionicons
                   name={focused ? "person" : "person-outline"}
-                  size={SIZES.default}
+                  size={SIZES.icon}
                   color={focused ? theme.tabBarActive : theme.tabBarInactive}
                 />
               );
@@ -241,10 +243,10 @@ export default function AppTabs() {
 
 const styles = StyleSheet.create({
   tabLabel: {
-    fontSize: 11,
+    fontSize: 10,               // ← smaller labels
     fontWeight: "700",
-    letterSpacing: 0.3,
-    marginBottom: 4,
+    letterSpacing: 0.2,
+    marginBottom: 2,            // tighter spacing
   },
   iconContainer: {
     position: "relative",
@@ -253,23 +255,22 @@ const styles = StyleSheet.create({
   },
   badge: {
     position: "absolute",
-    right: -8,
-    top: -4,
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
+    right: -7,
+    top: -3,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: "#ef4444",
     alignItems: "center",
     justifyContent: "center",
   },
   badgeText: {
     color: "#ffffff",
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "800",
+    paddingHorizontal: 4,
   },
   avatar: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    borderRadius: 12,           // half of 24
   },
 });

@@ -1,5 +1,5 @@
-// Settings.jsx — FIXED: Proper async logout + navigation reset
-import React, { useContext } from "react";
+// Settings.jsx — FIXED: Proper async logout + navigation reset + Login & security modal
+import React, { useContext, useState } from "react";
 import {
   View,
   ScrollView,
@@ -8,6 +8,8 @@ import {
   Alert,
   Platform,
   TouchableOpacity,
+  Modal,
+  StatusBar,
 } from "react-native";
 import { List, Divider } from "react-native-paper";
 import Icon from "react-native-vector-icons/MaterialCommunityIcons";
@@ -20,13 +22,16 @@ export default function Settings() {
   const navigation = useNavigation();
   const { logout } = useContext(AuthContext);
   const { darkMode } = useContext(ThemeContext);
-
   const isDark = darkMode;
+
   const textColor = isDark ? "#fff" : "#000";
   const secondaryText = isDark ? "#aaa" : "#666";
   const iconColor = isDark ? "#999" : "#666";
   const background = isDark ? "#000" : "#fff";
+  const modalBg = isDark ? "#111" : "#fff";
   const dividerColor = isDark ? "#333" : "#eee";
+
+  const [securityModalVisible, setSecurityModalVisible] = useState(false);
 
   const handleLogout = () => {
     Alert.alert("Log out", "Are you sure you want to log out?", [
@@ -36,8 +41,7 @@ export default function Settings() {
         style: "destructive",
         onPress: async () => {
           try {
-            await logout(); // ← Now properly awaited
-            // Reset navigation stack to Login screen
+            await logout();
             navigation.reset({
               index: 0,
               routes: [{ name: "Login" }],
@@ -51,21 +55,28 @@ export default function Settings() {
     ]);
   };
 
+  const openSecurityModal = () => setSecurityModalVisible(true);
+  const closeSecurityModal = () => setSecurityModalVisible(false);
+
+  const navigateAndClose = (screenName) => {
+    closeSecurityModal();
+    navigation.navigate(screenName);
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: background }]}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* ========== HEADER — MOVED UP (less top padding) ========== */}
+        {/* HEADER */}
         <View
           style={{
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "flex-start",
             paddingHorizontal: 20,
-            paddingTop: 35,        // ← Reduced from 50 → feels higher up
+            paddingTop: 35,
             paddingBottom: 28,
           }}
         >
-          {/* Back Button */}
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             style={{ padding: 10 }}
@@ -73,13 +84,10 @@ export default function Settings() {
           >
             <Ionicons name="arrow-back" size={28} color={isDark ? "#fff" : "#000"} />
           </TouchableOpacity>
-
-          {/* Title */}
           <View style={{ flex: 1, alignItems: "center", marginRight: 48 }}>
             <Text style={[styles.pageTitle, { color: textColor }]}>Account Settings</Text>
           </View>
         </View>
-        {/* ========== END HEADER ========== */}
 
         <View style={styles.list}>
           <List.Item
@@ -89,15 +97,13 @@ export default function Settings() {
             right={() => <Icon name="chevron-right" size={28} color="#c7c7cc" />}
             onPress={() => navigation.navigate("EditProfile")}
           />
-
           <List.Item
             title="Login & security"
             titleStyle={[styles.title, { color: textColor }]}
             left={() => <Icon name="shield-check-outline" size={24} color={iconColor} />}
             right={() => <Icon name="chevron-right" size={28} color="#c7c7cc" />}
-            onPress={() => navigation.navigate("ChangePassword")}
+            onPress={openSecurityModal}  // ← Opens modal instead of direct nav
           />
-
           <List.Item
             title="Privacy"
             titleStyle={[styles.title, { color: textColor }]}
@@ -105,7 +111,6 @@ export default function Settings() {
             right={() => <Icon name="chevron-right" size={28} color="#c7c7cc" />}
             onPress={() => navigation.navigate("Privacy")}
           />
-
           <List.Item
             title="Notifications"
             titleStyle={[styles.title, { color: textColor }]}
@@ -113,7 +118,6 @@ export default function Settings() {
             right={() => <Icon name="chevron-right" size={28} color="#c7c7cc" />}
             onPress={() => navigation.navigate("Notification")}
           />
-
           <List.Item
             title="Payments"
             titleStyle={[styles.title, { color: textColor }]}
@@ -121,7 +125,6 @@ export default function Settings() {
             right={() => <Icon name="chevron-right" size={28} color="#c7c7cc" />}
             onPress={() => navigation.navigate("Payments")}
           />
-
           <List.Item
             title="Accessibility"
             titleStyle={[styles.title, { color: textColor }]}
@@ -139,7 +142,6 @@ export default function Settings() {
             right={() => <Icon name="chevron-right" size={28} color="#c7c7cc" />}
             onPress={() => navigation.navigate("SwitchAccount")}
           />
-
           <List.Item
             title="About this app"
             titleStyle={[styles.title, { color: textColor }]}
@@ -160,6 +162,79 @@ export default function Settings() {
 
         <Text style={styles.version}>Version 1.0.0</Text>
       </ScrollView>
+
+      {/* Login & Security Modal */}
+      <Modal
+        visible={securityModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={closeSecurityModal}
+      >
+        <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+        <View style={{ flex: 1, backgroundColor: modalBg }}>
+          {/* Modal Header */}
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              paddingHorizontal: 20,
+              paddingTop: Platform.OS === "ios" ? 50 : 20,
+              paddingBottom: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: dividerColor,
+            }}
+          >
+            <TouchableOpacity onPress={closeSecurityModal} style={{ padding: 8 }}>
+              <Ionicons name="close" size={28} color={textColor} />
+            </TouchableOpacity>
+            <Text
+              style={{
+                flex: 1,
+                textAlign: "center",
+                fontSize: 20,
+                fontWeight: "700",
+                color: textColor,
+                marginRight: 40, // balance for close icon
+              }}
+            >
+              Login & Security
+            </Text>
+          </View>
+
+          {/* Options */}
+          <View style={{ paddingTop: 16 }}>
+            <TouchableOpacity
+              style={styles.modalItem}
+              onPress={() => navigateAndClose("ChangePassword")}
+            >
+              <Icon name="lock-outline" size={24} color={iconColor} style={{ marginRight: 16 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.modalTitle, { color: textColor }]}>Change Password</Text>
+                <Text style={{ color: secondaryText, fontSize: 14 }}>
+                  Update your account password
+                </Text>
+              </View>
+              <Icon name="chevron-right" size={24} color="#c7c7cc" />
+            </TouchableOpacity>
+
+            <Divider style={{ backgroundColor: dividerColor }} />
+
+            <TouchableOpacity
+              style={styles.modalItem}
+              onPress={() => navigateAndClose("ChangeEmail")}
+            >
+              <Icon name="email-outline" size={24} color={iconColor} style={{ marginRight: 16 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.modalTitle, { color: textColor }]}>Change Email</Text>
+                <Text style={{ color: secondaryText, fontSize: 14 }}>
+                  Update your registered email address
+                </Text>
+              </View>
+              <Icon name="chevron-right" size={24} color="#c7c7cc" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -183,5 +258,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     paddingVertical: 30,
     paddingBottom: Platform.OS === "ios" ? 50 : 30,
+  },
+  // Modal-specific styles
+  modalItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "500",
   },
 });

@@ -2,7 +2,9 @@ const functions = require("firebase-functions/v1");
 const admin = require("firebase-admin");
 const axios = require("axios");
 const nodemailer = require("nodemailer");
-require("dotenv").config(); // Load .env
+const crypto = require("crypto");
+
+require("dotenv").config();
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -32,25 +34,44 @@ const transporter = nodemailer.createTransport({
 });
 
 // ──────────────────────────────────────────────
+// RAW BODY CAPTURE HELPER (critical for Paystack webhook signature)
+// ──────────────────────────────────────────────
+function getRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+// ──────────────────────────────────────────────
 // INITIALIZE PAYSTACK PAYMENT
 // ──────────────────────────────────────────────
 exports.initializePaystack = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Headers", "Content-Type");
   res.set("Access-Control-Allow-Methods", "POST");
-
   if (req.method === "OPTIONS") return res.sendStatus(204);
   if (req.method !== "POST") return res.status(405).send("Not Allowed");
 
   try {
-    const { email, amount, reference, orderId } = req.body;
-    if (!email || !amount || !reference) {
-      return res.status(400).json({ error: "Missing fields" });
+    const { email, amount, reference, bookingId } = req.body;
+    if (!email || !amount || !reference || !bookingId) {
+      return res.status(400).json({ error: "Missing required fields (email, amount, reference, bookingId)" });
     }
 
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
-      { email, amount, reference, callback_url: "roomlink://payment-success", metadata: { orderId } },
+      {
+        email,
+        amount,
+        reference,
+        callback_url: "roomlink://payment-success",
+        metadata: {
+          bookingId,                    // Main key used by webhook
+        },
+      },
       { headers: { Authorization: `Bearer ${PAYSTACK_SK}` } }
     );
 
@@ -62,12 +83,12 @@ exports.initializePaystack = functions.https.onRequest(async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// VERIFY PAYSTACK PAYMENT
+// VERIFY PAYSTACK PAYMENT (client-side fallback)
 // ──────────────────────────────────────────────
 exports.verifyPaystackPayment = functions.https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Login required");
 
-  const { reference, orderId } = data;
+  const { reference, bookingId } = data;
 
   try {
     const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
@@ -77,12 +98,13 @@ exports.verifyPaystackPayment = functions.https.onCall(async (data, context) => 
     const result = response.data;
     if (result.data.status !== "success") throw new Error("Payment failed");
 
-    await db.collection("orders").doc(orderId).update({
-      status: "paid",
+    await db.collection("bookings").doc(bookingId).update({
+      status: "confirmed",
+      paymentStatus: "paid",
       paymentReference: reference,
       paidAt: admin.firestore.FieldValue.serverTimestamp(),
-      customerEmail: result.data.customer.email,
       amountPaid: result.data.amount / 100,
+      customerEmail: result.data.customer.email,
     });
 
     return { success: true };
@@ -104,6 +126,7 @@ exports.createUserVirtualAccount = functions.auth.user().onCreate(async (user) =
       { email: user.email, first_name: user.displayName || "User" },
       { headers: { Authorization: `Bearer ${PAYSTACK_SK}`, "Content-Type": "application/json" } }
     );
+
     const customerCode = customerRes.data.data.customer_code;
     console.log("✅ Paystack customer created:", customerCode);
 
@@ -118,6 +141,7 @@ exports.createUserVirtualAccount = functions.auth.user().onCreate(async (user) =
       },
       { headers: { Authorization: `Bearer ${PAYSTACK_SK}`, "Content-Type": "application/json" } }
     );
+
     const acc = accRes.data.data;
     console.log("✅ Virtual account created:", acc.account_number);
 
@@ -139,46 +163,83 @@ exports.createUserVirtualAccount = functions.auth.user().onCreate(async (user) =
 });
 
 // ──────────────────────────────────────────────
-// PAYSTACK WEBHOOK
+// PAYSTACK WEBHOOK — SECURE & FIXED FOR BOOKINGS
 // ──────────────────────────────────────────────
 exports.paystackWebhook = functions.https.onRequest(async (req, res) => {
-  if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
-
-  const event = req.body;
+  if (req.method !== "POST") {
+    return res.status(405).send("Method Not Allowed");
+  }
 
   try {
-    console.log("Webhook received:", event.event);
+    const rawBody = await getRawBody(req);
+    const signature = req.headers["x-paystack-signature"];
+
+    if (!signature) {
+      console.error("Webhook: Missing x-paystack-signature header");
+      return res.sendStatus(400);
+    }
+
+    // Verify signature
+    const computedSignature = crypto
+      .createHmac("sha512", PAYSTACK_SK)
+      .update(rawBody)
+      .digest("hex");
+
+    if (computedSignature !== signature) {
+      console.error("Webhook: Invalid signature", {
+        received: signature.substring(0, 20) + "...",
+        computed: computedSignature.substring(0, 20) + "...",
+      });
+      return res.sendStatus(401);
+    }
+
+    // Parse event
+    let event;
+    try {
+      event = JSON.parse(rawBody.toString());
+    } catch (parseErr) {
+      console.error("Webhook: Invalid JSON payload", parseErr);
+      return res.sendStatus(400);
+    }
+
+    console.log("Webhook verified → event:", event.event);
 
     if (event.event === "charge.success") {
-      const reference = event.data.reference;
-      const amount = event.data.amount / 100;
-      console.log("Payment success:", reference, "Amount: ₦" + amount);
+      const data = event.data;
+      const reference = data.reference;
+      const amount = data.amount / 100;
+      const email = data.customer?.email;
+      const metadata = data.metadata || {};
+      const bookingId = metadata.bookingId || metadata.orderId; // fallback for old transactions
 
-      const email = event.data.customer.email;
-      const snap = await db.collection("users").where("email", "==", email).limit(1).get();
+      console.log("Charge success →", { reference, amount, email, bookingId, metadata });
 
-      if (!snap.empty) {
-        const userRef = snap.docs[0].ref;
-        await userRef.update({
-          depositBalance: admin.firestore.FieldValue.increment(amount),
-        });
+      // 1. Wallet deposit
+      if (email) {
+        const snap = await db.collection("users").where("email", "==", email).limit(1).get();
+        if (!snap.empty) {
+          const userRef = snap.docs[0].ref;
+          await userRef.update({
+            depositBalance: admin.firestore.FieldValue.increment(amount),
+          });
 
-        await db.collection("wallet_logs").add({
-          userId: snap.docs[0].id,
-          type: "deposit",
-          amount,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+          await db.collection("wallet_logs").add({
+            userId: snap.docs[0].id,
+            type: "deposit",
+            amount,
+            reference,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
 
-        console.log(`💰 Wallet credited for ${email} with ₦${amount}`);
+          console.log(`💰 Wallet credited ₦${amount} for ${email}`);
+        }
       }
 
+      // 2. Billboard payment
       if (reference.startsWith("billboard_")) {
         const parts = reference.split("_");
         if (parts.length >= 3) {
           const userId = parts[1];
-          console.log("Billboard payment detected. Unlocking for user:", userId);
-
           await db.doc(`users/${userId}`).set(
             {
               adsPaid: true,
@@ -187,8 +248,6 @@ exports.paystackWebhook = functions.https.onRequest(async (req, res) => {
             { merge: true }
           );
 
-          console.log(`BILLBOARD UNLOCKED for user ${userId}`);
-
           await db.collection("adPayments").add({
             userId,
             reference,
@@ -196,14 +255,42 @@ exports.paystackWebhook = functions.https.onRequest(async (req, res) => {
             status: "success",
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
+
+          console.log(`BILLBOARD UNLOCKED for user ${userId}`);
+        }
+      }
+
+      // 3. Booking update (hotel/room bookings)
+      if (bookingId) {
+        const bookingRef = db.collection("bookings").doc(bookingId);
+        const bookingSnap = await bookingRef.get();
+
+        if (bookingSnap.exists) {
+          const current = bookingSnap.data();
+          if (current.status === "pending_payment" || current.status === "pending") {
+            await bookingRef.update({
+              status: "confirmed",
+              paymentStatus: "paid",
+              paymentReference: reference,
+              paidAt: admin.firestore.FieldValue.serverTimestamp(),
+              amountPaid: amount,
+              gatewayResponse: data.gateway_response || null,
+              paystackTransactionId: data.id || null,
+            });
+            console.log(`Booking ${bookingId} confirmed & updated (ref: ${reference})`);
+          } else {
+            console.log(`Booking ${bookingId} already processed (status: ${current.status})`);
+          }
+        } else {
+          console.warn(`Booking not found: ${bookingId}`);
         }
       }
     }
 
     res.sendStatus(200);
   } catch (err) {
-    console.error("Webhook error:", err.message);
-    res.sendStatus(500);
+    console.error("Webhook general error:", err.message);
+    res.sendStatus(200); // always 200 to stop Paystack retries
   }
 });
 
@@ -215,12 +302,14 @@ exports.reportListing = functions.https.onCall(async (data, context) => {
 
   const reporterId = context.auth.uid;
   const { listingId, reason, comment, imageUrl } = data;
+
   const listingRef = db.doc(`listings/${listingId}`);
 
   return db.runTransaction(async (tx) => {
     const dup = await tx.get(
       db.collection("reports").where("listingId", "==", listingId).where("reporterId", "==", reporterId).limit(1)
     );
+
     if (!dup.empty) throw new functions.https.HttpsError("already-exists", "Already reported");
 
     const reportsSnap = await tx.get(db.collection("reports").where("listingId", "==", listingId));
@@ -250,9 +339,11 @@ exports.reportListing = functions.https.onCall(async (data, context) => {
 });
 
 // ──────────────────────────────────────────────
-// CHAT PUSH NOTIFICATIONS (your existing one - untouched)
+// CHAT PUSH NOTIFICATIONS (using fcmToken)
 // ──────────────────────────────────────────────
-exports.sendChatNotification = functions.firestore
+exports.sendChatNotification = functions
+  .region("europe-west2")
+  .firestore
   .document("messages/{msgId}")
   .onCreate(async (snap, context) => {
     const message = snap.data();
@@ -261,59 +352,66 @@ exports.sendChatNotification = functions.firestore
     if (!receiverId || senderId === receiverId) return null;
 
     try {
-      // Get recipient's token
       const recipientSnap = await db.doc(`users/${receiverId}`).get();
-      const token = recipientSnap.data()?.pushToken;
+      const token = recipientSnap.data()?.fcmToken;
+
       if (!token) {
-        console.log(`No push token for user ${receiverId}`);
+        console.log(`No fcmToken for user ${receiverId}`);
         return null;
       }
 
-      // Get sender details
       const senderSnap = await db.doc(`users/${senderId}`).get();
-      const senderName = senderSnap.data()?.displayName || 'Someone';
+      const senderName = senderSnap.data()?.displayName || "Someone";
 
       const payload = {
         notification: {
           title: `New message from ${senderName}`,
-          body: type === 'image' ? 'Sent an image' : (content || '').substring(0, 100),
-          sound: 'default',
-          badge: '1',
+          body: type === "image" ? "Sent an image" : (content || "").substring(0, 100),
+          sound: "default",
+          badge: "1",
         },
         data: {
-          type: 'message',
-          screen: 'Messages',
+          type: "message",
+          screen: "Messages",
           params: JSON.stringify({ listingId }),
         },
         apns: { payload: { aps: { contentAvailable: true } } },
-        android: { priority: 'high' },
+        android: { priority: "high" },
         token,
       };
 
       await admin.messaging().send(payload);
-      console.log('Notification sent successfully');
+      console.log(`Chat notification sent successfully to ${receiverId}`);
     } catch (error) {
-      console.error('Error sending notification:', error);
+      console.error("Error sending chat notification:", error.code, error.message);
+
+      if (error.code === "messaging/registration-token-not-registered" ||
+          error.code === "messaging/invalid-registration-token") {
+        await db.doc(`users/${receiverId}`).update({
+          fcmToken: admin.firestore.FieldValue.delete()
+        });
+        console.log(`Removed invalid fcmToken for ${receiverId}`);
+      }
     }
   });
 
 // ──────────────────────────────────────────────
-// NEW: COMMENT / REPLY NOTIFICATIONS (added now)
+// COMMENT / REPLY NOTIFICATIONS (using fcmToken)
 // ──────────────────────────────────────────────
-exports.notifyOnNewComment = functions.firestore
+exports.notifyOnNewComment = functions
+  .region("europe-west2")
+  .firestore
   .document("listings/{listingId}/comments/{commentId}")
   .onCreate(async (snap, context) => {
     const comment = snap.data();
     const listingId = context.params.listingId;
     const commentId = context.params.commentId;
 
-    console.log(`[COMMENT] New comment/reply created: ${commentId} on listing ${listingId} by ${comment.userName}`);
+    console.log(`[COMMENT] New comment/reply created: ${commentId} on listing ${listingId} by ${comment.userName || "Unknown"}`);
 
-    // Skip if no text or no user
     if (!comment.text || !comment.userId) return null;
 
     try {
-      // 1. Get listing owner
       const listingSnap = await db.doc(`listings/${listingId}`).get();
       if (!listingSnap.exists) {
         console.log(`[COMMENT] Listing ${listingId} not found`);
@@ -322,11 +420,10 @@ exports.notifyOnNewComment = functions.firestore
 
       const ownerId = listingSnap.data().userId;
       if (!ownerId || ownerId === comment.userId) {
-        console.log(`[COMMENT] No owner or self-comment - skipping owner notification`);
+        console.log(`[COMMENT] No owner or self-comment - skipping`);
       } else {
-        // Get owner's push token
         const ownerSnap = await db.doc(`users/${ownerId}`).get();
-        const ownerToken = ownerSnap.data()?.pushToken;
+        const ownerToken = ownerSnap.data()?.fcmToken;
 
         if (ownerToken) {
           const isReply = !!comment.replyToCommentId;
@@ -346,28 +443,24 @@ exports.notifyOnNewComment = functions.firestore
           };
 
           await admin.messaging().send(payload);
-          console.log(`[COMMENT] Notification sent to listing owner ${ownerId}`);
-        } else {
-          console.log(`[COMMENT] Owner ${ownerId} has no pushToken`);
+          console.log(`[COMMENT] Notification sent to owner ${ownerId}`);
         }
       }
 
-      // 2. If it's a reply → notify the person being replied to
       if (comment.replyToCommentId) {
         const parentSnap = await db.doc(`listings/${listingId}/comments/${comment.replyToCommentId}`).get();
         if (parentSnap.exists) {
           const parentAuthorId = parentSnap.data().userId;
-
           if (parentAuthorId && parentAuthorId !== comment.userId) {
             const parentUserSnap = await db.doc(`users/${parentAuthorId}`).get();
-            const parentToken = parentUserSnap.data()?.pushToken;
+            const parentToken = parentUserSnap.data()?.fcmToken;
 
             if (parentToken) {
-              const title = "New Reply to Your Comment";
-              const body = `${comment.userName || "Someone"} replied: ${comment.text.substring(0, 60)}${comment.text.length > 60 ? "..." : ""}`;
-
               const payload = {
-                notification: { title, body },
+                notification: {
+                  title: "New Reply to Your Comment",
+                  body: `${comment.userName || "Someone"} replied: ${comment.text.substring(0, 60)}${comment.text.length > 60 ? "..." : ""}`,
+                },
                 data: {
                   type: "reply",
                   listingId,
@@ -380,15 +473,112 @@ exports.notifyOnNewComment = functions.firestore
 
               await admin.messaging().send(payload);
               console.log(`[COMMENT] Reply notification sent to ${parentAuthorId}`);
-            } else {
-              console.log(`[COMMENT] Replied-to user ${parentAuthorId} has no pushToken`);
             }
           }
         }
       }
-
     } catch (error) {
-      console.error("[COMMENT] Notification error:", error);
+      console.error("[COMMENT] Notification error:", error.code, error.message);
+    }
+
+    return null;
+  });
+
+// ──────────────────────────────────────────────
+// EVENT SCHEDULING NOTIFICATION (NEW)
+// Sends push to host when tenant schedules an event
+// ──────────────────────────────────────────────
+exports.notifyHostOnEventSchedule = functions
+  .region("europe-west2")
+  .firestore
+  .document("events/{eventId}")
+  .onCreate(async (snap, context) => {
+    const event = snap.data();
+    const eventId = context.params.eventId;
+
+    const {
+      listingId,
+      listingTitle,
+      tenantId,
+      tenantName,
+      hostId,
+      title,
+      notes,
+      phoneNumber,
+      dateTime,
+    } = event;
+
+    if (!hostId || !tenantId || hostId === tenantId) {
+      console.log("Invalid event: missing hostId or self-schedule");
+      return null;
+    }
+
+    try {
+      const hostSnap = await db.doc(`users/${hostId}`).get();
+      const hostToken = hostSnap.data()?.fcmToken;
+
+      if (!hostToken) {
+        console.log(`No fcmToken for host ${hostId}`);
+        return null;
+      }
+
+      const eventDate = new Date(dateTime.seconds * 1000);
+      const formattedDate = eventDate.toLocaleString("en-NG", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+
+      const payload = {
+        notification: {
+          title: "New Event Request",
+          body: `${tenantName || "A tenant"} requested to view "${listingTitle || "your property"}" on ${formattedDate}`,
+        },
+        data: {
+          type: "event_request",
+          eventId,
+          listingId,
+          tenantId,
+          phoneNumber: phoneNumber || "Not provided",
+        },
+        android: { priority: "high" },
+        apns: { headers: { "apns-priority": "10" } },
+        token: hostToken,
+      };
+
+      await admin.messaging().send(payload);
+      console.log(`Event schedule notification sent to host ${hostId} for event ${eventId}`);
+
+      // Optional: Confirmation to tenant
+      const tenantSnap = await db.doc(`users/${tenantId}`).get();
+      const tenantToken = tenantSnap.data()?.fcmToken;
+
+      if (tenantToken) {
+        const tenantPayload = {
+          notification: {
+            title: "Event Request Sent",
+            body: `Your viewing request for "${listingTitle}" has been sent to the host!`,
+          },
+          data: { type: "event_sent", eventId },
+          android: { priority: "high" },
+          token: tenantToken,
+        };
+        await admin.messaging().send(tenantPayload);
+        console.log(`Confirmation sent to tenant ${tenantId}`);
+      }
+    } catch (error) {
+      console.error("Event notification error:", error.code, error.message);
+
+      if (error.code === "messaging/registration-token-not-registered" ||
+          error.code === "messaging/invalid-registration-token") {
+        await db.doc(`users/${hostId}`).update({
+          fcmToken: admin.firestore.FieldValue.delete()
+        });
+        console.log(`Removed invalid fcmToken for host ${hostId}`);
+      }
     }
 
     return null;
@@ -407,7 +597,6 @@ exports.submitContact = functions.https.onRequest(async (req, res) => {
 
   try {
     const { name, email, message } = req.body;
-
     if (!name || !email || !message) {
       return res.status(400).json({ error: "Missing required fields" });
     }
@@ -423,7 +612,6 @@ exports.submitContact = functions.https.onRequest(async (req, res) => {
 
     console.log(`New contact from ${email}`);
 
-    // Optional: Send email notification
     if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
       await transporter.sendMail({
         from: `"RoomLink Contact" <${process.env.EMAIL_USER}>`,
@@ -444,15 +632,11 @@ exports.submitContact = functions.https.onRequest(async (req, res) => {
 // ──────────────────────────────────────────────
 // MAILER SEND OTP FOR SIGNUP / EMAIL VERIFICATION
 // ──────────────────────────────────────────────
-
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 exports.sendSignupOTP = functions.https.onCall(async (data, context) => {
-  // Optional: uncomment if you want only authenticated users to request OTP
-  // if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Login required");
-
   const { email, name } = data;
 
   if (!email) {
@@ -470,7 +654,6 @@ exports.sendSignupOTP = functions.https.onCall(async (data, context) => {
   });
 
   const mailRef = db.collection("emails").doc();
-
   await mailRef.set({
     to: [
       {
@@ -484,7 +667,7 @@ exports.sendSignupOTP = functions.https.onCall(async (data, context) => {
         data: {
           otp: otp,
           name: name || "User",
-          app_name: "RoomLink"  // adjust if your template uses a different variable name
+          app_name: "RoomLink"
         }
       },
     ],
@@ -524,9 +707,8 @@ exports.verifySignupOTP = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("invalid-argument", "Invalid OTP");
   }
 
-  // OTP correct → mark user as verified
-  // Change collection/doc path to match your actual users setup
-  const userId = context.auth?.uid || email; // fallback to email if no auth context
+  const userId = context.auth?.uid || email;
+
   await db.collection("users").doc(userId).set(
     {
       emailVerified: true,
@@ -547,7 +729,7 @@ exports.verifySignupOTP = functions.https.onCall(async (data, context) => {
 // WELCOME EMAIL ON NEW USER CREATION (via MailerSend extension)
 // ──────────────────────────────────────────────
 exports.sendWelcomeEmail = functions
-  .region("europe-west2")  // ← Change only if your extension was installed in a different region
+  .region("europe-west2")
   .auth.user()
   .onCreate(async (user) => {
     if (!user.email) {
@@ -564,14 +746,12 @@ exports.sendWelcomeEmail = functions
           name: displayName
         }
       ],
-
-      // Recommended: Use a MailerSend template
-      template_id: "x2p0347j5yk4zdrn", // ← your template ID (keep or update)
+      template_id: "x2p0347j5yk4zdrn",
       personalization: [
         {
           email: user.email,
           data: {
-            otp: otp,
+            otp: "N/A",
             name: displayName,
             app_name: "RoomLink"
           },
@@ -579,7 +759,7 @@ exports.sendWelcomeEmail = functions
       ],
     };
 
-    const collectionName = "emails"; // ← Confirm this is the same as in your extension config
+    const collectionName = "emails";
 
     try {
       await db.collection(collectionName).add(welcomeDoc);

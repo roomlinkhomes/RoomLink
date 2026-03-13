@@ -1,4 +1,4 @@
-// component/HotelListingForm.jsx — FIXED: Correct style array syntax + all previous improvements
+// component/HotelListingForm.jsx
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -33,6 +33,8 @@ const HotelListingForm = ({ navigation }) => {
   const [category, setCategory] = useState(null);
   const [selectedAmenities, setSelectedAmenities] = useState([]);
   const [selectedHouseRules, setSelectedHouseRules] = useState([]);
+  const [cancellationPolicy, setCancellationPolicy] = useState("refundable");
+  const [nonRefundableDiscountPercent, setNonRefundableDiscountPercent] = useState("");
   const [uploading, setUploading] = useState(false);
   const [titleModalVisible, setTitleModalVisible] = useState(false);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
@@ -52,102 +54,76 @@ const HotelListingForm = ({ navigation }) => {
     "Family Room",
   ];
 
-const amenitiesOptions = [
-  // Core Essentials (most popular)
-  { label: "WiFi", value: "wifi", icon: "wifi" },
-  { label: "Air Conditioning", value: "ac", icon: "snow-outline" },
-  { label: "Swimming Pool", value: "pool", icon: "water-outline" }, // ← explicitly kept + prominent
-  { label: "Kitchen", value: "kitchen", icon: "restaurant-outline" },
-  { label: "Gym / Fitness Center", value: "gym", icon: "fitness-outline" },
-  { label: "Free Parking", value: "parking", icon: "car-outline" },
-  { label: "Smart TV", value: "tv", icon: "tv-outline" },
-  { label: "Hot Water", value: "hotwater", icon: "flame-outline" },
-  { label: "24/7 Security", value: "security", icon: "shield-outline" },
-  { label: "24/7 Power Supply", value: "power", icon: "flash-outline" },
+  const amenitiesOptions = [
+    { label: "WiFi", value: "wifi", icon: "wifi" },
+    { label: "Air Conditioning", value: "ac", icon: "snow-outline" },
+    { label: "Swimming Pool", value: "pool", icon: "water-outline" },
+    { label: "Kitchen", value: "kitchen", icon: "restaurant-outline" },
+    { label: "Gym / Fitness Center", value: "gym", icon: "fitness-outline" },
+    { label: "Free Parking", value: "parking", icon: "car-outline" },
+    { label: "Smart TV", value: "tv", icon: "tv-outline" },
+    { label: "Hot Water", value: "hotwater", icon: "flame-outline" },
+    { label: "24/7 Security", value: "security", icon: "shield-outline" },
+    { label: "24/7 Power Supply", value: "power", icon: "flash-outline" },
+    { label: "Balcony / Terrace", value: "balcony", icon: "leaf-outline" },
+    { label: "Garden / Courtyard", value: "garden", icon: "flower-outline" },
+    { label: "Rooftop Access", value: "rooftop", icon: "sunny-outline" },
+    { label: "Ocean View", value: "oceanview", icon: "water-outline" },
+    { label: "City View", value: "cityview", icon: "business-outline" },
+    { label: "Washing Machine", value: "washingmachine", icon: "shirt-outline" },
+    { label: "Dryer", value: "dryer", icon: "sunny-outline" },
+    { label: "Iron & Ironing Board", value: "iron", icon: "sparkles-outline" },
+    { label: "Hair Dryer", value: "hairdryer", icon: "brush-outline" },
+    { label: "Towels & Linens", value: "towels", icon: "bed-outline" },
+    { label: "Shampoo & Body Wash", value: "toiletries", icon: "water-outline" },
+    { label: "Smoke Detector", value: "smokedetector", icon: "alert-circle-outline" },
+    { label: "First Aid Kit", value: "firstaid", icon: "medkit-outline" },
+    { label: "Fire Extinguisher", value: "fireextinguisher", icon: "flame-outline" },
+    { label: "Elevator / Lift", value: "elevator", icon: "arrow-up-circle-outline" },
+    { label: "Wheelchair Accessible", value: "wheelchair", icon: "accessibility-outline" },
+    { label: "Workspace / Desk", value: "workspace", icon: "laptop-outline" },
+    { label: "Smart Lock", value: "smartlock", icon: "lock-closed-outline" },
+    { label: "Self Check-in", value: "selfcheckin", icon: "key-outline" },
+    { label: "High-Speed Internet", value: "highspeedwifi", icon: "wifi-outline" },
+    { label: "Streaming Services", value: "streaming", icon: "play-circle-outline" },
+    { label: "Crib / Baby Cot", value: "crib", icon: "bed-outline" },
+    { label: "High Chair", value: "highchair", icon: "restaurant-outline" },
+    { label: "Extra Pillows & Blankets", value: "extrabedding", icon: "bed-outline" },
+    { label: "Room Service", value: "roomservice", icon: "restaurant-outline" },
+    { label: "Private Pool", value: "privatepool", icon: "water-outline" },
+    { label: "Jacuzzi / Hot Tub", value: "jacuzzi", icon: "water-outline" },
+    { label: "Sauna", value: "sauna", icon: "thermometer-outline" },
+    { label: "Concierge Service", value: "concierge", icon: "call-outline" },
+  ];
 
-  // Outdoor & Views
-  { label: "Balcony / Terrace", value: "balcony", icon: "leaf-outline" },
-  { label: "Garden / Courtyard", value: "garden", icon: "flower-outline" },
-  { label: "Rooftop Access", value: "rooftop", icon: "sunny-outline" },
-  { label: "Ocean View", value: "oceanview", icon: "water-outline" },
-  { label: "City View", value: "cityview", icon: "business-outline" },
-
-  // Laundry & Cleaning
-  { label: "Washing Machine", value: "washingmachine", icon: "shirt-outline" },
-  { label: "Dryer", value: "dryer", icon: "sunny-outline" },
-  { label: "Iron & Ironing Board", value: "iron", icon: "sparkles-outline" },
-
-  // Personal Care & Comfort
-  { label: "Hair Dryer", value: "hairdryer", icon: "brush-outline" },
-  { label: "Towels & Linens", value: "towels", icon: "bed-outline" },
-  { label: "Shampoo & Body Wash", value: "toiletries", icon: "water-outline" },
-
-  // Safety & Accessibility
-  { label: "Smoke Detector", value: "smokedetector", icon: "alert-circle-outline" },
-  { label: "First Aid Kit", value: "firstaid", icon: "medkit-outline" },
-  { label: "Fire Extinguisher", value: "fireextinguisher", icon: "flame-outline" },
-  { label: "Elevator / Lift", value: "elevator", icon: "arrow-up-circle-outline" },
-  { label: "Wheelchair Accessible", value: "wheelchair", icon: "accessibility-outline" },
-
-  // Tech & Convenience
-  { label: "Workspace / Desk", value: "workspace", icon: "laptop-outline" },
-  { label: "Smart Lock", value: "smartlock", icon: "lock-closed-outline" },
-  { label: "Self Check-in", value: "selfcheckin", icon: "key-outline" },
-  { label: "High-Speed Internet", value: "highspeedwifi", icon: "wifi-outline" },
-  { label: "Streaming Services", value: "streaming", icon: "play-circle-outline" },
-
-  // Family & Extra Comfort
-  { label: "Crib / Baby Cot", value: "crib", icon: "bed-outline" },
-  { label: "High Chair", value: "highchair", icon: "restaurant-outline" },
-  { label: "Extra Pillows & Blankets", value: "extrabedding", icon: "bed-outline" },
-  { label: "Room Service", value: "roomservice", icon: "restaurant-outline" },
-
-  // Luxury / Premium (optional for high-end listings)
-  { label: "Private Pool", value: "privatepool", icon: "water-outline" },
-  { label: "Jacuzzi / Hot Tub", value: "jacuzzi", icon: "water-outline" },
-  { label: "Sauna", value: "sauna", icon: "thermometer-outline" },
-  { label: "Concierge Service", value: "concierge", icon: "call-outline" },
-];
-
-
-const houseRulesOptions = [
-  // Your original rules
-  { label: "No Smoking", value: "nosmoking", icon: "close-circle-outline" },
-  { label: "No Parties / Events", value: "noparties", icon: "beer-outline" },
-  { label: "No Pets", value: "nopets", icon: "paw-outline" },
-  { label: "Quiet Hours 10pm-7am", value: "quiethours", icon: "volume-mute-outline" },
-  { label: "Check-in after 3pm", value: "checkinafter3pm", icon: "time-outline" },
-  { label: "Check-out before 11am", value: "checkoutbefore11am", icon: "time-outline" },
-  { label: "No Shoes Inside", value: "noshoes", icon: "footsteps-outline" },
-  { label: "No Visitors / Overnight Guests", value: "novisitors", icon: "people-outline" },
-
-  // Very common additional rules (highly recommended)
-  { label: "No Additional Guests Beyond Booking", value: "noextraguests", icon: "person-add-outline" },
-  { label: "Maximum Occupancy: 2-6 Guests", value: "maxoccupancy", icon: "people-outline" },
-  { label: "No Loud Music After 10pm", value: "noloudmusic", icon: "musical-notes-outline" },
-  { label: "Keep Noise to a Minimum", value: "nonoise", icon: "volume-mute-outline" },
-  { label: "No Cooking with Strong Odors", value: "nostrongodors", icon: "restaurant-outline" },
-  { label: "No Illegal Activities", value: "noillegal", icon: "warning-outline" },
-  { label: "Respect Neighbors", value: "respectneighbors", icon: "hand-left-outline" },
-
-  // Family & Safety focused
-  { label: "Children Must Be Supervised", value: "childsupervision", icon: "alert-circle-outline" },
-  { label: "No Running in the House", value: "norunning", icon: "walk-outline" },
-  { label: "Lock Doors When Leaving", value: "lockdoors", icon: "lock-closed-outline" },
-
-  // Cleaning & Damage
-  { label: "Leave Property Clean", value: "leaveclean", icon: "sparkles-outline" },
-  { label: "No Damage to Property", value: "nodamage", icon: "warning-outline" },
-  { label: "Report Any Issues Immediately", value: "reportissues", icon: "chatbox-ellipses-outline" },
-
-  // Other popular modern rules
-  { label: "No Drones Inside/On Property", value: "nodrones", icon: "airplane-outline" },
-  { label: "No Open Flames / Candles", value: "noopenflames", icon: "flame-outline" },
-  { label: "No Vaping Inside", value: "novaping", icon: "cloudy-outline" },
-  { label: "Return Keys / Fobs on Departure", value: "returnkeys", icon: "key-outline" },
-  { label: "No Unauthorized Parties", value: "nounauthorizedparties", icon: "people-outline" },
-];
-
+  const houseRulesOptions = [
+    { label: "No Smoking", value: "nosmoking", icon: "close-circle-outline" },
+    { label: "No Parties / Events", value: "noparties", icon: "beer-outline" },
+    { label: "No Pets", value: "nopets", icon: "paw-outline" },
+    { label: "Quiet Hours 10pm-7am", value: "quiethours", icon: "volume-mute-outline" },
+    { label: "Check-in after 3pm", value: "checkinafter3pm", icon: "time-outline" },
+    { label: "Check-out before 11am", value: "checkoutbefore11am", icon: "time-outline" },
+    { label: "No Shoes Inside", value: "noshoes", icon: "footsteps-outline" },
+    { label: "No Visitors / Overnight Guests", value: "novisitors", icon: "people-outline" },
+    { label: "No Additional Guests Beyond Booking", value: "noextraguests", icon: "person-add-outline" },
+    { label: "Maximum Occupancy: 2-6 Guests", value: "maxoccupancy", icon: "people-outline" },
+    { label: "No Loud Music After 10pm", value: "noloudmusic", icon: "musical-notes-outline" },
+    { label: "Keep Noise to a Minimum", value: "nonoise", icon: "volume-mute-outline" },
+    { label: "No Cooking with Strong Odors", value: "nostrongodors", icon: "restaurant-outline" },
+    { label: "No Illegal Activities", value: "noillegal", icon: "warning-outline" },
+    { label: "Respect Neighbors", value: "respectneighbors", icon: "hand-left-outline" },
+    { label: "Children Must Be Supervised", value: "childsupervision", icon: "alert-circle-outline" },
+    { label: "No Running in the House", value: "norunning", icon: "walk-outline" },
+    { label: "Lock Doors When Leaving", value: "lockdoors", icon: "lock-closed-outline" },
+    { label: "Leave Property Clean", value: "leaveclean", icon: "sparkles-outline" },
+    { label: "No Damage to Property", value: "nodamage", icon: "warning-outline" },
+    { label: "Report Any Issues Immediately", value: "reportissues", icon: "chatbox-ellipses-outline" },
+    { label: "No Drones Inside/On Property", value: "nodrones", icon: "airplane-outline" },
+    { label: "No Open Flames / Candles", value: "noopenflames", icon: "flame-outline" },
+    { label: "No Vaping Inside", value: "novaping", icon: "cloudy-outline" },
+    { label: "Return Keys / Fobs on Departure", value: "returnkeys", icon: "key-outline" },
+    { label: "No Unauthorized Parties", value: "nounauthorizedparties", icon: "people-outline" },
+  ];
 
   const toggleAmenity = (value) => {
     setSelectedAmenities((prev) =>
@@ -222,10 +198,29 @@ const houseRulesOptions = [
       Alert.alert("Price Required", "Please enter price per night.");
       return;
     }
+
     const priceNum = parseInt(pricePerNight.replace(/[^0-9]/g, ""), 10);
     if (isNaN(priceNum) || priceNum <= 0) {
       Alert.alert("Invalid Price", "Please enter a valid price per night.");
       return;
+    }
+
+    // ── Required discount validation for non-refundable ──
+    let discount = 0;
+    if (cancellationPolicy === "nonRefundable") {
+      if (!nonRefundableDiscountPercent.trim()) {
+        Alert.alert(
+          "Discount Required",
+          "For Non-Refundable listings, you must enter a discount percentage (0–100%).\n\nEnter 0 if you want no discount."
+        );
+        return;
+      }
+
+      discount = parseInt(nonRefundableDiscountPercent, 10);
+      if (isNaN(discount) || discount < 0 || discount > 100) {
+        Alert.alert("Invalid Discount", "Please enter a number between 0 and 100.");
+        return;
+      }
     }
 
     setUploading(true);
@@ -252,6 +247,8 @@ const houseRulesOptions = [
         listingType: "hotels",
         amenities: selectedAmenities,
         houseRules: selectedHouseRules,
+        cancellationPolicy,
+        nonRefundableDiscountPercent: discount,
       });
 
       Alert.alert(
@@ -263,6 +260,7 @@ const houseRulesOptions = [
         ]
       );
 
+      // Reset form
       setTitle("");
       setDescription("");
       setLocation("");
@@ -271,6 +269,8 @@ const houseRulesOptions = [
       setImages([]);
       setSelectedAmenities([]);
       setSelectedHouseRules([]);
+      setCancellationPolicy("refundable");
+      setNonRefundableDiscountPercent("");
     } catch (err) {
       Alert.alert("Error", err.message || "Failed to create listing");
     } finally {
@@ -470,6 +470,89 @@ const houseRulesOptions = [
         keyboardType="numeric"
       />
 
+      {/* Cancellation Policy */}
+      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+        Cancellation Policy
+      </Text>
+      <View style={[
+        styles.policyContainer,
+        {
+          backgroundColor: isDark ? "#1e1e1e" : "#ffffff",
+          borderColor: isDark ? "#444" : "#e0e6ed",
+        }
+      ]}>
+        <TouchableOpacity
+          style={styles.policyRow}
+          onPress={() => {
+            setCancellationPolicy("refundable");
+            setNonRefundableDiscountPercent("");
+          }}
+        >
+          <View style={[
+            styles.radioOuter,
+            { borderColor: cancellationPolicy === "refundable" ? "#017a6b" : (isDark ? "#666" : "#ccc") }
+          ]}>
+            {cancellationPolicy === "refundable" && <View style={styles.radioInner} />}
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={[styles.policyLabel, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+              Refundable
+            </Text>
+            <Text style={[styles.policyHelp, { color: isDark ? "#a0a0a0" : "#6c757d" }]}>
+              Guests can cancel (subject to your rules). More bookings likely.
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <View style={{ height: 1, backgroundColor: isDark ? "#333" : "#e9ecef", marginVertical: 12 }} />
+
+        <TouchableOpacity
+          style={styles.policyRow}
+          onPress={() => setCancellationPolicy("nonRefundable")}
+        >
+          <View style={[
+            styles.radioOuter,
+            { borderColor: cancellationPolicy === "nonRefundable" ? "#017a6b" : (isDark ? "#666" : "#ccc") }
+          ]}>
+            {cancellationPolicy === "nonRefundable" && <View style={styles.radioInner} />}
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={[styles.policyLabel, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+              Non-Refundable
+            </Text>
+            <Text style={[styles.policyHelp, { color: isDark ? "#a0a0a0" : "#6c757d" }]}>
+              Final after payment — no refunds. Good for guaranteed revenue.
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        {cancellationPolicy === "nonRefundable" && (
+          <View style={{ marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: isDark ? "#444" : "#e9ecef" }}>
+            <Text style={[styles.smallLabel, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+              Non-Refundable Discount (%) <Text style={{ color: "#ef4444" }}>*</Text>
+            </Text>
+            <RNTextInput
+              style={[
+                styles.input,
+                {
+                  color: isDark ? "#e0e0e0" : "#212529",
+                  backgroundColor: isDark ? "#2a2a2a" : "#ffffff",
+                  borderColor: isDark ? "#444" : "#e0e6ed",
+                },
+              ]}
+              placeholder="e.g. 15 (0–100 allowed)"
+              placeholderTextColor={isDark ? "#6c757d" : "#adb5bd"}
+              value={nonRefundableDiscountPercent}
+              onChangeText={setNonRefundableDiscountPercent}
+              keyboardType="numeric"
+            />
+            <Text style={[styles.hintText, { color: isDark ? "#a0a0a0" : "#6c757d" }]}>
+              Required field. Enter 0 if you want no discount.
+            </Text>
+          </View>
+        )}
+      </View>
+
       {/* Category */}
       <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>Category</Text>
       <TouchableOpacity
@@ -646,6 +729,7 @@ const styles = StyleSheet.create({
   removeBtn: { position: "absolute", top: -12, right: -12, zIndex: 10 },
   removeBtnBg: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#ff4757", justifyContent: "center", alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 },
   label: { fontWeight: "800", fontSize: 16, marginTop: 24, marginBottom: 8 },
+  smallLabel: { fontWeight: "700", fontSize: 14, marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 12, padding: 16, marginBottom: 16, fontSize: 16 },
   textArea: { height: 100, textAlignVertical: "top" },
   submitBtn: { marginTop: 32, paddingVertical: 16, borderRadius: 16, alignItems: "center", marginBottom: 20 },
@@ -670,6 +754,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 30,
+  },
+  // New styles for cancellation policy
+  policyContainer: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24,
+  },
+  policyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  radioOuter: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2.5,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  radioInner: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#017a6b",
+  },
+  policyLabel: {
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 3,
+  },
+  policyHelp: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  hintText: {
+    fontSize: 12,
+    marginTop: 6,
+    fontStyle: "italic",
   },
 });
 

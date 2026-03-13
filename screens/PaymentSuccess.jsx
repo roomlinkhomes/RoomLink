@@ -1,101 +1,103 @@
-// screens/PaymentSuccess.jsx — FINAL: RELIABLE AD UNLOCK + CLEAN FLOW
-import React, { useEffect } from "react";
+// screens/PaymentSuccess.jsx
+import React, { useEffect, useState } from "react";
 import { View, Alert, ActivityIndicator, Text } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { collection, addDoc, serverTimestamp, doc, updateDoc } from "firebase/firestore";
-import { db, auth } from "../firebaseConfig";
-import * as WebBrowser from "expo-web-browser";
-import { useUser } from "../context/UserContext"; // Optional: for context reload
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "../firebaseConfig"; // ← make sure db is exported
 
 const PaymentSuccess = () => {
   const navigation = useNavigation();
   const route = useRoute();
-  const { cartItems, totalAmount, deliveryInfo } = route.params || {};
-  const { reloadUser } = useUser() || {};
+  const { orderId, bookingId } = route.params || {}; // ← must receive this!
+
+  const [status, setStatus] = useState("processing");
+  const [message, setMessage] = useState("Confirming your payment... Please wait a moment");
 
   useEffect(() => {
-    WebBrowser.dismissBrowser();
+    // Use whichever ID you pass — orderId or bookingId
+    const docId = orderId || bookingId;
+    if (!docId) {
+      setMessage("Error: Missing payment reference");
+      setTimeout(() => navigation.replace("HomeTabs"), 4000);
+      return;
+    }
 
-    const finalizeOrderAndUnlockAds = async () => {
-      if (!auth.currentUser) {
-        Alert.alert("Error", "You must be logged in");
-        navigation.replace("HomeTabs");
-        return;
-      }
+    // IMPORTANT: change collection name to match your Firestore
+    // If you use "bookings" collection → use "bookings"
+    const docRef = doc(db, "orders", docId); // ← or "bookings", docId
 
-      try {
-        // 1. Save the order
-        const itemsWithVendorId = (cartItems || []).map((item) => ({
-          id: item.id || "",
-          name: item.title || item.name || "Unknown Item",
-          price: item.price || 0,
-          quantity: item.quantity || 1,
-          vendorId: item.author || item.vendorId || "unknown",
-          vendorName: item.authorName || "Vendor",
-          image: item.images?.[0] || null,
-        }));
+    const unsubscribe = onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        const currentStatus = data?.status;
 
-        await addDoc(collection(db, "orders"), {
-          buyerId: auth.currentUser.uid,
-          buyerName: auth.currentUser.displayName || "Customer",
-          buyerEmail: auth.currentUser.email || "no-email@example.com",
-          items: itemsWithVendorId,
-          totalAmount: totalAmount || 0,
-          itemTotal: totalAmount || 0,
-          deliveryFee: 0,
-          serviceFee: 2,
-          currency: "NGN",
-          deliveryInfo: deliveryInfo || {},
-          status: "paid",
-          createdAt: serverTimestamp(),
-        });
+        setStatus(currentStatus);
 
-        // 2. UNLOCK BILLBOARD POSTING (critical for AdsZone)
-        await updateDoc(doc(db, "users", auth.currentUser.uid), {
-          adsPaid: true,
-          adsPaidAt: serverTimestamp(),
-        });
+        if (currentStatus === "paid" || currentStatus === "successful") {
+          setMessage("Payment Confirmed! 🎉");
 
-        // 3. Refresh user context if available
-        if (typeof reloadUser === "function") {
-          await reloadUser();
+          Alert.alert(
+            "Success! Payment Received",
+            "Your payment has been confirmed and features unlocked.",
+            [
+              {
+                text: "Continue to AdsZone",
+                onPress: () => navigation.replace("AdsZone"),
+              },
+              {
+                text: "Go Home",
+                onPress: () => navigation.replace("HomeTabs"),
+              },
+            ],
+            { cancelable: false }
+          );
+        } else if (currentStatus === "failed" || currentStatus === "cancelled") {
+          setMessage("Payment issue detected");
+          Alert.alert("Payment Failed", "The transaction did not complete.", [
+            { text: "OK", onPress: () => navigation.replace("HomeTabs") },
+          ]);
         }
-
-        // 4. Success + direct to AdsZone
-        Alert.alert(
-          "Payment Successful! 🎉",
-          "Your order is complete and premium billboard posting is now unlocked.",
-          [
-            {
-              text: "Post Billboard Ad",
-              onPress: () => navigation.replace("AdsZone"), // ← Sends user straight to AdsZone
-            },
-            {
-              text: "Go Home",
-              onPress: () => navigation.replace("HomeTabs"),
-            },
-          ],
-          { cancelable: false }
-        );
-      } catch (error) {
-        console.error("PaymentSuccess Error:", error);
-        Alert.alert(
-          "Issue Completing Order",
-          "Payment was successful, but we couldn't update your account fully. Contact support if billboard posting doesn't unlock.",
-          [{ text: "OK", onPress: () => navigation.replace("HomeTabs") }]
-        );
+      } else {
+        setMessage("Payment record not found — contact support");
       }
-    };
+    }, (error) => {
+      console.error("onSnapshot error:", error);
+      setMessage("Connection issue... checking again shortly");
+    });
 
-    finalizeOrderAndUnlockAds();
-  }, [navigation, route.params, reloadUser]);
+    // Fallback timeout — in case webhook is slow or never fires
+    const timeout = setTimeout(() => {
+      if (status === "processing") {
+        setMessage("Taking longer than expected... redirecting home");
+        setTimeout(() => navigation.replace("HomeTabs"), 2000);
+      }
+    }, 90000); // 90 seconds
+
+    return () => {
+      unsubscribe();
+      clearTimeout(timeout);
+    };
+  }, [orderId, bookingId, navigation]);
 
   return (
     <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#fff" }}>
       <ActivityIndicator size="large" color="#017a6b" />
-      <Text style={{ marginTop: 20, fontSize: 18, color: "#017a6b", textAlign: "center", paddingHorizontal: 40 }}>
-        Finalizing your order and unlocking premium features...
+      <Text
+        style={{
+          marginTop: 24,
+          fontSize: 16,
+          color: "#333",
+          textAlign: "center",
+          paddingHorizontal: 32,
+        }}
+      >
+        {message}
       </Text>
+      {status === "processing" && (
+        <Text style={{ marginTop: 16, color: "#666", fontSize: 14 }}>
+          This usually takes 5–30 seconds...
+        </Text>
+      )}
     </View>
   );
 };

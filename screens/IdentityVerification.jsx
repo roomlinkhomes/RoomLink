@@ -1,4 +1,4 @@
-// screens/IdentityVerification.jsx — LIGHTER & CLEANER DESIGN
+// screens/IdentityVerification.jsx — LIGHTER & CLEANER DESIGN + Back Arrow
 import React, { useState, useContext, useEffect } from "react";
 import {
   View,
@@ -169,21 +169,35 @@ export default function IdentityVerification() {
         contentContainerStyle={[styles.container, { backgroundColor: theme.background }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Slim header */}
-        <View style={styles.header}>
-          <Text style={[styles.title, { color: theme.text }]}>Verify Identity</Text>
-          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-            Unlock full access in a few steps
-          </Text>
+        {/* Back Arrow + Header */}
+        <View style={styles.headerContainer}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={28}
+              color={theme.text}
+            />
+          </TouchableOpacity>
+
+          <View style={styles.header}>
+            <Text style={[styles.title, { color: theme.text }]}>Verify your identity</Text>
+            <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+              Unlock full access in a few steps
+            </Text>
+          </View>
         </View>
 
-        {/* Main card – lighter, smaller */}
+        {/* Main card */}
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.cardText, { color: theme.textSecondary }]}>
             Choose ID type, enter number, and upload document
           </Text>
 
-          {/* ID Type selector – compact */}
+          {/* ID Type selector */}
           <View style={styles.idOptions}>
             {idTypes.map((id) => (
               <TouchableOpacity
@@ -209,7 +223,7 @@ export default function IdentityVerification() {
             ))}
           </View>
 
-          {/* ID Number – slimmer */}
+          {/* ID Number */}
           {selectedIdType && (
             <View style={styles.inputWrapper}>
               <Text style={[styles.label, { color: theme.text }]}>
@@ -231,7 +245,7 @@ export default function IdentityVerification() {
             </View>
           )}
 
-          {/* Upload area – cleaner */}
+          {/* Upload area */}
           <TouchableOpacity
             style={[
               styles.uploadArea,
@@ -254,7 +268,7 @@ export default function IdentityVerification() {
             )}
           </TouchableOpacity>
 
-          {/* Preview (smaller) */}
+          {/* Preview */}
           {file && (
             <View style={styles.preview}>
               {isImage ? (
@@ -265,7 +279,7 @@ export default function IdentityVerification() {
             </View>
           )}
 
-          {/* Status */}
+          {/* Status indicators */}
           {verificationStatus === "pending" && (
             <View style={styles.statusPending}>
               <ActivityIndicator size="small" color={theme.primary} />
@@ -280,7 +294,7 @@ export default function IdentityVerification() {
             </View>
           )}
 
-          {/* Submit – slimmer */}
+          {/* Submit button */}
           <TouchableOpacity
             style={[
               styles.submit,
@@ -311,17 +325,34 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 40,
   },
-  header: {
+
+  // New wrapper for back arrow + header
+  headerContainer: {
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 24,
   },
+
+  backButton: {
+    padding: 8,
+    marginRight: 16,
+    borderRadius: 12,
+  },
+
+  header: {
+    flex: 1,
+  },
+
   title: {
     fontSize: 26,
     fontWeight: "700",
     marginBottom: 4,
   },
+
   subtitle: {
     fontSize: 15,
   },
+
   card: {
     borderRadius: 16,
     padding: 20,
@@ -331,17 +362,20 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 4,
   },
+
   cardText: {
     fontSize: 14,
     textAlign: "center",
     marginBottom: 20,
   },
+
   idOptions: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 12,
     marginBottom: 20,
   },
+
   idOption: {
     flex: 1,
     minWidth: "45%",
@@ -351,31 +385,38 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: "center",
   },
+
   idOptionSelected: {
     borderColor: "#017a6b",
     backgroundColor: "rgba(1,122,107,0.08)",
   },
+
   disabledOption: {
     opacity: 0.5,
   },
+
   idText: {
     fontSize: 14,
     fontWeight: "600",
   },
+
   inputWrapper: {
     marginBottom: 20,
   },
+
   label: {
     fontSize: 14,
     fontWeight: "600",
     marginBottom: 8,
   },
+
   input: {
     borderWidth: 1,
     borderRadius: 12,
     padding: 14,
     fontSize: 16,
   },
+
   uploadArea: {
     flexDirection: "row",
     alignItems: "center",
@@ -386,35 +427,43 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     gap: 10,
   },
+
   uploadSuccess: {
     backgroundColor: "#017a6b",
     borderColor: "#017a6b",
   },
+
   uploadText: {
     fontSize: 15,
     fontWeight: "600",
   },
+
   uploadTextSuccess: {
     color: "#fff",
     fontSize: 14,
     fontWeight: "600",
   },
+
   disabled: {
     opacity: 0.5,
   },
+
   preview: {
     alignItems: "center",
     marginBottom: 20,
   },
+
   previewImage: {
     width: "100%",
     height: 140,
     borderRadius: 12,
   },
+
   previewText: {
     fontSize: 14,
     color: "#666",
   },
+
   statusPending: {
     flexDirection: "row",
     alignItems: "center",
@@ -422,6 +471,7 @@ const styles = StyleSheet.create({
     marginVertical: 16,
     gap: 8,
   },
+
   statusSuccess: {
     flexDirection: "row",
     alignItems: "center",
@@ -429,16 +479,19 @@ const styles = StyleSheet.create({
     marginVertical: 16,
     gap: 8,
   },
+
   statusText: {
     fontSize: 15,
     fontWeight: "600",
   },
+
   submit: {
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
     marginTop: 12,
   },
+
   submitText: {
     color: "#fff",
     fontSize: 16,

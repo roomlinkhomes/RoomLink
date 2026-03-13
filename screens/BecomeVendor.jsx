@@ -1,4 +1,4 @@
-// screens/BecomeVendorScreen.jsx — FIXED: Edit button now works (shows form on edit)
+// screens/BecomeVendorScreen.jsx — FIXED: No blank screen, edit works, stable ID picker with DocumentPicker
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -18,7 +18,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { useColorScheme } from "react-native";
 import { TextInput, Button, Checkbox } from "react-native-paper";
-import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 
 // Firebase imports
 import { auth, db } from "../firebaseConfig";
@@ -45,9 +45,11 @@ export default function BecomeVendorScreen() {
     textSecondary: isDark ? "#b0b0b0" : "#666",
     primary: isDark ? "#00ff7f" : "#017a6b",
     border: isDark ? "#333" : "#e0e6ed",
+    error: "#ff4444",
   };
 
   const [status, setStatus] = useState("loading");
+  const [errorMsg, setErrorMsg] = useState(null);
   const [role, setRole] = useState("Host");
   const [fullName, setFullName] = useState("");
   const [businessName, setBusinessName] = useState("");
@@ -56,40 +58,41 @@ export default function BecomeVendorScreen() {
   const [bankName, setBankName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [accountHolderName, setAccountHolderName] = useState("");
-  const [governmentIdUri, setGovernmentIdUri] = useState(null); // Local URI for preview
-  const [governmentIdUrl, setGovernmentIdUrl] = useState(null); // Remote URL
+  const [governmentIdUri, setGovernmentIdUri] = useState(null);
+  const [governmentIdUrl, setGovernmentIdUrl] = useState(null);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [bankModalVisible, setBankModalVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploadingId, setUploadingId] = useState(false);
-  const [isEditing, setIsEditing] = useState(false); // Track edit mode
+  const [isEditing, setIsEditing] = useState(false);
 
   const storage = getStorage();
 
-  // Request permissions
+  // Real-time listener with proper error handling & logging
   useEffect(() => {
-    (async () => {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permission Denied", "We need access to your photos for ID upload.");
-      }
-    })();
-  }, []);
+    console.log("BecomeVendorScreen mounted");
 
-  // Real-time listener for application status
-  useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+      console.log("Auth state changed - user:", user ? user.uid : "null");
+
       if (!user) {
-        Alert.alert("Login Required", "Please sign in to continue.");
-        navigation.goBack();
+        setStatus("error");
+        setErrorMsg("Please sign in to access this screen.");
+        console.log("No authenticated user → error state");
         return;
       }
 
       const appRef = doc(db, "vendorApplications", user.uid);
+      console.log("Listening to Firestore doc:", `vendorApplications/${user.uid}`);
+
       const unsubscribeSnap = onSnapshot(appRef, (docSnap) => {
+        console.log("Snapshot received - exists:", docSnap.exists());
+        setErrorMsg(null);
+
         if (docSnap.exists()) {
           const data = docSnap.data();
+          console.log("Vendor data loaded:", data.status, data);
           setStatus(data.status || "pending");
           setRole(data.role || "Host");
           setFullName(data.fullName || "");
@@ -100,9 +103,10 @@ export default function BecomeVendorScreen() {
           setAccountNumber(data.accountNumber || "");
           setAccountHolderName(data.accountHolderName || "");
           setGovernmentIdUrl(data.governmentIdUrl || null);
-          setGovernmentIdUri(data.governmentIdUrl || null); // preview with URL
-          setAgreedToTerms(true); // assume agreed if data exists
+          setGovernmentIdUri(data.governmentIdUrl || null);
+          setAgreedToTerms(true);
         } else {
+          console.log("No vendor application doc found → not_submitted");
           setStatus("not_submitted");
           setEmail(user.email || "");
           setPhoneNumber("");
@@ -111,75 +115,68 @@ export default function BecomeVendorScreen() {
           setAgreedToTerms(false);
         }
       }, (err) => {
-        console.error("Snapshot error:", err);
-        setStatus("not_submitted");
+        console.error("Firestore snapshot error:", err.code, err.message);
+        setStatus("error");
+        setErrorMsg(`Failed to load application status: ${err.message || "Unknown error"}`);
       });
 
-      return () => unsubscribeSnap();
+      return () => {
+        console.log("Unsubscribing Firestore listener");
+        unsubscribeSnap();
+      };
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      console.log("Unsubscribing auth listener");
+      unsubscribeAuth();
+    };
   }, [navigation]);
 
+  // Stable Government ID upload using DocumentPicker
   const uploadGovernmentId = async () => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "image/*",
+        copyToCacheDirectory: true,
+        multiple: false,
       });
 
-      if (!result.canceled) {
+      console.log("DocumentPicker result for ID:", result);
+
+      if (!result.canceled && result.assets?.[0]) {
         const uri = result.assets[0].uri;
         setGovernmentIdUri(uri);
         setUploadingId(true);
 
         const currentUser = auth.currentUser;
-        if (!currentUser) {
-          Alert.alert("Session Error", "Please login again.");
-          setUploadingId(false);
-          return;
-        }
+        if (!currentUser) throw new Error("No user logged in");
 
-        try {
-          const response = await fetch(uri);
-          const blob = await response.blob();
-          const fileRef = ref(storage, `vendorIds/${currentUser.uid}/id.jpeg`);
-          const uploadTask = uploadBytesResumable(fileRef, blob);
+        const response = await fetch(uri);
+        const blob = await response.blob();
+        const fileRef = ref(storage, `vendorIds/${currentUser.uid}/id_${Date.now()}.jpeg`);
+        const uploadTask = uploadBytesResumable(fileRef, blob);
 
-          await new Promise((resolve, reject) => {
-            uploadTask.on(
-              "state_changed",
-              null,
-              reject,
-              async () => {
-                const url = await getDownloadURL(uploadTask.snapshot.ref);
-                setGovernmentIdUrl(url);
-                resolve(url);
-              }
-            );
+        const url = await new Promise((resolve, reject) => {
+          uploadTask.on("state_changed", null, reject, async () => {
+            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+            resolve(downloadUrl);
           });
+        });
 
-          Alert.alert("Success", "Government ID uploaded successfully.");
-        } catch (uploadErr) {
-          console.error("Storage upload failed:", uploadErr);
-          Alert.alert("Upload Failed", "Could not upload ID. Try again.");
-          setGovernmentIdUri(null);
-        } finally {
-          setUploadingId(false);
-        }
+        setGovernmentIdUrl(url);
+        Alert.alert("Success", "Government ID uploaded successfully!");
       }
     } catch (err) {
-      console.error("Image picker error:", err);
-      Alert.alert("Error", "Failed to open picker.");
+      console.error("ID upload error:", err);
+      Alert.alert("Error", err.message || "Failed to upload ID. Try again.");
+    } finally {
+      setUploadingId(false);
     }
   };
 
   const handleSubmit = async () => {
     if (submitting) return;
 
-    // Validation
     if (!fullName.trim()) return Alert.alert("Required", "Full name is required");
     if (!email.trim() || !/\S+@\S+\.\S+/.test(email)) return Alert.alert("Invalid", "Valid email required");
     if (!phoneNumber || phoneNumber.length < 10) return Alert.alert("Invalid", "Phone ≥ 10 digits");
@@ -190,10 +187,7 @@ export default function BecomeVendorScreen() {
     if (!agreedToTerms) return Alert.alert("Required", "Agree to terms");
 
     const currentUser = auth.currentUser;
-    if (!currentUser) {
-      Alert.alert("Session Error", "Please login again.");
-      return;
-    }
+    if (!currentUser) return Alert.alert("Error", "No user logged in");
 
     const applicationData = {
       uid: currentUser.uid,
@@ -221,36 +215,66 @@ export default function BecomeVendorScreen() {
       setStatus("pending");
       setIsEditing(false);
 
-      Alert.alert(
-        "Success!",
-        "Application updated/submitted.\n\nIt is now pending review again."
-      );
+      Alert.alert("Success!", "Application submitted/updated. Pending review.");
     } catch (err) {
-      console.error("Submission error:", err);
-      Alert.alert("Error", err.message || "Failed to submit. Try again.");
+      console.error("Submit error:", err);
+      Alert.alert("Error", "Failed to submit. Check connection and try again.");
     } finally {
       setSubmitting(false);
     }
   };
 
+  // Fixed: Edit button now forces form visibility
   const startEditing = () => {
+    console.log("Edit button pressed → forcing form");
     setIsEditing(true);
-    setStatus("not_submitted"); // ← This is the key fix: force show the form
+    setStatus("not_submitted");
   };
 
   const filteredBanks = BANKS.filter((bank) =>
     bank.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Loading UI
   if (status === "loading") {
     return (
       <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
         <ActivityIndicator size="large" color={theme.primary} />
+        <Text style={{ color: theme.textSecondary, marginTop: 16, fontSize: 16 }}>
+          Loading application status...
+        </Text>
       </View>
     );
   }
 
-  // Show form when status is "not_submitted" OR when editing
+  // Error UI
+  if (status === "error") {
+    return (
+      <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
+        <Ionicons name="alert-circle" size={80} color={theme.error} />
+        <Text style={{ color: theme.text, fontSize: 20, fontWeight: "bold", marginTop: 24 }}>
+          Error Loading
+        </Text>
+        <Text style={{ color: theme.textSecondary, textAlign: "center", marginTop: 12, paddingHorizontal: 40 }}>
+          {errorMsg || "Failed to load application data. Check your internet connection."}
+        </Text>
+        <TouchableOpacity
+          onPress={() => setStatus("loading")}
+          style={{ marginTop: 32, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: theme.primary, borderRadius: 12 }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>Retry</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={{ marginTop: 16 }}
+        >
+          <Text style={{ color: theme.primary, fontSize: 16 }}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // Form UI (new or edit)
   if (status === "not_submitted" || isEditing) {
     return (
       <KeyboardAvoidingView
@@ -468,6 +492,7 @@ export default function BecomeVendorScreen() {
     );
   }
 
+  // Approved / Rejected
   if (status === "approved" || status === "rejected") {
     const isApproved = status === "approved";
     return (
@@ -486,7 +511,7 @@ export default function BecomeVendorScreen() {
           <Ionicons
             name={isApproved ? "checkmark-circle" : "close-circle"}
             size={90}
-            color={isApproved ? theme.primary : "red"}
+            color={isApproved ? theme.primary : theme.error}
           />
           <Text style={[styles.successTitle, { color: theme.text }]}>
             {isApproved ? "Congratulations!" : "Not Approved"}
@@ -505,12 +530,12 @@ export default function BecomeVendorScreen() {
           >
             {isApproved ? "Edit Profile/Details" : "Edit & Re-apply"}
           </Button>
-
         </View>
       </KeyboardAvoidingView>
     );
   }
 
+  // Pending
   if (status === "pending") {
     return (
       <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.background }}>
@@ -533,8 +558,30 @@ export default function BecomeVendorScreen() {
     );
   }
 
-  // Fallback (shouldn't reach here)
-  return null;
+  // Final fallback UI (should never hit, but visible if it does)
+  return (
+    <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
+      <Ionicons name="alert-circle" size={80} color={theme.error} />
+      <Text style={{ color: theme.text, fontSize: 20, fontWeight: "bold", marginTop: 24 }}>
+        Unknown Application State
+      </Text>
+      <Text style={{ color: theme.textSecondary, textAlign: "center", marginTop: 12, paddingHorizontal: 40 }}>
+        Something went wrong loading your status. Please try again or contact support.
+      </Text>
+      <TouchableOpacity
+        onPress={() => setStatus("loading")}
+        style={{ marginTop: 32, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: theme.primary, borderRadius: 12 }}
+      >
+        <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>Retry</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => navigation.goBack()}
+        style={{ marginTop: 16 }}
+      >
+        <Text style={{ color: theme.primary, fontSize: 16 }}>Go Back</Text>
+      </TouchableOpacity>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

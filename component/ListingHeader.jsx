@@ -47,10 +47,10 @@ export default function ListingHeader() {
             style={[
               styles.tabText,
               activeTab === 'houses' && styles.activeText,
-              { color: activeTab === 'houses' ? '#017a6b' : (isDark ? '#aaa' : '#777') },
+              { color: activeTab === 'houses' ? '#000' : (isDark ? '#aaa' : '#777') },
             ]}
           >
-            Houses & Apartments
+            Long-stays
           </Text>
         </TouchableOpacity>
 
@@ -63,10 +63,10 @@ export default function ListingHeader() {
             style={[
               styles.tabText,
               activeTab === 'hotels' && styles.activeText,
-              { color: activeTab === 'hotels' ? '#017a6b' : (isDark ? '#aaa' : '#777') },
+              { color: activeTab === 'hotels' ? '#000' : (isDark ? '#aaa' : '#777') },
             ]}
           >
-            Hotels & Resorts
+          Short-lets
           </Text>
         </TouchableOpacity>
 
@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
     left: 16,
     width: TAB_WIDTH - 32,
     height: 3,
-    backgroundColor: '#017a6b',
+    backgroundColor: '#000',
     borderRadius: 2,
   },
 });

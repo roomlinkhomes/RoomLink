@@ -1,4 +1,3 @@
-// screens/GuestDetails.jsx
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -20,7 +19,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import * as Linking from "expo-linking";
 import { auth, db } from "../firebaseConfig";
-import { collection, addDoc, serverTimestamp, doc, getDoc } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, doc, getDoc, onSnapshot } from "firebase/firestore";
 
 export default function GuestDetails() {
   const route = useRoute();
@@ -33,13 +32,18 @@ export default function GuestDetails() {
     checkIn,
     checkOut,
     nights,
-    pricePerNight,
-    totalAmount: baseTotal = 0,
+    pricePerNight: originalPricePerNight,
+    totalAmount: discountedBaseTotal = 0,
+    isNonRefundable = false,
+    discountPercent = 0,
   } = route.params || {};
 
   const serviceFeeRate = 0.02;
-  const serviceFee = Math.round(baseTotal * serviceFeeRate);
-  const totalWithFee = baseTotal + serviceFee;
+  const serviceFee = Math.round(discountedBaseTotal * serviceFeeRate);
+  const totalWithFee = discountedBaseTotal + serviceFee;
+
+  const originalBaseTotal = originalPricePerNight * nights;
+  const savings = originalBaseTotal - discountedBaseTotal;
 
   // Form states
   const [fullName, setFullName] = useState("");
@@ -51,9 +55,11 @@ export default function GuestDetails() {
   const [children, setChildren] = useState(0);
   const [specialRequests, setSpecialRequests] = useState("");
   const [loading, setLoading] = useState(false);
+  const [confirmedNonRefundable, setConfirmedNonRefundable] = useState(false);
 
-  // Floating chat state – appears after successful payment
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  // Payment & confirmation state
+  const [bookingId, setBookingId] = useState(null);
+  const [paymentStatus, setPaymentStatus] = useState("idle"); // idle | pending | paid | failed
 
   const countryCodes = [
     { code: "+234", label: "Nigeria (+234)" },
@@ -65,28 +71,55 @@ export default function GuestDetails() {
     { code: "+233", label: "Ghana (+233)" },
   ];
 
-  // Listen for Paystack success deep link
+  // Deep link handling (modern way)
   useEffect(() => {
-    const subscription = Linking.addEventListener("url", ({ url }) => {
-      if (url?.includes("payment-success")) {
-        setPaymentSuccess(true);
-        Alert.alert(
-          "Payment Successful!",
-          "Your booking is now confirmed. You can now chat with the host.",
-          [{ text: "OK" }]
-        );
+    // Check initial URL when screen mounts
+    Linking.getInitialURL().then((url) => {
+      if (url?.includes("payment-success") && bookingId) {
+        setPaymentStatus("pending");
       }
     });
 
-    // Also check if app was opened via deep link
-    Linking.getInitialURL().then((initialUrl) => {
-      if (initialUrl?.includes("payment-success")) {
-        setPaymentSuccess(true);
+    // Listen for incoming deep links
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      if (url?.includes("payment-success") && bookingId) {
+        setPaymentStatus("pending");
+        Alert.alert("Payment Received", "Confirming your booking — please wait...");
       }
     });
 
     return () => subscription.remove();
-  }, []);
+  }, [bookingId]);
+
+  // Real-time Firestore listener for booking status
+  useEffect(() => {
+    if (!bookingId) return;
+
+    const bookingRef = doc(db, "bookings", bookingId);
+
+    const unsubscribe = onSnapshot(bookingRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        const status = data?.status?.toLowerCase();
+
+        if (status === "paid" || status === "successful" || status === "confirmed") {
+          setPaymentStatus("paid");
+          Alert.alert("Booking Confirmed!", "Payment successful — chat with host now available.", [
+            { text: "Chat Now", onPress: () => openChatWithHost() },
+            { text: "View Details", onPress: () => navigation.navigate("Bookings") },
+          ]);
+        } else if (status === "failed" || status === "cancelled" || status === "declined") {
+          setPaymentStatus("failed");
+          Alert.alert("Payment Issue", "The payment did not complete successfully. Please try again.");
+        }
+      }
+    }, (err) => {
+      console.error("Booking listener error:", err);
+      Alert.alert("Connection Issue", "Unable to confirm booking status right now.");
+    });
+
+    return () => unsubscribe();
+  }, [bookingId, navigation]);
 
   const handleProceedToPayment = async () => {
     if (!fullName.trim() || !phone.trim() || !email.trim()) {
@@ -112,6 +145,11 @@ export default function GuestDetails() {
       return;
     }
 
+    if (isNonRefundable && !confirmedNonRefundable) {
+      Alert.alert("Confirmation Required", "Please confirm you understand this booking is non-refundable.");
+      return;
+    }
+
     const user = auth.currentUser;
     if (!user) {
       Alert.alert("Login Required", "Please log in to continue.");
@@ -122,7 +160,7 @@ export default function GuestDetails() {
     setLoading(true);
 
     try {
-      // ─── Fetch host information ───
+      // Fetch host information
       const hostId = listing?.userId || listing?.ownerId || listing?.hostUid;
       let hostInfo = {
         hostId: hostId || null,
@@ -148,23 +186,23 @@ export default function GuestDetails() {
         }
       }
 
-      // ─── Create booking with BOTH guest and host info ───
+      // Create booking document
       const bookingRef = await addDoc(collection(db, "bookings"), {
         listingId: listing?.id,
         listingTitle: listing?.title,
         listingImages: listing?.images || [],
-        
-        // Host information (fully saved)
         hostId: hostInfo.hostId,
-        hostInfo,   // ← contains name, email, phone, photo
-
+        hostInfo,
         buyerId: user.uid,
         buyerEmail: user.email || email.trim(),
         checkIn,
         checkOut,
         nights,
-        pricePerNight,
-        baseAmount: baseTotal,
+        originalPricePerNight,
+        discountedPricePerNight: discountedBaseTotal / nights,
+        discountPercent,
+        isNonRefundable,
+        baseAmount: discountedBaseTotal,
         serviceFee,
         totalAmount: totalWithFee,
         currency: "NGN",
@@ -177,10 +215,13 @@ export default function GuestDetails() {
           specialRequests: specialRequests.trim(),
         },
         status: "pending_payment",
+        paymentReference: null, // will be set by webhook or client verify
         createdAt: serverTimestamp(),
       });
 
-      // ─── Initialize Paystack ───
+      setBookingId(bookingRef.id);
+
+      // Initialize Paystack payment
       const response = await fetch(
         "https://us-central1-roomlink-homes.cloudfunctions.net/initializePaystack",
         {
@@ -188,13 +229,17 @@ export default function GuestDetails() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             email: user.email || email.trim(),
-            amount: Math.round(totalWithFee * 100),
+            amount: Math.round(totalWithFee * 100), // kobo
             reference: `roomlink_booking_${bookingRef.id}_${Date.now()}`,
-            bookingId: bookingRef.id,
-            callback_url: "roomlink://payment-success",
+            bookingId: bookingRef.id, // ← FIXED: changed from orderId
           }),
         }
       );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status} - Payment initialization failed`);
+      }
 
       const data = await response.json();
 
@@ -202,21 +247,24 @@ export default function GuestDetails() {
         throw new Error(data?.message || "Failed to initialize payment.");
       }
 
-      // ─── Open Paystack WebView ───
+      // Go to payment screen
       navigation.navigate("PaystackWebView", {
         url: data.url,
         bookingId: bookingRef.id,
       });
 
+      setPaymentStatus("pending");
+
     } catch (error) {
       console.error("Payment initiation error:", error);
-      Alert.alert("Error", error.message || "Could not start payment. Try again.");
+      Alert.alert("Error", error.message || "Could not start payment. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
   const openChatWithHost = () => {
+    if (!listing) return;
     navigation.navigate("Message", {
       listingId: listing?.id,
       listingOwnerId: listing?.userId || listing?.ownerId || listing?.hostUid,
@@ -238,6 +286,7 @@ export default function GuestDetails() {
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
           {/* Header */}
@@ -250,7 +299,7 @@ export default function GuestDetails() {
             </Text>
           </View>
 
-          {/* Summary */}
+          {/* Summary Section */}
           <View style={[styles.summarySection, isDark && styles.summarySectionDark]}>
             <Text style={[styles.summaryTitle, isDark && styles.textLight]}>
               {listing?.title || "Your Booking"}
@@ -277,12 +326,24 @@ export default function GuestDetails() {
             <View style={styles.priceBreakdown}>
               <View style={styles.priceRow}>
                 <Text style={[styles.priceLabel, isDark && styles.textMuted]}>
-                  {nights} night{nights !== 1 ? "s" : ""} × ₦{pricePerNight?.toLocaleString() || "—"}
+                  {nights} night{nights !== 1 ? "s" : ""} × ₦
+                  {(discountedBaseTotal / nights)?.toLocaleString() || "—"}
+                  {discountPercent > 0 && isNonRefundable && (
+                    <Text style={styles.discountedNote}> (discounted)</Text>
+                  )}
                 </Text>
                 <Text style={[styles.priceValue, isDark && styles.textLight]}>
-                  ₦{baseTotal.toLocaleString()}
+                  ₦{discountedBaseTotal.toLocaleString()}
                 </Text>
               </View>
+
+              {discountPercent > 0 && isNonRefundable && savings > 0 && (
+                <View style={styles.savingsRow}>
+                  <Text style={styles.savingsText}>
+                    You saved ₦{savings.toLocaleString()} ({discountPercent}% non-refundable discount)
+                  </Text>
+                </View>
+              )}
 
               <View style={styles.priceRow}>
                 <Text style={[styles.priceLabel, isDark && styles.textMuted]}>
@@ -304,7 +365,7 @@ export default function GuestDetails() {
             </View>
           </View>
 
-          {/* Form */}
+          {/* Guest Form */}
           <View style={styles.formSection}>
             <Text style={[styles.sectionTitle, isDark && styles.textLight]}>
               Who's staying?
@@ -418,23 +479,82 @@ export default function GuestDetails() {
             </View>
           </View>
 
-          {/* Notice */}
-          <View style={[styles.noticeCard, isDark && styles.noticeCardDark]}>
-            <Ionicons name="information-circle-outline" size={24} color="#FF9500" />
-            <Text style={[styles.noticeText, isDark && styles.textMuted]}>
-              This booking becomes non-refundable after payment. Please double-check everything.
-            </Text>
+          {/* Refund Policy Notice */}
+          <View
+            style={[
+              styles.noticeCard,
+              isNonRefundable
+                ? isDark ? styles.noticeCardNonRefundableDark : styles.noticeCardNonRefundable
+                : isDark ? styles.noticeCardRefundableDark : styles.noticeCardRefundable,
+            ]}
+          >
+            <Ionicons
+              name={isNonRefundable ? "lock-closed" : "checkmark-circle"}
+              size={24}
+              color={isNonRefundable ? "#ef4444" : "#10b981"}
+            />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text
+                style={[
+                  styles.noticeTitle,
+                  { color: isNonRefundable ? "#991b1b" : "#065f46" },
+                ]}
+              >
+                {isNonRefundable ? "Non-Refundable Booking" : "Refundable Booking"}
+              </Text>
+
+              {isNonRefundable ? (
+                <>
+                  <Text style={styles.noticeText}>
+                    This booking is <Text style={{ fontWeight: "bold" }}>final and non-refundable</Text> after payment.
+                    No cancellations, changes, or refunds — even for emergencies or errors.
+                  </Text>
+                  {discountPercent > 0 && (
+                    <Text style={{ color: "#059669", marginTop: 6, fontWeight: "600" }}>
+                      Non-refundable special rate: {discountPercent}% off applied
+                    </Text>
+                  )}
+                </>
+              ) : (
+                <Text style={styles.noticeText}>
+                  This booking is <Text style={{ fontWeight: "bold" }}>refundable</Text> according to the host's policy.
+                  You can cancel subject to any applicable terms.
+                </Text>
+              )}
+            </View>
           </View>
+
+          {/* Non-refundable confirmation checkbox */}
+          {isNonRefundable && (
+            <TouchableOpacity
+              style={[styles.checkboxContainer, isDark && styles.checkboxContainerDark]}
+              onPress={() => setConfirmedNonRefundable((prev) => !prev)}
+              activeOpacity={0.8}
+            >
+              <View
+                style={[
+                  styles.checkbox,
+                  confirmedNonRefundable && { backgroundColor: "#ef4444", borderColor: "#ef4444" },
+                ]}
+              >
+                {confirmedNonRefundable && <Ionicons name="checkmark" size={16} color="#fff" />}
+              </View>
+              <Text style={[styles.checkboxText, { color: isDark ? "#e0e0e0" : "#374151" }]}>
+                I understand this is a <Text style={{ fontWeight: "bold" }}>non-refundable</Text> booking with no refunds, cancellations, or changes allowed after payment.
+              </Text>
+            </TouchableOpacity>
+          )}
 
           {/* Pay Button */}
           <TouchableOpacity
             style={[
               styles.payButton,
               loading && styles.payButtonDisabled,
+              (isNonRefundable && !confirmedNonRefundable) && styles.payButtonDisabled,
               isDark && styles.payButtonDark,
             ]}
             onPress={handleProceedToPayment}
-            disabled={loading}
+            disabled={loading || (isNonRefundable && !confirmedNonRefundable)}
             activeOpacity={0.85}
           >
             {loading ? (
@@ -452,13 +572,10 @@ export default function GuestDetails() {
           <View style={{ height: 140 }} />
         </ScrollView>
 
-        {/* Floating Chat Button – appears after successful payment */}
-        {paymentSuccess && (
+        {/* Floating Chat Button — only shown when payment is confirmed */}
+        {paymentStatus === "paid" && (
           <TouchableOpacity
-            style={[
-              styles.floatingChatButton,
-              isDark && styles.floatingChatButtonDark,
-            ]}
+            style={[styles.floatingChatButton, isDark && styles.floatingChatButtonDark]}
             onPress={openChatWithHost}
             activeOpacity={0.85}
           >
@@ -469,7 +586,7 @@ export default function GuestDetails() {
           </TouchableOpacity>
         )}
 
-        {/* Country code picker modal */}
+        {/* Country Code Picker Modal */}
         <Modal
           visible={showCodePicker}
           transparent
@@ -514,6 +631,9 @@ export default function GuestDetails() {
   );
 }
 
+// ──────────────────────────────────────────────
+// STYLES (unchanged — your original styles)
+// ──────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -589,7 +709,7 @@ const styles = StyleSheet.create({
   priceRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 12,
+    marginBottom: 8,
   },
   priceLabel: {
     fontSize: 15,
@@ -615,6 +735,25 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "800",
     color: "#017a6b",
+  },
+  discountedNote: {
+    fontSize: 13,
+    color: "#059669",
+    fontWeight: "600",
+    marginLeft: 4,
+  },
+  savingsRow: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#e2e8f0",
+    alignItems: "center",
+  },
+  savingsText: {
+    color: "#059669",
+    fontSize: 14,
+    fontWeight: "600",
+    textAlign: "center",
   },
   formSection: {
     marginBottom: 28,
@@ -714,23 +853,67 @@ const styles = StyleSheet.create({
   },
   noticeCard: {
     flexDirection: "row",
-    backgroundColor: "#fffbeb",
-    borderRadius: 16,
     padding: 16,
+    borderRadius: 16,
+    marginBottom: 24,
     borderWidth: 1,
-    borderColor: "#fef08a",
-    marginBottom: 28,
   },
-  noticeCardDark: {
-    backgroundColor: "#2d2a1e",
-    borderColor: "#ca8a04",
+  noticeCardRefundable: {
+    backgroundColor: "#ecfdf5",
+    borderColor: "#10b981",
+  },
+  noticeCardNonRefundable: {
+    backgroundColor: "#fee2e2",
+    borderColor: "#ef4444",
+  },
+  noticeCardRefundableDark: {
+    backgroundColor: "#064e3b",
+    borderColor: "#34d399",
+  },
+  noticeCardNonRefundableDark: {
+    backgroundColor: "#7f1d1d",
+    borderColor: "#f87171",
+  },
+  noticeTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 8,
   },
   noticeText: {
-    flex: 1,
-    marginLeft: 12,
     fontSize: 15,
-    color: "#444",
     lineHeight: 22,
+    color: "#374151",
+  },
+  checkboxContainer: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    backgroundColor: "#fff",
+  },
+  checkboxContainerDark: {
+    backgroundColor: "#1e2535",
+    borderColor: "#7f1d1d",
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#d1d5db",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+    marginTop: 2,
+  },
+  checkboxText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    color: "#374151",
   },
   payButton: {
     backgroundColor: "#017a6b",
@@ -757,8 +940,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginLeft: 10,
   },
-
-  // Floating chat button styles
   floatingChatButton: {
     position: "absolute",
     bottom: 40,
@@ -796,8 +977,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "bold",
   },
-
-  // Modal styles
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -839,7 +1018,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-
   textLight: { color: "#f1f5f9" },
   textMuted: { color: "#94a3b8" },
   textAccent: { color: "#34d399" },

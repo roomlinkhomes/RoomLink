@@ -1,5 +1,5 @@
-// screens/GalleryScreen.jsx — Header pushed up EVEN MORE (super tight)
-import React, { useState } from "react";
+// screens/GalleryScreen.jsx — fixes for production blank images
+import React, { useState, useRef } from "react";
 import {
   View,
   FlatList,
@@ -15,7 +15,8 @@ import { Image } from "expo-image";
 
 const { width } = Dimensions.get("window");
 const numColumns = 2;
-const imageSize = (width - 20 - 10) / numColumns;
+const itemWidth = (width - 20 - 10) / numColumns; // renamed for clarity
+const spacing = 10;
 
 export default function GalleryScreen() {
   const route = useRoute();
@@ -24,6 +25,9 @@ export default function GalleryScreen() {
 
   const [visible, setVisible] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  // Ref to force re-measure / trigger layout if needed
+  const flatListRef = useRef(null);
 
   const renderItem = ({ item, index }) => (
     <TouchableOpacity
@@ -37,15 +41,20 @@ export default function GalleryScreen() {
         source={{ uri: item }}
         style={styles.image}
         contentFit="cover"
-        transition={300}
-        cachePolicy="disk"
+        transition={400}               // slightly longer fade helps visibility
+        cachePolicy="disk"             // keep, but add priority below
+        placeholderContentFit="cover"
+        // Add priority to help initial batch load in production
+        priority={index < 12 ? "high" : "low"} // preload first 2-3 rows aggressively
+        // Optional: debug border while testing
+        // borderWidth: 1, borderColor: 'red'
       />
     </TouchableOpacity>
   );
 
   return (
     <View style={styles.container}>
-      {/* ========== SUPER TIGHT HEADER (pushed up max) ========== */}
+      {/* SUPER TIGHT HEADER */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -59,28 +68,27 @@ export default function GalleryScreen() {
           <Text style={styles.pageTitle}>Gallery</Text>
         </View>
       </View>
-      {/* ========== END HEADER ========== */}
 
-      {/* Grid starts almost immediately */}
       <FlatList
+        ref={flatListRef}
         data={images}
         numColumns={numColumns}
         keyExtractor={(_, index) => index.toString()}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingTop: 5 }} // minimal space below header
-        initialNumToRender={10}
-        maxToRenderPerBatch={5}
-        windowSize={10}
-        removeClippedSubviews={true}
+        contentContainerStyle={{ paddingTop: 5, paddingBottom: 20 }}
+        // Increase visibility window & batch size for production reliability
+        initialNumToRender={12}          // preload more (2-3 rows)
+        maxToRenderPerBatch={10}
+        windowSize={15}                  // larger → less aggressive unmount
+        removeClippedSubviews={false}    // ← KEY: disable in production if blank issue persists (tradeoff: perf vs reliability)
         getItemLayout={(data, index) => ({
-          length: imageSize + 10,
-          offset: (imageSize + 10) * index,
+          length: itemWidth + spacing,
+          offset: (itemWidth + spacing) * Math.floor(index / numColumns),
           index,
         })}
       />
 
-      {/* Fullscreen Viewer */}
       <ImageViewing
         images={images.map((uri) => ({ uri }))}
         imageIndex={currentIndex}
@@ -112,8 +120,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-start",
     paddingHorizontal: 20,
-    paddingTop: 20,     // ← Even tighter (was 30)
-    paddingBottom: 16,  // ← Reduced
+    paddingTop: 20,
+    paddingBottom: 16,
   },
   pageTitle: {
     fontSize: 24,
@@ -121,11 +129,11 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   image: {
-    width: imageSize,
-    height: imageSize,
-    margin: 5,
+    width: itemWidth,
+    height: itemWidth, // square grid
+    margin: spacing / 2,
     borderRadius: 12,
-    backgroundColor: "#222",
+    backgroundColor: "#222", // fallback color
   },
   footer: {
     width: "100%",
