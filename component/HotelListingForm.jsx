@@ -1,4 +1,7 @@
-// component/HotelListingForm.jsx
+// components/HotelListingForm.jsx — COMPLETE FULL FILE (copy-paste ready)
+// UPDATED: Host enters THEIR price (e.g. ₦2000), app auto-calculates +11% service fee
+// Feed will now show the GUEST price (₦2220) — saved as guestPricePerNight
+
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -14,6 +17,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { useListing } from "../context/ListingContext";
 import { homeCategories } from "../screens/Config/Categories";
@@ -25,11 +29,16 @@ const HotelListingForm = ({ navigation }) => {
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
 
+  // House Features
+  const [bedrooms, setBedrooms] = useState(null);
+  const [bathrooms, setBathrooms] = useState(null);
+  const [toilets, setToilets] = useState(null);
+
   const [images, setImages] = useState([]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
-  const [pricePerNight, setPricePerNight] = useState("");
+  const [pricePerNight, setPricePerNight] = useState(""); // ← Host's price (what they receive)
   const [category, setCategory] = useState(null);
   const [selectedAmenities, setSelectedAmenities] = useState([]);
   const [selectedHouseRules, setSelectedHouseRules] = useState([]);
@@ -137,6 +146,39 @@ const HotelListingForm = ({ navigation }) => {
     );
   };
 
+  // Auto-detect location (unchanged)
+  const detectLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission Denied", "Please allow location access to detect your position.");
+        return;
+      }
+
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const reverse = await Location.reverseGeocodeAsync({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+      });
+
+      if (reverse.length > 0) {
+        const addr = reverse[0];
+        const detected = [
+          addr.name,
+          addr.city || addr.district || addr.subregion,
+          addr.region,
+        ]
+          .filter(Boolean)
+          .join(", ");
+
+        setLocation(detected || "Current Location");
+        Alert.alert("Location Detected ✅", `Set to: ${detected}`);
+      }
+    } catch (err) {
+      Alert.alert("Location Error", "Could not detect location. Please enter manually.");
+    }
+  };
+
   useEffect(() => {
     (async () => {
       await ImagePicker.requestCameraPermissionsAsync();
@@ -185,6 +227,10 @@ const HotelListingForm = ({ navigation }) => {
 
   const removeImage = (uri) => setImages((prev) => prev.filter((u) => u !== uri));
 
+  // LIVE CALCULATION: 11% service fee
+  const hostPrice = parseInt(pricePerNight.replace(/[^0-9]/g, ""), 10) || 0;
+  const guestPrice = Math.round(hostPrice * 1.11);
+
   const submitForm = async () => {
     if (!user?.id) {
       Alert.alert("Error", "You must be logged in to create a listing.");
@@ -199,13 +245,12 @@ const HotelListingForm = ({ navigation }) => {
       return;
     }
 
-    const priceNum = parseInt(pricePerNight.replace(/[^0-9]/g, ""), 10);
+    const priceNum = parseInt(pricePerNight.replace(/[^0-9]/g, ""), 10); // Host's price
     if (isNaN(priceNum) || priceNum <= 0) {
       Alert.alert("Invalid Price", "Please enter a valid price per night.");
       return;
     }
 
-    // ── Required discount validation for non-refundable ──
     let discount = 0;
     if (cancellationPolicy === "nonRefundable") {
       if (!nonRefundableDiscountPercent.trim()) {
@@ -240,20 +285,24 @@ const HotelListingForm = ({ navigation }) => {
         title,
         description,
         location,
-        pricePerNight: priceNum,
+        pricePerNight: priceNum,                    // ← What HOST receives
+        guestPricePerNight: guestPrice,             // ← NEW: What GUEST sees on feed (₦2000 + 11%)
         category,
         images: uploadedUrls,
         userId: user.id,
         listingType: "hotels",
         amenities: selectedAmenities,
         houseRules: selectedHouseRules,
+        bedrooms,
+        bathrooms,
+        toilets,
         cancellationPolicy,
         nonRefundableDiscountPercent: discount,
       });
 
       Alert.alert(
         "Success!",
-        `Your hotel/short-let listing "${title}" has been created!`,
+        `Your hotel/short-let listing "${title}" has been created!\n\nGuests will see ₦${guestPrice.toLocaleString()}`,
         [
           { text: "View in Feed", onPress: () => navigation?.navigate("Home") },
           { text: "Done", style: "cancel" },
@@ -269,6 +318,9 @@ const HotelListingForm = ({ navigation }) => {
       setImages([]);
       setSelectedAmenities([]);
       setSelectedHouseRules([]);
+      setBedrooms(null);
+      setBathrooms(null);
+      setToilets(null);
       setCancellationPolicy("refundable");
       setNonRefundableDiscountPercent("");
     } catch (err) {
@@ -435,25 +487,43 @@ const HotelListingForm = ({ navigation }) => {
         textAlignVertical="top"
       />
 
-      {/* Location */}
+      {/* Location with Auto-Detect */}
       <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>Location</Text>
-      <RNTextInput
-        style={[
-          styles.input,
-          {
-            color: isDark ? "#e0e0e0" : "#212529",
-            backgroundColor: isDark ? "#2a2a2a" : "#ffffff",
-            borderColor: isDark ? "#444" : "#e0e6ed",
-          },
-        ]}
-        placeholder="City, Area or Neighborhood"
-        placeholderTextColor={isDark ? "#6c757d" : "#adb5bd"}
-        value={location}
-        onChangeText={setLocation}
-      />
+      <View style={styles.locationContainer}>
+        <RNTextInput
+          style={[
+            styles.input,
+            {
+              flex: 1,
+              marginBottom: 0,
+              color: isDark ? "#e0e0e0" : "#212529",
+              backgroundColor: isDark ? "#2a2a2a" : "#ffffff",
+              borderColor: isDark ? "#444" : "#e0e6ed",
+            },
+          ]}
+          placeholder="City, Area or Neighborhood"
+          placeholderTextColor={isDark ? "#6c757d" : "#adb5bd"}
+          value={location}
+          onChangeText={setLocation}
+        />
+        <TouchableOpacity
+          style={[
+            styles.detectButton,
+            {
+              backgroundColor: isDark ? "#2a2a2a" : "#ffffff",
+              borderColor: "#017a6b",
+            },
+          ]}
+          onPress={detectLocation}
+        >
+          <Ionicons name="locate-outline" size={24} color="#017a6b" />
+        </TouchableOpacity>
+      </View>
 
-      {/* Price Per Night */}
-      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>Price Per Night (₦)</Text>
+      {/* PRICE SECTION — WITH 11% FEE CALCULATION */}
+      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+        Your Price Per Night (₦) — <Text style={{ fontSize: 13, fontWeight: "500" }}>what you receive</Text>
+      </Text>
       <RNTextInput
         style={[
           styles.input,
@@ -463,12 +533,19 @@ const HotelListingForm = ({ navigation }) => {
             borderColor: isDark ? "#444" : "#e0e6ed",
           },
         ]}
-        placeholder="e.g. 50,000"
+        placeholder="e.g. 2000"
         placeholderTextColor={isDark ? "#6c757d" : "#adb5bd"}
         value={pricePerNight}
         onChangeText={setPricePerNight}
         keyboardType="numeric"
       />
+
+      {/* LIVE GUEST PRICE PREVIEW */}
+      {hostPrice > 0 && (
+        <Text style={[styles.guestPriceText, { color: isDark ? "#a0a0a0" : "#6c757d" }]}>
+          Guests will see: ₦{guestPrice.toLocaleString()} (includes 11% service fee)
+        </Text>
+      )}
 
       {/* Cancellation Policy */}
       <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
@@ -570,6 +647,102 @@ const HotelListingForm = ({ navigation }) => {
         </Text>
       </TouchableOpacity>
 
+      {/* Bedrooms, Bathrooms, Toilets, Amenities, House Rules — unchanged from previous version */}
+      {/* (All house features, amenities, house rules sections are exactly the same as last full file) */}
+
+      {/* Bedrooms */}
+      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+        Bedrooms
+      </Text>
+      <View style={styles.amenitiesContainer}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+          {[1, 2, 3, 4, 5, 6].map((num) => (
+            <TouchableOpacity
+              key={num}
+              onPress={() => setBedrooms(num)}
+              style={[
+                styles.amenityChip,
+                {
+                  backgroundColor: bedrooms === num ? "#017a6b" : isDark ? "#2a2a2a" : "#f0f0f0",
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  color: bedrooms === num ? "#000" : isDark ? "#e0e0e0" : "#000",
+                  fontWeight: "600",
+                  fontSize: 14,
+                }}
+              >
+                {num} Bedroom{num > 1 ? "s" : ""}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Bathrooms */}
+      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+        Bathrooms
+      </Text>
+      <View style={styles.amenitiesContainer}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+          {[1, 2, 3, 4, 5, 6].map((num) => (
+            <TouchableOpacity
+              key={num}
+              onPress={() => setBathrooms(num)}
+              style={[
+                styles.amenityChip,
+                {
+                  backgroundColor: bathrooms === num ? "#017a6b" : isDark ? "#2a2a2a" : "#f0f0f0",
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  color: bathrooms === num ? "#000" : isDark ? "#e0e0e0" : "#000",
+                  fontWeight: "600",
+                  fontSize: 14,
+                }}
+              >
+                {num} Bathroom{num > 1 ? "s" : ""}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Toilets */}
+      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
+        Toilets
+      </Text>
+      <View style={styles.amenitiesContainer}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+          {[1, 2, 3, 4, 5, 6].map((num) => (
+            <TouchableOpacity
+              key={num}
+              onPress={() => setToilets(num)}
+              style={[
+                styles.amenityChip,
+                {
+                  backgroundColor: toilets === num ? "#017a6b" : isDark ? "#2a2a2a" : "#f0f0f0",
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  color: toilets === num ? "#000" : isDark ? "#e0e0e0" : "#000",
+                  fontWeight: "600",
+                  fontSize: 14,
+                }}
+              >
+                {num} Toilet{num > 1 ? "s" : ""}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
       {/* Amenities */}
       <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
         Amenities <Text style={{ fontWeight: "400", fontSize: 14 }}>(Optional)</Text>
@@ -590,7 +763,6 @@ const HotelListingForm = ({ navigation }) => {
                     : "#f0f0f0",
                 },
               ]}
-              activeOpacity={0.8}
             >
               <Ionicons
                 name={item.icon}
@@ -632,7 +804,6 @@ const HotelListingForm = ({ navigation }) => {
                     : "#f0f0f0",
                 },
               ]}
-              activeOpacity={0.8}
             >
               <Ionicons
                 name={rule.icon}
@@ -755,7 +926,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 30,
   },
-  // New styles for cancellation policy
   policyContainer: {
     borderWidth: 1,
     borderRadius: 16,
@@ -794,6 +964,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 6,
     fontStyle: "italic",
+  },
+  locationContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  detectButton: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 16,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  // NEW STYLE FOR GUEST PRICE PREVIEW
+  guestPriceText: {
+    fontSize: 15,
+    fontWeight: "600",
+    marginTop: -8,
+    marginBottom: 20,
+    paddingLeft: 4,
   },
 });
 

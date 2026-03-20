@@ -105,7 +105,7 @@ export default function Welcome() {
 
   const openPrivacyPolicy = async () => {
     const url =
-      "https://doc-hosting.flycricket.io/roomlink-privacy-policy/a6dd1327-c200-4adb-a491-e3812385b0e9/privacy";
+      "https://roomlink.homes/privacy";
     try {
       const supported = await Linking.canOpenURL(url);
       if (supported) await Linking.openURL(url);

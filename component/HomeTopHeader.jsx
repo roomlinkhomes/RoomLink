@@ -18,14 +18,6 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { NotificationContext } from "../context/NotificationContext";
-import Icon from "react-native-vector-icons/MaterialCommunityIcons"; // ← MaterialCommunityIcons import
-
-// Menu item icons (existing SVGs)
-import IdentityIcon from "../assets/icons/svg/identity.svg";
-import SettingsIcon from "../assets/icons/svg/settings.svg";
-import AdIcon from "../assets/icons/svg/ad.svg";
-import HelpIcon from "../assets/icons/svg/help.svg";
-import NewsIcon from "../assets/icons/svg/news.svg";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const TOP_OFFSET =
@@ -64,25 +56,18 @@ export default function HomeTopHeader() {
 
   const [selectedCategory, setSelectedCategory] = useState("All");
   const scrollRef = useRef();
-
   const menuWidth = Math.round(SCREEN_WIDTH * 0.85);
   const slideX = useRef(new Animated.Value(menuWidth)).current;
 
   const menuItems = [
-    { id: "1", label: "Identity Verification", icon: IdentityIcon, screen: "IdentityVerification" },
-    { id: "2", label: "Settings", icon: SettingsIcon, screen: "Settings" },
-    { id: "3", label: "Post on billboard", icon: AdIcon, screen: "AdsZone" },
+    { id: "1", label: "Identity Verification", icon: "shield-checkmark-outline", screen: "IdentityVerification" },
+    { id: "2", label: "Settings", icon: "settings-outline", screen: "Settings" },
+    { id: "3", label: "Post on billboard", icon: "megaphone-outline", screen: "AdsZone" },
     { id: "4", label: "Wallet", icon: "wallet-outline", screen: "Wallet" },
-    {
-      id: "8",
-      label: "Refund / Cancellation",
-      icon: "cash-refund",                    // ← valid in MaterialCommunityIcons
-      iconFamily: "MaterialCommunityIcons",   // ← tells renderer which library to use
-      screen: "RefundScreen"
-    },
+    { id: "8", label: "Refund / Cancellation", icon: "arrow-undo-outline", screen: "RefundScreen" }, // ← FIXED: valid icon
     { id: "5", label: "Host on RoomLink", icon: "business-outline", screen: "BecomeVendor" },
-    { id: "6", label: "Help / Support", icon: HelpIcon, screen: "HelpSupport" },
-    { id: "7", label: "Announcement / News", icon: NewsIcon, screen: "Announcements" },
+    { id: "6", label: "Help / Support", icon: "help-circle-outline", screen: "HelpSupport" },
+    { id: "7", label: "Announcement / News", icon: "newspaper-outline", screen: "Announcements" },
   ];
 
   const openMenu = () => {
@@ -117,7 +102,6 @@ export default function HomeTopHeader() {
     setSelectedCategory(cat);
     const ITEM_WIDTH = 100;
     scrollRef.current?.scrollTo({ x: index * ITEM_WIDTH, animated: true });
-
     if (typeof global?.applyCategory === "function") {
       try {
         global.applyCategory(cat);
@@ -156,7 +140,6 @@ export default function HomeTopHeader() {
               color={unreadCount > 0 ? "#017a6b" : isDark ? "#fff" : "#666"}
             />
           </TouchableOpacity>
-
           {unreadCount > 0 && (
             <View
               style={{
@@ -181,19 +164,20 @@ export default function HomeTopHeader() {
           )}
         </View>
 
-        {/* Center Search Box */}
+        {/* Center Search Box – border now #000 */}
         <TouchableOpacity
           style={[
             styles.inlineSearchContainer,
             {
               backgroundColor: isDark ? "#2a2a2a" : "#f9fafb",
-              borderColor: isDark ? "#444" : "#d1d5db",
+              borderColor: "#000",
+              borderWidth: 2,
             },
           ]}
           activeOpacity={0.88}
           onPress={() => navigation.navigate("Search")}
         >
-          <Icon name="magnify" size={22} color={isDark ? "#aaa" : "#6b7280"} style={{ marginRight: 6 }} />
+          <Ionicons name="search-outline" size={22} color={isDark ? "#aaa" : "#6b7280"} style={{ marginRight: 6 }} />
           <TextInput
             style={[
               styles.inlineSearchInput,
@@ -287,53 +271,34 @@ export default function HomeTopHeader() {
               data={menuItems}
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.listContent}
-              renderItem={({ item }) => {
-                let IconComponent;
-                if (typeof item.icon === "string") {
-                  // Choose icon library based on iconFamily
-                  const IconLib = item.iconFamily === "MaterialCommunityIcons" ? Icon : Ionicons;
-
-                  IconComponent = () => (
-                    <IconLib
-                      name={item.icon}
-                      size={24}
-                      color={isDark ? "#ccc" : "#9CA3AF"}
-                      style={{ marginRight: 12 }}
-                    />
-                  );
-                } else {
-                  // SVG component (your existing ones)
-                  IconComponent = item.icon;
-                }
-
-                return (
-                  <TouchableOpacity
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.card,
+                    {
+                      backgroundColor: isDark ? "#2a2a2a" : "#fff",
+                      borderColor: isDark ? "#444" : "#E5E7EB",
+                    },
+                  ]}
+                  onPress={() => handleMenuPress(item)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={item.icon}
+                    size={24}
+                    color={isDark ? "#ccc" : "#9CA3AF"}
+                    style={{ marginRight: 12 }}
+                  />
+                  <Text
                     style={[
-                      styles.card,
-                      {
-                        backgroundColor: isDark ? "#2a2a2a" : "#fff",
-                        borderColor: isDark ? "#444" : "#E5E7EB",
-                      },
+                      styles.cardText,
+                      { color: isDark ? "#fff" : "#111827" },
                     ]}
-                    onPress={() => handleMenuPress(item)}
                   >
-                    <IconComponent
-                      width={24}
-                      height={24}
-                      fill={isDark ? "#ccc" : "#9CA3AF"}
-                      style={{ marginRight: 12 }}
-                    />
-                    <Text
-                      style={[
-                        styles.cardText,
-                        { color: isDark ? "#fff" : "#111827" },
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              }}
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              )}
             />
           </Animated.View>
         </Modal>
@@ -350,7 +315,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingBottom: 6,
   },
-
   inlineSearchContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -366,18 +330,15 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 3,
   },
-
   inlineSearchInput: {
     flex: 1,
     fontSize: 14,
     paddingVertical: 0,
   },
-
   secondHeaderContainer: {
     flexDirection: "row",
     marginBottom: 10,
   },
-
   categoryButton: {
     paddingVertical: 6,
     paddingHorizontal: 14,
@@ -386,7 +347,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   overlay: {
     position: "absolute",
     top: 0,
@@ -395,7 +355,6 @@ const styles = StyleSheet.create({
     height: SCREEN_HEIGHT,
     backgroundColor: "rgba(0,0,0,0.25)",
   },
-
   menuContainer: {
     position: "absolute",
     top: TOP_OFFSET,
@@ -405,9 +364,7 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 16,
     paddingTop: 12,
   },
-
   listContent: { paddingHorizontal: 14, paddingBottom: 24 },
-
   card: {
     flexDirection: "row",
     alignItems: "center",
@@ -417,6 +374,5 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: StyleSheet.hairlineWidth,
   },
-
   cardText: { fontSize: 16, fontWeight: "600" },
 });

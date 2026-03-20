@@ -1,7 +1,7 @@
-// context/ListingContext.jsx — FIXED: Re-fetch listings on real auth user change
+// context/ListingContext.jsx
 import React, { createContext, useState, useEffect, useContext } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { AuthContext } from "./AuthContext"; // ← FIXED: Use real auth context (with uid)
+import { AuthContext } from "./AuthContext";
 import { db } from "../firebaseConfig";
 import {
   collection,
@@ -13,6 +13,7 @@ import {
   deleteDoc,
   doc,
   serverTimestamp,
+  Timestamp,
 } from "firebase/firestore";
 import { Alert } from "react-native";
 
@@ -20,131 +21,99 @@ export const ListingContext = createContext();
 export const VendorListingContext = createContext();
 
 export const ListingProvider = ({ children }) => {
-  const { user: authUser } = useContext(AuthContext); // ← Real Firebase user (uid, email, etc.)
+  const { user: authUser } = useContext(AuthContext);
   const [listings, setListings] = useState([]);
   const [vendorListings, setVendorListings] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Load cached data from AsyncStorage on mount (offline support)
+  // ────────────────────────────────────────────────
+  // Cache: load + save
+  // ────────────────────────────────────────────────
   useEffect(() => {
-    const loadCachedData = async () => {
+    const loadCache = async () => {
       try {
-        const [savedListings, savedVendor] = await Promise.all([
+        const [saved, savedVendor] = await Promise.all([
           AsyncStorage.getItem("listings"),
           AsyncStorage.getItem("vendorListings"),
         ]);
-        if (savedListings) setListings(JSON.parse(savedListings));
+        if (saved) setListings(JSON.parse(saved));
         if (savedVendor) setVendorListings(JSON.parse(savedVendor));
       } catch (err) {
-        console.log("Error loading cached data:", err);
+        console.warn("Cache load failed:", err);
       } finally {
         setLoading(false);
       }
     };
-    loadCachedData();
+    loadCache();
   }, []);
 
-  // Save to AsyncStorage whenever listings/vendorListings change
   useEffect(() => {
-    if (!loading) {
-      Promise.all([
-        AsyncStorage.setItem("listings", JSON.stringify(listings)),
-        AsyncStorage.setItem("vendorListings", JSON.stringify(vendorListings)),
-      ]).catch((err) => console.log("Error saving to AsyncStorage:", err));
-    }
+    if (loading) return;
+    Promise.all([
+      AsyncStorage.setItem("listings", JSON.stringify(listings)),
+      AsyncStorage.setItem("vendorListings", JSON.stringify(vendorListings)),
+    ]).catch((err) => console.warn("Cache save failed:", err));
   }, [listings, vendorListings, loading]);
 
-  // Real-time listener for main listings — re-runs on authUser change
+  // ────────────────────────────────────────────────
+  // Real-time listener – main listings
+  // ────────────────────────────────────────────────
   useEffect(() => {
-    console.log('[ListingContext] Auth user changed:', authUser ? authUser.uid : 'NO USER');
-
     if (!authUser?.uid) {
-      console.log('[ListingContext] No authenticated user → clearing listings');
       setListings([]);
       setLoading(false);
       return;
     }
 
     setLoading(true);
-    console.log('[ListingContext] Fetching listings for UID:', authUser.uid);
 
     const q = query(collection(db, "listings"), orderBy("createdAt", "desc"));
 
     const unsubscribe = onSnapshot(
       q,
-      (snapshot) => {
-        const allListings = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-
-        console.log('[ListingContext] Loaded listings count:', allListings.length);
-
-        // Separate boosted and normal
-        const boosted = allListings.filter(
-          (item) => item.boostedUntil && new Date(item.boostedUntil) > new Date()
-        );
-        const normal = allListings.filter(
-          (item) => !item.boostedUntil || new Date(item.boostedUntil) <= new Date()
-        );
-
-        // Enrich with current user's info if owned
-        const enriched = (list) =>
-          list.map((item) =>
-            item.userId === authUser.uid
-              ? {
-                  ...item,
-                  userName: `${authUser.firstName || ''} ${authUser.lastName || ''}`.trim() || "You",
-                  userAvatar: authUser.avatar || authUser.photoURL || "",
-                }
-              : item
-          );
-
-        const enrichedNormal = enriched(normal);
-        const enrichedBoosted = enriched(boosted);
-
-        // Sort normal by createdAt descending
-        enrichedNormal.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-        // Interleave boosted posts randomly
-        const finalList = [];
-        let normalIndex = 0;
-
-        enrichedNormal.forEach((post) => {
-          finalList.push({ ...post, _key: post.id });
-
-          normalIndex++;
-
-          // Randomly sprinkle boosted posts
-          if (
-            normalIndex % Math.floor(Math.random() * 6 + 10) === 0 &&
-            enrichedBoosted.length > 0
-          ) {
-            const randomBoost =
-              enrichedBoosted[Math.floor(Math.random() * enrichedBoosted.length)];
-            finalList.push({
-              ...randomBoost,
-              _key: `${randomBoost.id}-boost-${normalIndex}-${Math.random()}`,
-            });
-          }
+      (snap) => {
+        const raw = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ...data,
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(data.createdAt || Date.now()),
+            updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date(),
+          };
         });
 
-        setListings(finalList);
+        // Simple sort (already ordered by query, but client can re-sort if needed)
+        const sorted = raw.sort((a, b) => b.createdAt - a.createdAt);
+
+        // Enrich owned listings
+        const enriched = sorted.map((item) =>
+          item.userId === authUser.uid
+            ? {
+                ...item,
+                userName: `${authUser.firstName || ""} ${authUser.lastName || ""}`.trim() || "You",
+                userAvatar: authUser.avatar || authUser.photoURL || "",
+              }
+            : item
+        );
+
+        setListings(enriched);
         setLoading(false);
       },
-      (error) => {
-        console.error("[ListingContext] Listings snapshot error:", error);
+      (err) => {
+        console.error("Listings listener error:", err);
         setLoading(false);
       }
     );
 
     return () => {
-      console.log('[ListingContext] Unsubscribing listings listener');
+      console.log("[ListingContext] Unsubscribing listings");
       unsubscribe();
     };
-  }, [authUser?.uid, authUser?.firstName, authUser?.lastName, authUser?.avatar]);
+  }, [authUser?.uid]);
 
-  // Real-time listener for vendor listings — same fix
+  // ────────────────────────────────────────────────
+  // Vendor listings listener (simplified)
+  // ────────────────────────────────────────────────
   useEffect(() => {
     if (!authUser?.uid) {
       setVendorListings([]);
@@ -155,92 +124,108 @@ export const ListingProvider = ({ children }) => {
 
     const unsubscribe = onSnapshot(
       q,
-      (snapshot) => {
-        const updated = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
+      (snap) => {
+        const items = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ...data,
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
+          };
+        });
 
-        setVendorListings(
-          updated.map((item) =>
-            item.userId === authUser.uid
-              ? {
-                  ...item,
-                  userName: `${authUser.firstName || ''} ${authUser.lastName || ''}`.trim() || "You",
-                  userAvatar: authUser.avatar || authUser.photoURL || "",
-                }
-              : item
-          )
+        const enriched = items.map((item) =>
+          item.userId === authUser.uid
+            ? {
+                ...item,
+                userName: `${authUser.firstName || ""} ${authUser.lastName || ""}`.trim() || "You",
+                userAvatar: authUser.avatar || authUser.photoURL || "",
+              }
+            : item
         );
+
+        setVendorListings(enriched);
       },
-      (error) => {
-        console.error("[ListingContext] Vendor listings snapshot error:", error);
-      }
+      (err) => console.error("Vendor listings error:", err)
     );
 
-    return () => unsubscribe();
-  }, [authUser?.uid, authUser?.firstName, authUser?.lastName, authUser?.avatar]);
+    return unsubscribe;
+  }, [authUser?.uid]);
 
-  // Safe empty context when no user
-  if (!authUser?.uid) {
-    return (
-      <ListingContext.Provider
-        value={{
-          listings: [],
-          loading: false,
-          addListing: async () => {},
-          updateListing: async () => {},
-          deleteListing: async () => {},
-          markAsRented: async () => {},
-        }}
-      >
-        <VendorListingContext.Provider
-          value={{
-            vendorListings: [],
-            loading: false,
-            addVendorListing: async () => {},
-            deleteVendorListing: async () => {},
-            markVendorListingAsRented: async () => {},
-          }}
-        >
-          {children}
-        </VendorListingContext.Provider>
-      </ListingContext.Provider>
-    );
-  }
+  // ────────────────────────────────────────────────
+  // Add listing – with optimistic update
+  // ────────────────────────────────────────────────
+  const addListing = async (newListingData) => {
+    if (!authUser?.uid) throw new Error("Not authenticated");
 
-  // Add new listing
-  const addListing = async (newListing) => {
+    const optimisticId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    const optimisticItem = {
+      id: optimisticId,
+      ...newListingData,
+      userId: authUser.uid,
+      userName: `${authUser.firstName || ""} ${authUser.lastName || ""}`.trim() || "You",
+      userAvatar: authUser.avatar || authUser.photoURL || "",
+      createdAt: new Date(),              // client-side for instant sort
+      updatedAt: new Date(),
+      likes: 0,
+      liked: false,
+      saved: false,
+      rented: false,
+      price:
+        newListingData.priceMonthly
+          ? newListingData.priceMonthly * 12
+          : newListingData.priceYearly || newListingData.pricePerNight || 0,
+      _isOptimistic: true,
+    };
+
+    // Optimistic add → shows immediately at the top
+    setListings((prev) => [optimisticItem, ...prev]);
+
     try {
-      const formatted = {
-        ...newListing,
+      const docRef = await addDoc(collection(db, "listings"), {
+        ...newListingData,
+        userId: authUser.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         likes: 0,
         liked: false,
         saved: false,
         rented: false,
-        userId: authUser.uid,
-        userName: `${authUser.firstName || ''} ${authUser.lastName || ''}`.trim() || "You",
-        firstName: authUser.firstName || "",
-        lastName: authUser.lastName || "",
-        userAvatar: authUser.avatar || authUser.photoURL || "",
         price:
-          newListing.priceMonthly
-            ? newListing.priceMonthly * 12
-            : newListing.priceYearly || newListing.pricePerNight || 0,
-      };
+          newListingData.priceMonthly
+            ? newListingData.priceMonthly * 12
+            : newListingData.priceYearly || newListingData.pricePerNight || 0,
+      });
 
-      await addDoc(collection(db, "listings"), formatted);
-      // onSnapshot will update UI
+      // Replace optimistic item with real one once we get the ID
+      setListings((prev) =>
+        prev.map((item) =>
+          item.id === optimisticId
+            ? {
+                ...item,
+                id: docRef.id,
+                createdAt: new Date(), // will be updated by snapshot soon
+                _isOptimistic: false,
+              }
+            : item
+        )
+      );
+
+      // onSnapshot will eventually bring the real server data (including real timestamps)
     } catch (err) {
-      console.error("Failed to add listing:", err);
+      console.error("Add listing failed:", err);
+
+      // Rollback optimistic update
+      setListings((prev) => prev.filter((item) => item.id !== optimisticId));
+
       Alert.alert("Error", "Failed to create listing. Please try again.");
       throw err;
     }
   };
 
   const updateListing = async (updated) => {
+    if (!updated?.id) return;
     try {
       const ref = doc(db, "listings", updated.id);
       await updateDoc(ref, {
@@ -248,55 +233,51 @@ export const ListingProvider = ({ children }) => {
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
-      console.error("Failed to update listing:", err);
+      console.error("Update failed:", err);
       Alert.alert("Error", "Failed to update listing.");
     }
   };
 
   const deleteListing = async (id) => {
+    if (!id) return;
     try {
       await deleteDoc(doc(db, "listings", id));
     } catch (err) {
-      console.error("Failed to delete listing:", err);
+      console.error("Delete failed:", err);
       Alert.alert("Error", "Failed to delete listing.");
     }
   };
 
-  const markAsRented = async (id, rentedState = true) => {
+  const markAsRented = async (id, rented = true) => {
+    if (!id) return;
     try {
       const ref = doc(db, "listings", id);
       await updateDoc(ref, {
-        rented: rentedState,
+        rented,
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
-      console.error("Failed to mark as rented:", err);
+      console.error("Mark rented failed:", err);
       Alert.alert("Error", "Failed to update rental status.");
     }
   };
 
-  // Vendor listing functions
-  const addVendorListing = async (newListing) => {
+  // Vendor functions (kept similar – can add optimistic later if needed)
+  const addVendorListing = async (data) => {
     try {
-      const formatted = {
-        title: newListing.title || "Untitled Vendor Post",
-        description: newListing.description || "",
-        images: newListing.images || [],
-        price: newListing.price || 0,
-        location: newListing.location || "Unknown",
+      await addDoc(collection(db, "vendorListings"), {
+        ...data,
+        userId: authUser.uid,
+        userName: `${authUser.firstName || ""} ${authUser.lastName || ""}`.trim() || "You",
+        userAvatar: authUser.avatar || authUser.photoURL || "",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         rented: false,
-        userId: authUser.uid,
-        userName: `${authUser.firstName || ''} ${authUser.lastName || ''}`.trim() || "You",
-        firstName: authUser.firstName || "",
-        lastName: authUser.lastName || "",
-        userAvatar: authUser.avatar || authUser.photoURL || "",
-      };
-      await addDoc(collection(db, "vendorListings"), formatted);
+      });
     } catch (err) {
-      console.error("Failed to add vendor listing:", err);
+      console.error("Add vendor failed:", err);
       Alert.alert("Error", "Failed to create vendor listing.");
+      throw err;
     }
   };
 
@@ -304,7 +285,7 @@ export const ListingProvider = ({ children }) => {
     try {
       await deleteDoc(doc(db, "vendorListings", id));
     } catch (err) {
-      console.error("Failed to delete vendor listing:", err);
+      console.error("Delete vendor failed:", err);
       Alert.alert("Error", "Failed to delete vendor listing.");
     }
   };
@@ -312,36 +293,36 @@ export const ListingProvider = ({ children }) => {
   const markVendorListingAsRented = async (id) => {
     try {
       const ref = doc(db, "vendorListings", id);
-      await updateDoc(ref, {
-        rented: true,
-        updatedAt: serverTimestamp(),
-      });
+      await updateDoc(ref, { rented: true, updatedAt: serverTimestamp() });
     } catch (err) {
-      console.error("Failed to mark vendor listing as rented:", err);
+      console.error("Mark vendor rented failed:", err);
       Alert.alert("Error", "Failed to update vendor rental status.");
     }
   };
 
+  // ────────────────────────────────────────────────
+  // Context value
+  // ────────────────────────────────────────────────
+  const value = {
+    listings,
+    loading,
+    addListing,
+    updateListing,
+    deleteListing,
+    markAsRented,
+  };
+
+  const vendorValue = {
+    vendorListings,
+    loading,
+    addVendorListing,
+    deleteVendorListing,
+    markVendorListingAsRented,
+  };
+
   return (
-    <ListingContext.Provider
-      value={{
-        listings,
-        loading,
-        addListing,
-        updateListing,
-        deleteListing,
-        markAsRented,
-      }}
-    >
-      <VendorListingContext.Provider
-        value={{
-          vendorListings,
-          loading,
-          addVendorListing,
-          deleteVendorListing,
-          markVendorListingAsRented,
-        }}
-      >
+    <ListingContext.Provider value={value}>
+      <VendorListingContext.Provider value={vendorValue}>
         {children}
       </VendorListingContext.Provider>
     </ListingContext.Provider>

@@ -104,7 +104,6 @@ const amenityLabels = {
   concierge: "Concierge Service",
 };
 
-// House Rules icons & labels (unchanged)
 const houseRuleIcons = {
   nosmoking: { icon: "close-circle-outline", color: "#F44336" },
   noparties: { icon: "beer-outline", color: "#9C27B0" },
@@ -170,17 +169,30 @@ export default function HotelBookingScreen({ route }) {
   const navigation = useNavigation();
 
   const images = listing?.images || [];
-  const originalPricePerNight = listing?.pricePerNight || 0;
+  const hasMultiple = images.length > 1;
+  const imageCount = images.length;
+
+  // ────────────────────────────────────────────────
+  // PRICE LOGIC – Use guest-facing price (includes 11%)
+  // ────────────────────────────────────────────────
+  const hostPricePerNight = listing?.pricePerNight || 0;
+  const savedGuestPricePerNight = listing?.guestPricePerNight || 0;
+
+  // Use saved value if available, otherwise recalculate as fallback
+  const guestPricePerNight =
+    savedGuestPricePerNight > 0
+      ? savedGuestPricePerNight
+      : Math.round(hostPricePerNight * 1.11);
 
   const cancellationPolicy = listing?.cancellationPolicy || "refundable";
   const discountPercent = listing?.nonRefundableDiscountPercent || 0;
   const isNonRefundable = cancellationPolicy === "nonRefundable";
 
-  // Calculate discounted price only for non-refundable bookings
-  const finalPricePerNight =
+  // Apply discount on the guest price (what the guest actually pays)
+  const finalGuestPricePerNight =
     isNonRefundable && discountPercent > 0
-      ? Math.round(originalPricePerNight * (1 - discountPercent / 100))
-      : originalPricePerNight;
+      ? Math.round(guestPricePerNight * (1 - discountPercent / 100))
+      : guestPricePerNight;
 
   const amenities = Array.isArray(listing?.amenities)
     ? listing.amenities.map((a) =>
@@ -229,7 +241,7 @@ export default function HotelBookingScreen({ route }) {
   };
 
   const nights = calculateNights();
-  const totalPrice = nights * finalPricePerNight;
+  const totalPrice = nights * finalGuestPricePerNight;
 
   const formatDate = (date) => {
     if (!date) return "Select date";
@@ -254,13 +266,15 @@ export default function HotelBookingScreen({ route }) {
       Alert.alert("Invalid Dates", "Check-out must be after check-in.");
       return;
     }
+
     navigation.navigate("GuestDetails", {
       listing,
       checkIn: checkIn.toISOString(),
       checkOut: checkOut.toISOString(),
       nights,
-      pricePerNight: originalPricePerNight,           // original for reference
-      totalAmount: totalPrice,                        // discounted total
+      pricePerNight: finalGuestPricePerNight,     // ← guest sees & pays this
+      originalHostPrice: hostPricePerNight,       // optional: if backend needs it
+      totalAmount: totalPrice,
       isNonRefundable,
       discountPercent,
     });
@@ -300,7 +314,25 @@ export default function HotelBookingScreen({ route }) {
             >
               {images.length > 0 ? (
                 images.map((img, idx) => (
-                  <Image key={idx} source={{ uri: img }} style={styles.heroImage} resizeMode="cover" />
+                  <View key={idx} style={styles.imageWrapper}>
+                    <Image
+                      source={{ uri: img }}
+                      style={styles.heroImage}
+                      resizeMode="cover"
+                    />
+
+                    {hasMultiple && idx === 0 && (
+                      <View style={styles.imageCountBadge}>
+                        <Ionicons
+                          name="camera-outline"
+                          size={14}
+                          color="#fff"
+                          style={{ marginRight: 5 }}
+                        />
+                        <Text style={styles.imageCountText}>{imageCount}</Text>
+                      </View>
+                    )}
+                  </View>
                 ))
               ) : (
                 <View style={[styles.heroImage, styles.noImageContainer]}>
@@ -312,7 +344,6 @@ export default function HotelBookingScreen({ route }) {
           </View>
         </TouchableOpacity>
 
-        {/* Back Arrow */}
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backButtonOverlay}
@@ -321,16 +352,6 @@ export default function HotelBookingScreen({ route }) {
           <Ionicons name="arrow-back" size={32} color="#fff" />
         </TouchableOpacity>
 
-        {/* Image Counter */}
-        {images.length > 1 && (
-          <View style={styles.imageCounter}>
-            <Text style={styles.counterText}>
-              {currentImageIndex + 1} / {images.length}
-            </Text>
-          </View>
-        )}
-
-        {/* Fullscreen Hint */}
         {images.length > 0 && (
           <View style={styles.fullscreenHint}>
             <Ionicons name="expand-outline" size={24} color="#fff" />
@@ -345,21 +366,20 @@ export default function HotelBookingScreen({ route }) {
           <Ionicons name="location-outline" size={16} color="#017a6b" /> {listing.location}
         </Text>
 
-        {/* Price display with discount */}
         <View style={styles.priceContainer}>
           {isNonRefundable && discountPercent > 0 ? (
             <>
               <Text style={styles.originalPrice}>
-                ₦{originalPricePerNight.toLocaleString()}
+                ₦{guestPricePerNight.toLocaleString()}
               </Text>
               <Text style={styles.discountedPrice}>
-                ₦{finalPricePerNight.toLocaleString()}
+                ₦{finalGuestPricePerNight.toLocaleString()}
                 <Text style={styles.perNight}> / night</Text>
               </Text>
             </>
           ) : (
             <Text style={styles.price}>
-              ₦{originalPricePerNight.toLocaleString()}
+              ₦{finalGuestPricePerNight.toLocaleString()}
               <Text style={styles.perNight}> / night</Text>
             </Text>
           )}
@@ -373,7 +393,42 @@ export default function HotelBookingScreen({ route }) {
           )}
         </View>
 
-        {/* Date Selection */}
+        {(listing?.bedrooms != null || listing?.bathrooms != null || listing?.toilets != null) && (
+          <View style={[
+            styles.featuresCard,
+            { backgroundColor: isDark ? "#1e1e1e" : "#f8f9fa" }
+          ]}>
+            <View style={styles.featuresRow}>
+              {listing?.bedrooms != null && (
+                <View style={styles.featureColumn}>
+                  <Text style={styles.featureIcon}>🛏️</Text>
+                  <Text style={[styles.featureText, { color: isDark ? "#e0e0e0" : "#333" }]}>
+                    {listing.bedrooms} {listing.bedrooms === 1 ? "Bedroom" : "Bedrooms"}
+                  </Text>
+                </View>
+              )}
+
+              {listing?.bathrooms != null && (
+                <View style={styles.featureColumn}>
+                  <Text style={styles.featureIcon}>🛁</Text>
+                  <Text style={[styles.featureText, { color: isDark ? "#e0e0e0" : "#333" }]}>
+                    {listing.bathrooms} {listing.bathrooms === 1 ? "Bathroom" : "Bathrooms"}
+                  </Text>
+                </View>
+              )}
+
+              {listing?.toilets != null && (
+                <View style={styles.featureColumn}>
+                  <Text style={styles.featureIcon}>🚽</Text>
+                  <Text style={[styles.featureText, { color: isDark ? "#e0e0e0" : "#333" }]}>
+                    {listing.toilets} {listing.toilets === 1 ? "Toilet" : "Toilets"}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
         <View style={styles.dateSection}>
           <Text style={[styles.sectionTitle, { color: isDark ? "#fff" : "#000" }]}>
             Select Dates
@@ -414,7 +469,6 @@ export default function HotelBookingScreen({ route }) {
           )}
         </View>
 
-        {/* Amenities */}
         {amenities.length > 0 && (
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: isDark ? "#fff" : "#000" }]}>
@@ -446,7 +500,6 @@ export default function HotelBookingScreen({ route }) {
           </View>
         )}
 
-        {/* House Rules */}
         {houseRules.length > 0 && (
           <View style={[styles.section, { marginTop: 40 }]}>
             <Text style={[styles.sectionTitle, { color: isDark ? "#fff" : "#000" }]}>
@@ -478,7 +531,6 @@ export default function HotelBookingScreen({ route }) {
           </View>
         )}
 
-        {/* Continue Button */}
         <View style={styles.buttonWrapper}>
           <TouchableOpacity
             style={[
@@ -508,7 +560,6 @@ export default function HotelBookingScreen({ route }) {
         <View style={{ height: 120 }} />
       </View>
 
-      {/* Date Pickers */}
       {showCheckIn && (
         <DateTimePicker
           value={checkIn || new Date()}
@@ -546,9 +597,14 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     height: "100%",
   },
-  heroImage: {
+  imageWrapper: {
     width: SCREEN_WIDTH,
     height: 360,
+    position: "relative",
+  },
+  heroImage: {
+    width: "100%",
+    height: "100%",
   },
   noImageContainer: {
     backgroundColor: "#f0f0f0",
@@ -566,19 +622,22 @@ const styles = StyleSheet.create({
     left: 16,
     zIndex: 10,
   },
-  imageCounter: {
+  imageCountBadge: {
     position: "absolute",
     bottom: 28,
     right: 16,
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "rgba(0,0,0,0.6)",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
+    zIndex: 10,
   },
-  counterText: {
+  imageCountText: {
     color: "#fff",
     fontSize: 14,
-    fontWeight: "bold",
+    fontWeight: "600",
   },
   fullscreenHint: {
     position: "absolute",
@@ -604,7 +663,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   priceContainer: {
-    marginBottom: 32,
+    marginBottom: 20,
   },
   price: {
     fontSize: 28,
@@ -639,6 +698,33 @@ const styles = StyleSheet.create({
     color: "#15803d",
     fontWeight: "600",
     fontSize: 14,
+  },
+  featuresCard: {
+    borderRadius: 16,
+    marginBottom: 30,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    alignSelf: "stretch",
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  featuresRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+  },
+  featureColumn: {
+    alignItems: "center",
+    minWidth: 80,
+  },
+  featureIcon: {
+    fontSize: 20,
+    marginBottom: 6,
+  },
+  featureText: {
+    fontSize: 13,
+    fontWeight: "500",
+    textAlign: "center",
   },
   dateSection: {
     marginBottom: 40,

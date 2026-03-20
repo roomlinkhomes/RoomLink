@@ -13,6 +13,7 @@ import {
   Share,
   Dimensions,
   Animated,
+  ScrollView,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
@@ -43,11 +44,23 @@ const getFullName = (userData) => {
   return "User";
 };
 
-const timeAgo = (date) => {
-  if (!date) return "";
+const timeAgo = (dateInput) => {
+  let date;
+
+  if (dateInput?.toDate && typeof dateInput.toDate === "function") {
+    date = dateInput.toDate();
+  } else if (dateInput instanceof Date) {
+    date = dateInput;
+  } else if (typeof dateInput === "string" || typeof dateInput === "number") {
+    date = new Date(dateInput);
+  } else {
+    return "";
+  }
+
+  if (isNaN(date.getTime())) return "";
+
   const now = new Date();
-  const past = new Date(date);
-  const diff = (now - past) / 1000;
+  const diff = (now - date) / 1000;
   if (diff < 60) return `${Math.floor(diff)}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -65,24 +78,48 @@ const safeString = (value, fallback = "Not specified") => {
 export default function HotelFeed({ navigation, scrollY, onScroll }) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
-  const { listings = [] } = useContext(ListingContext) || {};
+  const { listings = [], loading } = useContext(ListingContext) || {};
   const { user: currentUser } = useContext(UserContext) || {};
   const [posts, setPosts] = useState([]);
   const [menuVisible, setMenuVisible] = useState(null);
   const [userInfoMap, setUserInfoMap] = useState({});
 
   useEffect(() => {
-    const hotelListings = listings.filter((l) => l.listingType === "hotels");
+    console.log("[HotelFeed] listings received from context:", listings.length);
+
+    const hotelListings = listings
+      .filter((l) => l.listingType === "hotels")
+      .map((item) => {
+        let createdAt = item.createdAt;
+
+        if (createdAt?.toDate && typeof createdAt.toDate === "function") {
+          createdAt = createdAt.toDate();
+        } else if (typeof createdAt === "string" || typeof createdAt === "number") {
+          createdAt = new Date(createdAt);
+        } else if (!(createdAt instanceof Date) || isNaN(createdAt.getTime())) {
+          createdAt = new Date();
+        }
+
+        return {
+          ...item,
+          createdAt,
+        };
+      })
+      .sort((a, b) => b.createdAt - a.createdAt);
+
+    console.log("[HotelFeed] Processed hotel posts count:", hotelListings.length);
+
     setPosts(hotelListings);
   }, [listings]);
 
   useEffect(() => {
     const fetchUserInfo = async () => {
       const uniqueUserIds = [...new Set(posts.map((p) => p.userId).filter(Boolean))];
-      const newInfo = {};
+      const newInfo = { ...userInfoMap };
+
       await Promise.all(
         uniqueUserIds.map(async (uid) => {
-          if (!userInfoMap[uid]) {
+          if (!newInfo[uid]) {
             try {
               const userDoc = await getDoc(doc(db, "users", uid));
               if (userDoc.exists()) {
@@ -95,30 +132,21 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
                   reviewCount: data.reviewCount || 0,
                 };
               } else {
-                newInfo[uid] = {
-                  name: "User",
-                  avatar: null,
-                  verificationType: null,
-                  averageRating: 0,
-                  reviewCount: 0,
-                };
+                newInfo[uid] = { name: "User", avatar: null, verificationType: null, averageRating: 0, reviewCount: 0 };
               }
             } catch (err) {
-              newInfo[uid] = {
-                name: "User",
-                avatar: null,
-                verificationType: null,
-                averageRating: 0,
-                reviewCount: 0,
-              };
+              console.warn(`Failed to fetch user ${uid}:`, err);
+              newInfo[uid] = { name: "User", avatar: null, verificationType: null, averageRating: 0, reviewCount: 0 };
             }
           }
         })
       );
-      setUserInfoMap((prev) => ({ ...prev, ...newInfo }));
+
+      setUserInfoMap(newInfo);
     };
+
     if (posts.length > 0) fetchUserInfo();
-  }, [posts, userInfoMap]);
+  }, [posts]);
 
   const dynamicStyles = useMemo(
     () => ({
@@ -141,7 +169,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
     try {
       await Share.share({
         message: `Check out this hotel/short-let:\n${item.title}\n${formatPricePerNight(
-          item.pricePerNight
+          item.guestPricePerNight || item.pricePerNight
         )}\nhttps://roomlink.homes/listing/${item.id}`,
       });
     } catch (err) {}
@@ -173,7 +201,11 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
       userInfo.avatar || (isMyPost ? currentUser?.photoURL || currentUser?.avatar : null);
     const verificationType = userInfo.verificationType;
     const hasRating = userInfo.averageRating > 0 || userInfo.reviewCount > 0;
+
     const images = Array.isArray(item.images) && item.images.length > 0 ? item.images : [];
+    const hasMultiple = images.length > 1;
+    const imageCount = images.length;
+
     const isBoosted = item.boostedUntil && new Date(item.boostedUntil) > new Date();
 
     return (
@@ -199,15 +231,9 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
             <View style={styles.nameContainer}>
               <View style={styles.nameRow}>
                 <Text style={[styles.userName, dynamicStyles.textColor]}>{fullName}</Text>
-                {verificationType === "vendor" && (
-                  <YellowBadge width={24} height={24} style={{ marginLeft: 6 }} />
-                )}
-                {verificationType === "studentLandlord" && (
-                  <BlueBadge width={24} height={24} style={{ marginLeft: 6 }} />
-                )}
-                {verificationType === "realEstate" && (
-                  <RedBadge width={24} height={24} style={{ marginLeft: 6 }} />
-                )}
+                {verificationType === "vendor" && <YellowBadge width={24} height={24} style={{ marginLeft: 6 }} />}
+                {verificationType === "studentLandlord" && <BlueBadge width={24} height={24} style={{ marginLeft: 6 }} />}
+                {verificationType === "realEstate" && <RedBadge width={24} height={24} style={{ marginLeft: 6 }} />}
               </View>
 
               <View style={styles.secondaryRow}>
@@ -241,7 +267,6 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
               </View>
             </View>
 
-            {/* ← 3-dot menu moved here — same position as in Home.jsx */}
             <TouchableOpacity
               onPress={() => setMenuVisible(menuVisible === index ? null : index)}
               style={styles.menuButton}
@@ -274,7 +299,36 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
             )}
 
             {images.length > 0 ? (
-              <Image source={{ uri: images[0] }} style={styles.postImage} resizeMode="cover" />
+              <View style={styles.imagesContainer}>
+                <ScrollView
+                  horizontal
+                  pagingEnabled
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.imageScroll}
+                >
+                  {images.map((imgUri, imgIndex) => (
+                    <View key={imgIndex} style={styles.imageWrapper}>
+                      <Image
+                        source={{ uri: imgUri }}
+                        style={styles.postImage}
+                        resizeMode="cover"
+                      />
+
+                      {hasMultiple && imgIndex === 0 && (
+                        <View style={styles.imageCountBadge}>
+                          <Ionicons
+                            name="camera-outline"
+                            size={14}
+                            color="#fff"
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text style={styles.imageCountText}>{imageCount}</Text>
+                        </View>
+                      )}
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
             ) : (
               <View
                 style={[
@@ -293,7 +347,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
               </Text>
 
               <Text style={[styles.price, dynamicStyles.priceColor]}>
-                {formatPricePerNight(item.pricePerNight)}
+                {formatPricePerNight(item.guestPricePerNight || item.pricePerNight)}
               </Text>
 
               <View style={styles.locationRow}>
@@ -323,6 +377,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
     <View style={[styles.container, dynamicStyles.containerBg]}>
       <Animated.FlatList
         data={posts}
+        extraData={posts.length}
         keyExtractor={(item, index) => `${item.id || "hotel-unknown"}-${index}`}
         renderItem={renderPost}
         contentContainerStyle={{ paddingTop: 180, paddingBottom: 60 }}
@@ -332,10 +387,10 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={[styles.emptyText, dynamicStyles.textColor]}>
-              No hotel or short-let listings yet.
+              {loading ? "Loading hotels..." : "No hotel or short-let listings yet."}
             </Text>
             <Text style={[styles.emptySubtext, dynamicStyles.secondaryText]}>
-              Be the first to post one!
+              {loading ? "Please wait..." : "Be the first to post one!"}
             </Text>
           </View>
         }
@@ -418,14 +473,47 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
-  // ← Re-added from Home.jsx style (same look & feel)
   menuButton: {
     padding: 8,
     marginLeft: 8,
     borderRadius: 20,
   },
 
-  postImage: { width: SCREEN_WIDTH, height: 250 },
+  // ── New styles for multi-image carousel ────────────────────────────────
+  imagesContainer: {
+    position: "relative",
+  },
+  imageScroll: {
+    width: SCREEN_WIDTH,
+    height: 250,
+  },
+  imageWrapper: {
+    width: SCREEN_WIDTH,
+    height: 250,
+  },
+  postImage: {
+    width: "100%",
+    height: "100%",
+  },
+
+  imageCountBadge: {
+    position: "absolute",
+    top: 12,
+    left: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.65)",
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    zIndex: 10,
+  },
+  imageCountText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  // ──────────────────────────────────────────────────────────────────────
 
   listingInfo: { padding: 10 },
 

@@ -11,7 +11,10 @@ import {
   Alert,
   ActivityIndicator,
   FlatList,
+  Modal,
   TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
@@ -22,8 +25,8 @@ import {
   where,
   getDocs,
   addDoc,
-  updateDoc,
   doc,
+  setDoc,
   serverTimestamp,
 } from "firebase/firestore";
 
@@ -34,10 +37,11 @@ export default function RefundScreen() {
 
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refundReason, setRefundReason] = useState(""); // New: user enters reason
-  const [selectedBooking, setSelectedBooking] = useState(null); // For showing reason input
+  const [refundReason, setRefundReason] = useState("");
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Fetch user's recent/active confirmed bookings
   useEffect(() => {
     const fetchUserBookings = async () => {
       const user = auth.currentUser;
@@ -49,6 +53,8 @@ export default function RefundScreen() {
 
       try {
         setLoading(true);
+        console.log("Fetching bookings for user:", user.uid);
+
         const now = new Date();
         const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
@@ -62,35 +68,38 @@ export default function RefundScreen() {
         const userBookings = [];
 
         querySnapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          const checkOutDate = data.checkOut ? new Date(data.checkOut) : null;
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            const checkOutDate = data.checkOut ? new Date(data.checkOut) : null;
 
-          const isRecent =
-            !checkOutDate ||
-            checkOutDate > now ||
-            checkOutDate >= twentyFourHoursAgo;
+            const isRecent =
+              !checkOutDate ||
+              checkOutDate > now ||
+              checkOutDate >= twentyFourHoursAgo;
 
-          if (isRecent) {
-            userBookings.push({
-              id: docSnap.id,
-              ...data,
-              checkIn: data.checkIn,
-              checkOut: data.checkOut,
-              nights: data.nights,
-              totalAmount: data.totalAmount || 0,
-              isNonRefundable: data.isNonRefundable || false,
-              discountPercent: data.discountPercent || 0,
-              listingTitle: data.listingTitle || "Unknown Listing",
-              listingLocation: data.listingLocation || "—",
-              hostId: data.hostId || null,      // ← host UID
-              hostName: data.hostName || "Host", // ← if you store host name in booking
-            });
+            if (isRecent) {
+              userBookings.push({
+                id: docSnap.id,
+                ...data,
+                checkIn: data.checkIn,
+                checkOut: data.checkOut,
+                nights: data.nights,
+                totalAmount: data.totalAmount || 0,
+                isNonRefundable: data.isNonRefundable || false,
+                discountPercent: data.discountPercent || 0,
+                listingTitle: data.listingTitle || "Unknown Listing",
+                listingLocation: data.listingLocation || "—",
+                hostId: data.hostId || null,
+                hostName: data.hostName || "Host",
+              });
+            }
           }
         });
 
+        console.log("Loaded bookings count:", userBookings.length);
         setBookings(userBookings);
       } catch (error) {
-        console.error("Error fetching bookings:", error);
+        console.error("Error fetching bookings:", error.code || error.message);
         Alert.alert("Error", "Could not load your bookings. Please try again.");
       } finally {
         setLoading(false);
@@ -109,7 +118,7 @@ export default function RefundScreen() {
     });
   };
 
-  const handleRequestRefund = (booking) => {
+  const openRefundModal = (booking) => {
     if (booking.isNonRefundable) {
       Alert.alert(
         "Non-Refundable Booking",
@@ -119,64 +128,72 @@ export default function RefundScreen() {
       return;
     }
 
-    // Show reason input + confirmation
     setSelectedBooking(booking);
-    setRefundReason(""); // Reset reason
+    setRefundReason("");
+    setModalVisible(true);
+  };
 
-    Alert.alert(
-      "Request Refund",
-      `Please explain why you're requesting a refund for:\n\n${booking.listingTitle}\nTotal: ₦${booking.totalAmount.toLocaleString()}`,
-      [
-        { text: "Cancel", style: "cancel" },
+  const submitRefundRequest = async () => {
+    if (!refundReason.trim()) {
+      Alert.alert("Reason Required", "Please explain why you're requesting a refund.");
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error("No user logged in");
+
+      console.log("Submitting refund for booking:", selectedBooking.id);
+
+      // Add refund request document
+      await addDoc(collection(db, "refunds"), {
+        bookingId: selectedBooking.id,
+        userId: currentUser.uid,
+        userName: currentUser.displayName || "Unknown User",
+        userEmail: currentUser.email || "unknown@email.com",
+        hostId: selectedBooking.hostId || null,
+        hostName: selectedBooking.hostName || "Host",
+        listingTitle: selectedBooking.listingTitle,
+        amount: selectedBooking.totalAmount,
+        reason: refundReason.trim(),
+        requestedAt: serverTimestamp(),
+        status: "pending",
+        createdAt: serverTimestamp(),
+      });
+
+      // Update booking (consistent with BecomeVendorScreen: setDoc + merge)
+      const bookingRef = doc(db, "bookings", selectedBooking.id);
+      await setDoc(
+        bookingRef,
         {
-          text: "Submit Request",
-          style: "destructive",
-          onPress: async () => {
-            if (!refundReason.trim()) {
-              Alert.alert("Reason Required", "Please provide a reason for the refund request.");
-              return;
-            }
-
-            try {
-              // 1. Create refund request document in "refunds" collection
-              await addDoc(collection(db, "refunds"), {
-                bookingId: booking.id,
-                userId: auth.currentUser.uid,
-                userName: auth.currentUser.displayName || "Unknown User",
-                userEmail: auth.currentUser.email || "unknown@email.com",
-                hostId: booking.hostId || null,
-                hostName: booking.hostName || "Host",
-                listingTitle: booking.listingTitle,
-                amount: booking.totalAmount,
-                reason: refundReason.trim(),
-                requestedAt: serverTimestamp(),
-                status: "pending", // pending / approved / rejected
-                createdAt: serverTimestamp(),
-              });
-
-              // 2. Optional: Update booking status
-              await updateDoc(doc(db, "bookings", booking.id), {
-                status: "refund_requested",
-                refundRequestedAt: serverTimestamp(),
-                refundReason: refundReason.trim(),
-              });
-
-              Alert.alert(
-                "Refund Requested",
-                "Your request has been submitted. We'll notify you once processed (usually 5–10 business days).",
-                [{ text: "OK", onPress: () => navigation.goBack() }]
-              );
-
-              // Optional: Refresh bookings list
-              setBookings((prev) => prev.filter((b) => b.id !== booking.id));
-            } catch (error) {
-              console.error("Refund request failed:", error);
-              Alert.alert("Error", "Could not submit refund request. Please try again.");
-            }
-          },
+          status: "refund_requested",
+          refundRequestedAt: serverTimestamp(),
+          refundReason: refundReason.trim(),
         },
-      ]
-    );
+        { merge: true }
+      );
+
+      Alert.alert(
+        "Refund Requested",
+        "Your request has been submitted successfully. We'll review it and get back to you (usually within 5–10 business days).",
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              setModalVisible(false);
+              setBookings((prev) => prev.filter((b) => b.id !== selectedBooking.id));
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.error("Refund request failed:", error.code || error.message);
+      Alert.alert("Error", "Failed to submit refund request. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const renderBookingItem = ({ item }) => (
@@ -224,7 +241,7 @@ export default function RefundScreen() {
           item.isNonRefundable && styles.refundButtonDisabled,
           isDark && styles.refundButtonDark,
         ]}
-        onPress={() => handleRequestRefund(item)}
+        onPress={() => openRefundModal(item)}
         disabled={item.isNonRefundable}
       >
         <Ionicons name="cash-outline" size={20} color="#fff" />
@@ -238,17 +255,9 @@ export default function RefundScreen() {
   return (
     <SafeAreaView style={[styles.container, isDark && styles.containerDark]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
-          >
-            <Ionicons
-              name="chevron-back"
-              size={28}
-              color={isDark ? "#fff" : "#333"}
-            />
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+            <Ionicons name="chevron-back" size={28} color={isDark ? "#fff" : "#333"} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, isDark && styles.textLight]}>
             Refund / Cancellation
@@ -264,13 +273,12 @@ export default function RefundScreen() {
           </View>
         ) : bookings.length === 0 ? (
           <View style={styles.noBookingsContainer}>
-            <Ionicons
-              name="calendar-remove"
-              size={80}
-              color={isDark ? "#444" : "#ccc"}
-            />
+            <View style={styles.emptyIconContainer}>
+              <Ionicons name="calendar" size={70} color={isDark ? "#4b5563" : "#9ca3af"} />
+              <Ionicons name="close-circle" size={32} color="#ef4444" style={styles.emptyCross} />
+            </View>
             <Text style={[styles.noBookingsText, isDark && styles.textLight]}>
-              No recent active bookings found
+              No eligible bookings found
             </Text>
             <Text style={[styles.noBookingsSubText, isDark && styles.textMuted]}>
               You can only request refunds for upcoming stays or bookings ended within the last 24 hours.
@@ -299,43 +307,97 @@ export default function RefundScreen() {
 
         <View style={{ height: 100 }} />
       </ScrollView>
+
+      {/* Refund Reason Modal */}
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContainer, isDark && styles.modalContainerDark]}>
+              <View style={styles.modalHeader}>
+                <TouchableOpacity onPress={() => setModalVisible(false)}>
+                  <Ionicons name="close" size={28} color={isDark ? "#fff" : "#333"} />
+                </TouchableOpacity>
+                <Text style={[styles.modalTitle, isDark && styles.textLight]}>
+                  Request Refund
+                </Text>
+                <View style={{ width: 28 }} />
+              </View>
+
+              {selectedBooking ? (
+                <View style={styles.bookingSummary}>
+                  <Text style={[styles.summaryTitle, isDark && styles.textLight]}>
+                    {selectedBooking.listingTitle || "Booking"}
+                  </Text>
+                  <Text style={[styles.summaryDates, isDark && styles.textMuted]}>
+                    {formatDate(selectedBooking.checkIn || "")} – {formatDate(selectedBooking.checkOut || "")}
+                  </Text>
+                  <Text style={[styles.summaryAmount, isDark && styles.textLight]}>
+                    Total Paid: ₦{(selectedBooking.totalAmount || 0).toLocaleString()}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={{ color: isDark ? "#ff6b6b" : "#ef4444", textAlign: "center", marginBottom: 20 }}>
+                  No booking selected — please try again
+                </Text>
+              )}
+
+              <Text style={[styles.inputLabel, isDark && styles.textLight]}>
+                Why are you requesting a refund?
+              </Text>
+              <TextInput
+                style={[styles.reasonInput, isDark && styles.reasonInputDark]}
+                multiline
+                numberOfLines={6}
+                placeholder="Tell us your reason (e.g., change of plans, emergency, etc.)"
+                placeholderTextColor={isDark ? "#6b7280" : "#9ca3af"}
+                value={refundReason}
+                onChangeText={setRefundReason}
+                textAlignVertical="top"
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.submitButton,
+                  (!refundReason.trim() || submitting) && styles.submitButtonDisabled,
+                ]}
+                onPress={submitRefundRequest}
+                disabled={!refundReason.trim() || submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.submitButtonText}>Submit Refund Request</Text>
+                )}
+              </TouchableOpacity>
+
+              <Text style={[styles.noteText, isDark && styles.noteTextDark]}>
+                We'll review your request and respond within 5–10 business days.
+              </Text>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
 
-// Styles remain unchanged (copy from your original file)
+// styles remain unchanged (your original ones are fine)
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f8fafc",
-  },
-  containerDark: {
-    backgroundColor: "#0f1117",
-  },
-  scrollContent: {
-    padding: 20,
-    paddingTop: 8,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 28,
-  },
-  backButton: {
-    padding: 8,
-    marginRight: 12,
-  },
-  headerTitle: {
-    fontSize: 26,
-    fontWeight: "700",
-    color: "#111",
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#111",
-    marginBottom: 16,
-  },
+  container: { flex: 1, backgroundColor: "#f8fafc" },
+  containerDark: { backgroundColor: "#0f1117" },
+  scrollContent: { padding: 20, paddingTop: 8 },
+  header: { flexDirection: "row", alignItems: "center", marginBottom: 28 },
+  backButton: { padding: 8, marginRight: 12 },
+  headerTitle: { fontSize: 26, fontWeight: "700", color: "#111" },
+  sectionTitle: { fontSize: 20, fontWeight: "700", color: "#111", marginBottom: 16 },
   bookingCard: {
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -343,40 +405,19 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "#e2e8f0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  bookingCardDark: {
-    backgroundColor: "#1e2535",
-    borderColor: "#334155",
-  },
-  bookingTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#111",
-    marginBottom: 4,
-  },
-  bookingLocation: {
-    fontSize: 14,
-    color: "#64748b",
-    marginBottom: 12,
-  },
-  dateRow: {
-    flexDirection: "row",
-    marginBottom: 16,
-  },
-  dateBlock: {
-    flex: 1,
-    alignItems: "center",
-  },
-  dateLabel: {
-    fontSize: 13,
-    color: "#94a3b8",
-    marginBottom: 4,
-  },
-  dateValue: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111",
-  },
+  bookingCardDark: { backgroundColor: "#1e2535", borderColor: "#334155" },
+  bookingTitle: { fontSize: 18, fontWeight: "700", color: "#111", marginBottom: 4 },
+  bookingLocation: { fontSize: 14, color: "#64748b", marginBottom: 12 },
+  dateRow: { flexDirection: "row", marginBottom: 16 },
+  dateBlock: { flex: 1, alignItems: "center" },
+  dateLabel: { fontSize: 13, color: "#94a3b8", marginBottom: 4 },
+  dateValue: { fontSize: 16, fontWeight: "600", color: "#111" },
   priceRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -385,22 +426,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "#e2e8f0",
   },
-  priceLabel: {
-    fontSize: 15,
-    color: "#475569",
-  },
-  priceValue: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111",
-  },
-  discountNote: {
-    fontSize: 13,
-    color: "#059669",
-    fontWeight: "500",
-    marginTop: 4,
-    textAlign: "right",
-  },
+  priceLabel: { fontSize: 15, color: "#475569" },
+  priceValue: { fontSize: 16, fontWeight: "600", color: "#111" },
+  discountNote: { fontSize: 13, color: "#059669", fontWeight: "500", marginTop: 4, textAlign: "right" },
   refundButton: {
     backgroundColor: "#ef4444",
     borderRadius: 20,
@@ -415,61 +443,79 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 6,
   },
-  refundButtonDark: {
-    backgroundColor: "#f87171",
-  },
-  refundButtonDisabled: {
-    backgroundColor: "#9ca3af",
-    shadowColor: "#000",
-  },
-  refundButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-    marginLeft: 10,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: 100,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: "#111",
-  },
-  noBookingsContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: 100,
-  },
-  noBookingsText: {
-    fontSize: 20,
-    fontWeight: "600",
-    color: "#111",
-    marginTop: 20,
-    textAlign: "center",
-  },
-  noBookingsSubText: {
-    fontSize: 15,
-    color: "#64748b",
-    marginTop: 12,
-    textAlign: "center",
-    marginBottom: 32,
-  },
+  refundButtonDark: { backgroundColor: "#f87171" },
+  refundButtonDisabled: { backgroundColor: "#9ca3af", shadowColor: "#000" },
+  refundButtonText: { color: "#fff", fontSize: 16, fontWeight: "700", marginLeft: 10 },
+  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", marginTop: 100 },
+  loadingText: { marginTop: 16, fontSize: 16, color: "#111" },
+  noBookingsContainer: { flex: 1, justifyContent: "center", alignItems: "center", marginTop: 100, paddingHorizontal: 40 },
+  emptyIconContainer: { position: "relative", marginBottom: 24 },
+  emptyCross: { position: "absolute", bottom: -8, right: -8 },
+  noBookingsText: { fontSize: 22, fontWeight: "600", color: "#111", marginTop: 16, textAlign: "center" },
+  noBookingsSubText: { fontSize: 15, color: "#64748b", marginTop: 12, textAlign: "center", marginBottom: 32 },
   backHomeButton: {
     backgroundColor: "#017a6b",
     borderRadius: 20,
     paddingVertical: 14,
     paddingHorizontal: 32,
+    shadowColor: "#017a6b",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
-  backHomeText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
+  backHomeText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   textLight: { color: "#f1f5f9" },
   textMuted: { color: "#94a3b8" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
+  modalContainer: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: Platform.OS === "ios" ? 40 : 20,
+    maxHeight: "85%",
+  },
+  modalContainerDark: { backgroundColor: "#1e2535" },
+  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
+  modalTitle: { fontSize: 22, fontWeight: "700", color: "#111" },
+  bookingSummary: {
+    backgroundColor: "rgba(241, 245, 249, 0.6)",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24,
+  },
+  summaryTitle: { fontSize: 18, fontWeight: "700", color: "#111", marginBottom: 8 },
+  summaryDates: { fontSize: 15, color: "#64748b", marginBottom: 8 },
+  summaryAmount: { fontSize: 17, fontWeight: "600", color: "#017a6b" },
+  inputLabel: { fontSize: 16, fontWeight: "600", color: "#111", marginBottom: 8 },
+  reasonInput: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 16,
+    padding: 16,
+    minHeight: 140,
+    fontSize: 16,
+    color: "#111",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    textAlignVertical: "top",
+    marginBottom: 20,
+  },
+  reasonInputDark: {
+    backgroundColor: "#2a2a2a",
+    color: "#e5e7eb",
+    borderColor: "#444",
+  },
+  submitButton: {
+    backgroundColor: "#ef4444",
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  submitButtonDisabled: { backgroundColor: "#9ca3af" },
+  submitButtonText: { color: "#fff", fontSize: 17, fontWeight: "700" },
+  noteText: { fontSize: 13, color: "#64748b", textAlign: "center" },
+  noteTextDark: { color: "#94a3b8" },
 });

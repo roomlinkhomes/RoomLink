@@ -1,4 +1,4 @@
-// screens/Home.jsx — FIXED: Re-filter posts on auth user change + context sync
+// screens/Home.jsx — FIXED: image count badge → top-left + camera icon + count
 import React, { useState, useEffect, useContext, useMemo, useRef, useCallback } from "react";
 import {
   View,
@@ -21,7 +21,7 @@ import {
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 import { ListingContext } from "../context/ListingContext";
-import { AuthContext } from "../context/AuthContext"; // ← FIXED: use real auth user
+import { AuthContext } from "../context/AuthContext";
 import Filter from "../component/Filter";
 import Billboard from "../component/Billboard";
 import ListingHeader from "../component/ListingHeader";
@@ -87,7 +87,7 @@ export default function Home({ navigation }) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const { listings = [], loading: contextLoading } = useContext(ListingContext) || {};
-  const { user: authUser } = useContext(AuthContext); // ← FIXED: real logged-in user
+  const { user: authUser } = useContext(AuthContext);
   const { activeTab, setActiveTab } = useListingTab();
   const insets = useSafeAreaInsets();
 
@@ -100,12 +100,10 @@ export default function Home({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  // Debug: Log auth user state
   useEffect(() => {
     console.log('[HOME DEBUG] Auth user:', authUser ? authUser.uid : 'NO USER');
   }, [authUser]);
 
-  // Re-filter/update posts when user, listings, tab, or category changes
   useEffect(() => {
     console.log('[HOME] Triggering post update → user:', authUser?.uid || 'none');
 
@@ -118,7 +116,7 @@ export default function Home({ navigation }) {
     let filtered = listings.filter((l) => l.listingType !== "hotels");
 
     if (activeTab === "hotels") {
-      filtered = []; // or load hotels if you have separate logic
+      filtered = [];
       console.log('[HOME] Active tab is hotels → cleared posts');
     }
 
@@ -137,7 +135,6 @@ export default function Home({ navigation }) {
     setPosts(filtered);
   }, [listings, authUser?.uid, activeTab, activeCategory, contextLoading]);
 
-  // Fetch missing user info for avatars/ratings
   useEffect(() => {
     const fetchMissingUserInfo = async () => {
       const uniqueUserIds = [...new Set(posts.map((p) => p.userId).filter(Boolean))];
@@ -178,19 +175,16 @@ export default function Home({ navigation }) {
     }
   }, [posts]);
 
-  // Skeleton timeout
   useEffect(() => {
     const timer = setTimeout(() => setShowSkeleton(false), 3000);
     return () => clearTimeout(timer);
   }, []);
 
-  // Global filter/scroll functions
   useEffect(() => {
     global.scrollToTop = () => {};
     global.openFilter = () => setFilterVisible(true);
     global.applyCategory = (category) => {
       setActiveCategory(category || "All");
-      // Re-filter immediately
       let filtered = listings.filter((l) => l.listingType !== "hotels");
       if (category && category !== "All") {
         const search = category.toString().toLowerCase();
@@ -381,9 +375,12 @@ export default function Home({ navigation }) {
                   {images.map((imgUri, imgIndex) => (
                     <View key={imgIndex} style={styles.imageWrapper}>
                       <Image source={{ uri: imgUri }} style={styles.postImage} resizeMode="cover" />
+
+                      {/* ← CHANGED: camera + count badge on first image, top-left, only if 2+ images */}
                       {hasMultiple && imgIndex === 0 && (
                         <View style={styles.imageCountBadge}>
-                          <Text style={styles.imageCountText}>1/{imageCount}</Text>
+                          <Ionicons name="camera-outline" size={14} color="#fff" style={{ marginRight: 4 }} />
+                          <Text style={styles.imageCountText}>{imageCount}</Text>
                         </View>
                       )}
                     </View>
@@ -674,17 +671,25 @@ const styles = StyleSheet.create({
   imageScroll: { width: SCREEN_WIDTH, height: 250 },
   imageWrapper: { width: SCREEN_WIDTH, height: 250 },
   postImage: { width: "100%", height: "100%" },
+
+  // ← CHANGED: position top-left, smaller padding, camera icon added
   imageCountBadge: {
     position: "absolute",
     top: 12,
-    right: 12,
+    left: 12,              // ← moved from right to left
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "rgba(0,0,0,0.65)",
     borderRadius: 16,
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     zIndex: 10,
   },
-  imageCountText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  imageCountText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+  },
 
   locationRow: {
     flexDirection: "row",

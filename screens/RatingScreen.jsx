@@ -1,3 +1,4 @@
+// ProductReviews.jsx — UPDATED: Single rating per user (edit instead of duplicate) + Block self-rating
 import React, { useContext, useState, useEffect, useMemo } from "react";
 import {
   View,
@@ -15,7 +16,7 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { UserContext } from "../context/UserContext";
 import { addReview } from "../firebase/reviewService";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc } from "firebase/firestore"; // ← updateDoc added
 import { db } from "../firebaseConfig";
 
 // Helper function: "X time ago" timestamp
@@ -24,10 +25,8 @@ const formatTimeAgo = (timestamp) => {
 
   let date;
   if (timestamp.toDate) {
-    // Firestore Timestamp
     date = timestamp.toDate();
   } else if (timestamp.seconds) {
-    // Raw Firestore object
     date = new Date(timestamp.seconds * 1000);
   } else if (timestamp instanceof Date) {
     date = timestamp;
@@ -68,6 +67,8 @@ export default function ProductReviews() {
   const colorScheme = useColorScheme();
   const isDarkMode = colorScheme === "dark";
 
+  const isSelf = currentUser?.uid === targetUserId; // ← NEW: Prevent self-rating
+
   const theme = {
     primary: "#28a745",
     text: isDarkMode ? "#e0e0e0" : "#212529",
@@ -86,6 +87,11 @@ export default function ProductReviews() {
   const [sellerName, setSellerName] = useState("Seller");
   const [sellerAvatar, setSellerAvatar] = useState(null);
   const [reviewerInfoMap, setReviewerInfoMap] = useState({});
+
+  // NEW: Track if current user already rated this seller (for edit mode)
+  const [userHasReview, setUserHasReview] = useState(false);
+  const [userReviewId, setUserReviewId] = useState(null);
+  const [userReviewRating, setUserReviewRating] = useState(0);
 
   const dynamicStyles = useMemo(
     () => ({
@@ -141,14 +147,40 @@ export default function ProductReviews() {
         safeData.length > 0
           ? safeData.reduce((sum, r) => sum + (typeof r.rating === "number" ? r.rating : 0), 0) / safeData.length
           : 0;
+
       setReviews(safeData);
       setAverageRating(avg);
+
+      // NEW: Detect if current user already rated (enables edit mode)
+      const userReview = safeData.find(
+        (r) => (r.reviewerId || r.uid) === currentUser?.uid
+      );
+      if (userReview) {
+        setUserHasReview(true);
+        setUserReviewId(userReview.id);
+        setUserReviewRating(userReview.rating || 0);
+      } else {
+        setUserHasReview(false);
+        setUserReviewId(null);
+        setUserReviewRating(0);
+      }
     } catch (err) {
       console.error("Error fetching reviews:", err);
     } finally {
       setLoading(false);
     }
   };
+
+  // NEW: Prefill stars when entering edit mode
+  useEffect(() => {
+    if (viewMode === "write") {
+      if (userHasReview) {
+        setSelectedRating(userReviewRating);
+      } else {
+        setSelectedRating(0);
+      }
+    }
+  }, [viewMode, userHasReview, userReviewRating]);
 
   useEffect(() => {
     const fetchReviewerInfo = async () => {
@@ -190,6 +222,10 @@ export default function ProductReviews() {
       Alert.alert("Rating Required", "Please select a star rating.");
       return;
     }
+    if (isSelf) {
+      Alert.alert("Not Allowed", "You cannot rate yourself.");
+      return;
+    }
     if (!currentUser || !currentUser.uid) {
       Alert.alert("Login Required", "You must be logged in to submit a rating.");
       return;
@@ -199,21 +235,33 @@ export default function ProductReviews() {
       currentUser.displayName || currentUser.email?.split("@")[0] || "Anonymous";
 
     try {
-      await addReview(
-        targetUserId,
-        selectedRating,
-        currentUser.uid,
-        reviewerName,
-        ""
-      );
-
-      Alert.alert("Success!", `You rated ${sellerName} ${selectedRating} star${selectedRating > 1 ? "s" : ""}!`);
+      if (userHasReview && userReviewId) {
+        // EDIT existing review (single rating enforced)
+        await updateDoc(
+          doc(db, "reviews", userReviewId), // ← Change "reviews" to your collection path if using subcollection (e.g. `users/${targetUserId}/reviews/${userReviewId}`)
+          {
+            rating: selectedRating,
+            timestamp: new Date(),
+          }
+        );
+        Alert.alert("Success!", `Your rating has been updated to ${selectedRating} stars!`);
+      } else {
+        // NEW review
+        await addReview(
+          targetUserId,
+          selectedRating,
+          currentUser.uid,
+          reviewerName,
+          ""
+        );
+        Alert.alert("Success!", `You rated ${sellerName} ${selectedRating} star${selectedRating > 1 ? "s" : ""}!`);
+      }
 
       setViewMode("reviews");
       setSelectedRating(0);
 
       setRefreshing(true);
-      await fetchReviews();
+      await fetchReviews(); // Refreshes list + userHasReview state
       setRefreshing(false);
     } catch (error) {
       console.error("Rating submit error:", error);
@@ -245,7 +293,6 @@ export default function ProductReviews() {
               <Text style={[styles.userName, { color: theme.text }]} numberOfLines={1}>
                 {fullName}
               </Text>
-              {/* TIME AGO TIMESTAMP */}
               <Text style={[styles.reviewDate, { color: theme.textSecondary }]}>
                 {formatTimeAgo(item.timestamp || item.createdAt)}
               </Text>
@@ -298,19 +345,33 @@ export default function ProductReviews() {
       <View style={[styles.ratingSummaryCard, dynamicStyles.ratingSummaryCard]}>
         <View style={styles.ratingHeader}>
           <Text style={[styles.ratingTitle, { color: theme.text }]}>Overall Rating</Text>
-          <TouchableOpacity
-            onPress={() => setViewMode(viewMode === "reviews" ? "write" : "reviews")}
-            style={styles.toggleButton}
-          >
-            <Text style={[styles.toggleText, { color: theme.primary }]}>
-              {viewMode === "reviews" ? "Add Rating" : "View Ratings"}
-            </Text>
-            <Ionicons
-              name={viewMode === "reviews" ? "add-circle-outline" : "list-outline"}
-              size={20}
-              color={theme.primary}
-            />
-          </TouchableOpacity>
+
+          {/* NEW: Hide toggle for self-rating */}
+          {!isSelf && (
+            <TouchableOpacity
+              onPress={() => setViewMode(viewMode === "reviews" ? "write" : "reviews")}
+              style={styles.toggleButton}
+            >
+              <Text style={[styles.toggleText, { color: theme.primary }]}>
+                {viewMode === "reviews"
+                  ? userHasReview
+                    ? "Edit Rating"
+                    : "Add Rating"
+                  : "View Ratings"}
+              </Text>
+              <Ionicons
+                name={
+                  viewMode === "reviews"
+                    ? userHasReview
+                      ? "create-outline"
+                      : "add-circle-outline"
+                    : "list-outline"
+                }
+                size={20}
+                color={theme.primary}
+              />
+            </TouchableOpacity>
+          )}
         </View>
 
         {loading || refreshing ? (
@@ -422,42 +483,57 @@ export default function ProductReviews() {
         onRefresh={fetchReviews}
       />
 
-      <View style={dynamicStyles.bottomActionBar}>
-        <TouchableOpacity
-          style={[
-            styles.actionButton,
-            {
-              backgroundColor:
-                (viewMode === "write" && selectedRating > 0) || viewMode === "reviews"
-                  ? theme.primary
-                  : "#aaa",
-            },
-          ]}
-          disabled={viewMode === "write" && selectedRating === 0}
-          onPress={async () => {
-            if (viewMode === "write") {
-              await handleSubmitRating();
-            } else {
-              setViewMode("write");
-              setSelectedRating(0);
-            }
-          }}
-        >
-          <Ionicons
-            name={viewMode === "write" ? "checkmark-circle-outline" : "pencil"}
-            size={20}
-            color="#fff"
-          />
-          <Text style={styles.buttonText}>
-            {viewMode === "write" ? "Submit Rating" : "Add Rating"}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {/* NEW: Hide bottom bar for self-rating */}
+      {!isSelf && (
+        <View style={dynamicStyles.bottomActionBar}>
+          <TouchableOpacity
+            style={[
+              styles.actionButton,
+              {
+                backgroundColor:
+                  (viewMode === "write" && selectedRating > 0) || viewMode === "reviews"
+                    ? theme.primary
+                    : "#aaa",
+              },
+            ]}
+            disabled={viewMode === "write" && selectedRating === 0}
+            onPress={async () => {
+              if (viewMode === "write") {
+                await handleSubmitRating();
+              } else {
+                setViewMode("write");
+              }
+            }}
+          >
+            <Ionicons
+              name={
+                viewMode === "write"
+                  ? "checkmark-circle-outline"
+                  : userHasReview
+                  ? "create-outline"
+                  : "pencil"
+              }
+              size={20}
+              color="#fff"
+            />
+            <Text style={styles.buttonText}>
+              {viewMode === "write"
+                ? userHasReview
+                  ? "Update Rating"
+                  : "Submit Rating"
+                : userHasReview
+                ? "Edit Rating"
+                : "Add Rating"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  // ... (unchanged - same as your original)
   headerCard: {
     backgroundColor: "#fff",
     borderBottomWidth: 1,
