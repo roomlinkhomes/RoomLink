@@ -20,12 +20,12 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import { NotificationContext } from "../context/NotificationContext";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-const TOP_OFFSET =
-  Platform.OS === "android" ? StatusBar.currentHeight || 35 : 70;
+const TOP_OFFSET = Platform.OS === "android" ? StatusBar.currentHeight || 35 : 70;
 
 export default function HomeTopHeader() {
   const navigation = useNavigation();
   const { notifications } = useContext(NotificationContext);
+
   const [menuVisible, setMenuVisible] = useState(false);
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
@@ -59,13 +59,13 @@ export default function HomeTopHeader() {
   const menuWidth = Math.round(SCREEN_WIDTH * 0.85);
   const slideX = useRef(new Animated.Value(menuWidth)).current;
 
+  // Updated Menu Items - Identity Verification removed, Host on RoomLink moved to top
   const menuItems = [
-    { id: "1", label: "Identity Verification", icon: "shield-checkmark-outline", screen: "IdentityVerification" },
+    { id: "5", label: "Host on RoomLink", icon: "business-outline", screen: "BecomeVendor" },
     { id: "2", label: "Settings", icon: "settings-outline", screen: "Settings" },
     { id: "3", label: "Post on billboard", icon: "megaphone-outline", screen: "AdsZone" },
     { id: "4", label: "Wallet", icon: "wallet-outline", screen: "Wallet" },
-    { id: "8", label: "Refund / Cancellation", icon: "arrow-undo-outline", screen: "RefundScreen" }, // ← FIXED: valid icon
-    { id: "5", label: "Host on RoomLink", icon: "business-outline", screen: "BecomeVendor" },
+    { id: "8", label: "Refund / Cancellation", icon: "arrow-undo-outline", screen: "RefundScreen" },
     { id: "6", label: "Help / Support", icon: "help-circle-outline", screen: "HelpSupport" },
     { id: "7", label: "Announcement / News", icon: "newspaper-outline", screen: "Announcements" },
   ];
@@ -102,6 +102,7 @@ export default function HomeTopHeader() {
     setSelectedCategory(cat);
     const ITEM_WIDTH = 100;
     scrollRef.current?.scrollTo({ x: index * ITEM_WIDTH, animated: true });
+
     if (typeof global?.applyCategory === "function") {
       try {
         global.applyCategory(cat);
@@ -164,7 +165,7 @@ export default function HomeTopHeader() {
           )}
         </View>
 
-        {/* Center Search Box – border now #000 */}
+        {/* Center Search Box */}
         <TouchableOpacity
           style={[
             styles.inlineSearchContainer,
@@ -179,10 +180,7 @@ export default function HomeTopHeader() {
         >
           <Ionicons name="search-outline" size={22} color={isDark ? "#aaa" : "#6b7280"} style={{ marginRight: 6 }} />
           <TextInput
-            style={[
-              styles.inlineSearchInput,
-              { color: isDark ? "#e5e7eb" : "#111827" },
-            ]}
+            style={[styles.inlineSearchInput, { color: isDark ? "#e5e7eb" : "#111827" }]}
             placeholder="Search rooms, hotels..."
             placeholderTextColor={isDark ? "#6b7280" : "#9ca3af"}
             editable={false}
@@ -249,7 +247,7 @@ export default function HomeTopHeader() {
         })}
       </ScrollView>
 
-      {/* Right-side Drawer */}
+      {/* Right-side Drawer Menu */}
       {menuVisible && (
         <Modal transparent visible={menuVisible} animationType="none" statusBarTranslucent>
           <TouchableOpacity

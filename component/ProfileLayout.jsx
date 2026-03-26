@@ -1,5 +1,5 @@
-// components/EliteProfile.jsx — FIXED: Cloud-persisted cover/header image using Firebase Storage (same as avatar)
-import React, { useState, useEffect, useMemo, useCallback, useContext } from "react";
+// components/EliteProfile.jsx
+import React, { useState, useEffect, useMemo, useContext } from "react";
 import {
   View,
   Text,
@@ -49,15 +49,17 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
   const isDark = scheme === "dark";
   const navigation = useNavigation();
   const route = useRoute();
-  const { user: authUser, logout } = useContext(AuthContext);
+  const { user: authUser } = useContext(AuthContext);
   const auth = getAuth();
 
   const routeUserId = route?.params?.userId;
+
   const [displayUser, setDisplayUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [headerColor, setHeaderColor] = useState("#0A0E27");
   const [uploadingCover, setUploadingCover] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+
   const flip = useSharedValue(0);
 
   const isOwner = useMemo(() => {
@@ -66,38 +68,25 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
     return authUser.uid === viewedUid;
   }, [authUser, propVisitedUser, routeUserId, displayUser]);
 
-  // Debug log
-  useEffect(() => {
-    console.log('[ELITE PROFILE DEBUG] Auth user:', authUser ? authUser.uid : 'NO USER');
-  }, [authUser]);
-
-  // Re-fetch profile when authUser changes (login/logout/relogin)
+  // Re-fetch profile when authUser changes
   useEffect(() => {
     const uid = routeUserId || propVisitedUser?.uid || authUser?.uid;
     if (!uid) {
-      console.log('[ELITE PROFILE] No UID → clearing profile');
       setDisplayUser(null);
       setLoadingUser(false);
       return;
     }
 
-    console.log('[ELITE PROFILE] Fetching fresh profile for UID:', uid);
     setLoadingUser(true);
-
     const unsub = onSnapshot(
       doc(db, "users", uid),
       (snap) => {
         if (snap.exists()) {
           const data = snap.data();
-          console.log("[ELITE PROFILE] Fresh data from Firestore:", {
-            avatar: data.avatar || "NULL",
-            coverImage: data.coverImage || "NULL",
-            headerColor: data.headerColor || "#0A0E27"
-          });
           setDisplayUser({ uid, ...data });
           setHeaderColor(data.headerColor || "#0A0E27");
         } else {
-          console.log("[ELITE PROFILE] No user doc found for:", uid);
+          setDisplayUser(null);
         }
         setLoadingUser(false);
       },
@@ -107,10 +96,7 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
       }
     );
 
-    return () => {
-      console.log('[ELITE PROFILE] Unsubscribing profile listener');
-      unsub();
-    };
+    return () => unsub();
   }, [authUser?.uid, routeUserId, propVisitedUser?.uid]);
 
   // Request image picker permissions
@@ -136,13 +122,11 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
 
     const timestamp = Date.now();
     const fileName = `${pathPrefix}-${currentUser.uid}-${timestamp}.jpg`;
-
     const storage = getStorage();
     const storageRef = ref(storage, `${pathPrefix}_images/${currentUser.uid}/${fileName}`);
 
     const response = await fetch(uri);
     const blob = await response.blob();
-
     await uploadBytes(storageRef, blob);
     return await getDownloadURL(storageRef);
   };
@@ -169,18 +153,15 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
 
   const pickHeaderImage = async () => {
     if (!isOwner) return;
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [16, 7],
       quality: 0.9,
     });
-
     if (result.canceled) return;
 
     setUploadingCover(true);
-
     try {
       const url = await uploadImageToStorage(result.assets[0].uri, "cover");
       await updateUserField("coverImage", url);
@@ -255,14 +236,18 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
 
   const hasRating = (displayUser.averageRating || 0) > 0 || (displayUser.reviewCount || 0) > 0;
 
-  // Use cloud-persisted cover image (visible to everyone)
-  const coverSource = displayUser?.coverImage
-    ? { uri: displayUser.coverImage }
-    : null;
+  const coverSource = displayUser?.coverImage ? { uri: displayUser.coverImage } : null;
+
+  // ===================== MAIN CHANGE =====================
+  // Show "Verified RoomLink Member" if user is verified by identity OR has approved vendor/host application
+  const isUserVerified = displayUser.isVerified === true || 
+                        displayUser.verificationType === "vendor" || 
+                        displayUser.verificationType === "host" ||
+                        displayUser.vendorApproved === true;
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: isDark ? "#000" : "#f8f9fa" }]}>
-      {/* Fixed header with cloud image */}
+      {/* Header with cover image */}
       <TouchableOpacity
         activeOpacity={isOwner ? 0.88 : 1}
         onPress={() => isOwner && setModalVisible(true)}
@@ -270,31 +255,18 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
       >
         <View style={styles.header}>
           {coverSource ? (
-            <Image
-              source={coverSource}
-              style={styles.headerImage}
-              blurRadius={1}
-              onError={(e) => console.log("Cover image load error:", e.nativeEvent.error)}
-            />
+            <Image source={coverSource} style={styles.headerImage} blurRadius={1} />
           ) : (
             <LinearGradient colors={[headerColor, "#1a1a3a"]} style={StyleSheet.absoluteFill} />
           )}
           <View style={styles.headerOverlay} />
           {isOwner && (
-            <TouchableOpacity
-              style={styles.editHeaderButton}
-              onPress={() => setModalVisible(true)}
-              hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-            >
+            <TouchableOpacity style={styles.editHeaderButton} onPress={() => setModalVisible(true)}>
               <Ionicons name="pencil" size={22} color="#777" />
             </TouchableOpacity>
           )}
           {uploadingCover && (
-            <ActivityIndicator
-              size="large"
-              color={ACCENT_COLOR}
-              style={{ position: "absolute", top: "50%", left: "50%", transform: [{ translateX: -15 }, { translateY: -15 }] }}
-            />
+            <ActivityIndicator size="large" color={ACCENT_COLOR} style={{ position: "absolute", top: "50%", left: "50%", transform: [{ translateX: -15 }, { translateY: -15 }] }} />
           )}
         </View>
       </TouchableOpacity>
@@ -308,41 +280,38 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
           pointerEvents={isOwner ? "box-only" : "auto"}
         >
           <Animated.View style={[styles.flipCard, animatedContainer, styles.shadow]}>
+            {/* Front - Avatar */}
             <Animated.View style={[StyleSheet.absoluteFill, frontStyle]}>
               {displayUser?.avatar ? (
-                <Image
-                  source={{ uri: `${displayUser.avatar}?v=${Date.now()}` }}
-                  style={styles.avatarImage}
-                  resizeMode="cover"
-                  onError={(e) => console.log("Avatar load error:", e.nativeEvent.error, displayUser.avatar)}
-                  onLoad={() => console.log("Avatar loaded OK:", displayUser.avatar)}
-                />
+                <Image source={{ uri: `${displayUser.avatar}?v=${Date.now()}` }} style={styles.avatarImage} resizeMode="cover" />
               ) : (
                 <Avatar size={AVATAR_SIZE - 12} />
               )}
             </Animated.View>
 
+            {/* Back - ID Card with Verification */}
             <Animated.View style={[StyleSheet.absoluteFill, backStyle]}>
               <LinearGradient colors={["#0F0F2E", "#1E1E4D", "#017a6b"]} style={styles.idCard}>
                 <View style={styles.idWatermark}>
                   {[...Array(30)].map((_, i) => (
-                    <Text
-                      key={i}
-                      style={[styles.watermarkText, { transform: [{ rotate: i % 2 ? "12deg" : "-12deg" }] }]}
-                    >
+                    <Text key={i} style={[styles.watermarkText, { transform: [{ rotate: i % 2 ? "12deg" : "-12deg" }] }]}>
                       ROOMLINK
                     </Text>
                   ))}
                 </View>
+
                 <Image
                   source={{ uri: displayUser?.avatar ? `${displayUser.avatar}?v=${Date.now()}` : null }}
                   style={styles.idAvatar}
                 />
+
                 <Text style={styles.idName}>
                   {displayUser.firstName} {displayUser.lastName}
                 </Text>
                 <Text style={styles.idUsername}>@{displayUser.username}</Text>
-                {displayUser.isVerified ? (
+
+                {/* FIXED: Shows Verified if identity verified OR vendor approved */}
+                {isUserVerified ? (
                   <View style={styles.verifiedBadge}>
                     <Ionicons name="shield-checkmark" size={18} color="#00ff9d" />
                     <Text style={styles.verifiedText}>Verified RoomLink Member</Text>
@@ -357,6 +326,7 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
           </Animated.View>
         </Pressable>
 
+        {/* Info Section */}
         <View style={styles.infoHeader}>
           <View style={styles.nameRow}>
             <Text style={[styles.name, { color: isDark ? "#fff" : "#000" }]}>
@@ -371,9 +341,9 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
               </View>
             )}
           </View>
-          <Text style={[styles.username, { color: isDark ? "#aaa" : "#666" }]}>
-            @{displayUser.username}
-          </Text>
+
+          <Text style={[styles.username, { color: isDark ? "#aaa" : "#666" }]}>@{displayUser.username}</Text>
+
           <View style={styles.ratingContainer}>
             {hasRating ? (
               <View style={styles.ratingRow}>
@@ -395,53 +365,38 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
                 <Text style={styles.ratingNumber}>
                   {displayUser.averageRating?.toFixed(1) || "0.0"}
                 </Text>
-                <Text style={styles.reviewCountText}>
-                  • ({displayUser.reviewCount || 0})
-                </Text>
+                <Text style={styles.reviewCountText}>• ({displayUser.reviewCount || 0})</Text>
               </View>
             ) : (
-              <Text style={[styles.noRatingText, { color: isDark ? "#888" : "#777" }]}>
-                No ratings yet
-              </Text>
+              <Text style={[styles.noRatingText, { color: isDark ? "#888" : "#777" }]}>No ratings yet</Text>
             )}
           </View>
-          {displayUser.bio && (
-            <Text style={[styles.bio, { color: isDark ? "#ddd" : "#333" }]}>{displayUser.bio}</Text>
-          )}
+
+          {displayUser.bio && <Text style={[styles.bio, { color: isDark ? "#ddd" : "#333" }]}>{displayUser.bio}</Text>}
         </View>
 
-        {/* Edit profile + Premium */}
+        {/* CTA Buttons */}
         {isOwner && (
           <View style={styles.ctaRow}>
-            <TouchableOpacity
-              style={[styles.ctaButton, styles.editCta]}
-              onPress={() => safeNavigate("EditProfile")}
-            >
+            <TouchableOpacity style={[styles.ctaButton, styles.editCta]} onPress={() => safeNavigate("EditProfile")}>
               <Ionicons name="pencil" size={18} color="#fff" style={{ marginRight: 8 }} />
               <Text style={styles.editCtaText}>Edit profile</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.ctaButton, styles.premiumCta]}
-              onPress={() => safeNavigate("GetVerified")}
-            >
+            <TouchableOpacity style={[styles.ctaButton, styles.premiumCta]} onPress={() => safeNavigate("GetVerified")}>
               <Ionicons name="diamond" size={18} color="#000" style={{ marginRight: 8 }} />
               <Text style={styles.premiumCtaText}>Premium</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Listings button */}
         <TouchableOpacity style={styles.listingsButton} onPress={goToListings}>
           <Ionicons name="home" size={24} color="#000" style={{ marginRight: 12 }} />
           <Text style={styles.listingsText}>Listings</Text>
         </TouchableOpacity>
       </View>
 
-      {profileFields.length > 0 && (
-        <Text style={styles.personalDetailsLabel}>Personal Details</Text>
-      )}
-
+      {/* Personal Details */}
+      {profileFields.length > 0 && <Text style={styles.personalDetailsLabel}>Personal Details</Text>}
       {profileFields.length > 0 && (
         <View style={styles.detailsCard}>
           {profileFields.map((field, i) => (
@@ -455,7 +410,7 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
         </View>
       )}
 
-      {/* Modal for header options */}
+      {/* Header Modal */}
       <Modal visible={modalVisible} transparent animationType="slide">
         <Pressable style={styles.modalOverlay} onPress={() => setModalVisible(false)}>
           <View style={styles.modalContent}>
@@ -474,7 +429,7 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
                     setModalVisible(false);
                     if (isOwner) {
                       await updateUserField("headerColor", c);
-                      await updateUserField("coverImage", null); // clear image if choosing color
+                      await updateUserField("coverImage", null);
                     }
                   }}
                 />
@@ -488,23 +443,10 @@ export default function EliteProfile({ visitedUserListings = [], visitedUser: pr
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    height: 110,
-    overflow: "hidden",
-    position: "relative",
-  },
-  headerImage: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "cover",
-  },
-  headerOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.3)",
-  },
+  container: { flex: 1 },
+  header: { height: 110, overflow: "hidden", position: "relative" },
+  headerImage: { width: "100%", height: "100%", resizeMode: "cover" },
+  headerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.3)" },
   editHeaderButton: {
     position: "absolute",
     top: 5,
@@ -514,18 +456,9 @@ const styles = StyleSheet.create({
     padding: 8,
     zIndex: 10,
   },
-  avatarSection: {
-    marginTop: -70,
-    paddingHorizontal: 20,
-  },
-  flipWrapper: {
-    alignItems: "flex-start",
-    marginBottom: 16,
-  },
-  flipCard: {
-    backgroundColor: "#fff",
-    overflow: "hidden",
-  },
+  avatarSection: { marginTop: -70, paddingHorizontal: 20 },
+  flipWrapper: { alignItems: "flex-start", marginBottom: 16 },
+  flipCard: { backgroundColor: "#fff", overflow: "hidden" },
   shadow: {
     shadowColor: "#888",
     shadowOffset: { width: 0, height: 10 },
@@ -540,11 +473,7 @@ const styles = StyleSheet.create({
     borderWidth: 5,
     borderColor: "#fff",
   },
-  ctaRow: {
-    flexDirection: "row",
-    marginTop: 24,
-    gap: 12,
-  },
+  ctaRow: { flexDirection: "row", marginTop: 24, gap: 12 },
   ctaButton: {
     flex: 1,
     paddingVertical: 8,
@@ -558,24 +487,10 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  editCta: {
-    backgroundColor: "#017a6b",
-  },
-  editCtaText: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  premiumCta: {
-    backgroundColor: "#f0f0f0",
-    borderWidth: 1,
-    borderColor: "#017a6b",
-  },
-  premiumCtaText: {
-    color: "#111111",
-    fontSize: 15,
-    fontWeight: "700",
-  },
+  editCta: { backgroundColor: "#017a6b" },
+  editCtaText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  premiumCta: { backgroundColor: "#f0f0f0", borderWidth: 1, borderColor: "#017a6b" },
+  premiumCtaText: { color: "#111111", fontSize: 15, fontWeight: "700" },
   listingsButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -589,116 +504,26 @@ const styles = StyleSheet.create({
     borderColor: "#017a6b",
     backgroundColor: "transparent",
   },
-  listingsText: {
-    color: "#000",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  personalDetailsLabel: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginTop: 24,
-    marginBottom: 4,
-    paddingHorizontal: 20,
-  },
-  infoHeader: {
-    alignItems: "flex-start",
-    marginTop: 0,
-  },
-  nameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
-  },
-  name: {
-    fontSize: 30,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-    lineHeight: 38,
-  },
-  lastWordWithBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  badgeContainer: {
-    marginLeft: 10,
-    marginBottom: -6,
-    shadowColor: "#fff",
-    shadowOpacity: 0.9,
-    shadowRadius: 12,
-    elevation: 15,
-  },
-  username: {
-    fontSize: 17,
-    marginTop: 8,
-    fontWeight: "600",
-  },
-  ratingContainer: {
-    marginTop: 10,
-  },
-  ratingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  ratingNumber: {
-    marginLeft: 6,
-    fontSize: 13.5,
-    fontWeight: "700",
-    color: "#FFA41C",
-  },
-  reviewCountText: {
-    fontSize: 12.5,
-    color: "#888",
-    fontWeight: "400",
-  },
-  noRatingText: {
-    fontSize: 13,
-    fontStyle: "italic",
-    marginTop: 6,
-  },
-  bio: {
-    marginTop: 12,
-    fontSize: 16,
-    lineHeight: 24,
-    fontStyle: "italic",
-  },
-  idCard: {
-    padding: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  idWatermark: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.06,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  watermarkText: {
-    fontSize: 14,
-    color: "#fff",
-    fontWeight: "900",
-    margin: 4,
-  },
-  idAvatar: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    borderWidth: 3,
-    borderColor: "#00ff9d",
-    marginBottom: 12,
-  },
-  idName: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#fff",
-  },
-  idUsername: {
-    fontSize: 15,
-    color: "#00ff9d",
-    marginBottom: 10,
-  },
+  listingsText: { color: "#000", fontSize: 16, fontWeight: "700" },
+  personalDetailsLabel: { fontSize: 18, fontWeight: "700", marginTop: 24, marginBottom: 4, paddingHorizontal: 20 },
+  infoHeader: { alignItems: "flex-start", marginTop: 0 },
+  nameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap" },
+  name: { fontSize: 30, fontWeight: "900", letterSpacing: 0.5, lineHeight: 38 },
+  lastWordWithBadge: { flexDirection: "row", alignItems: "center" },
+  badgeContainer: { marginLeft: 10, marginBottom: -6, shadowColor: "#fff", shadowOpacity: 0.9, shadowRadius: 12, elevation: 15 },
+  username: { fontSize: 17, marginTop: 8, fontWeight: "600" },
+  ratingContainer: { marginTop: 10 },
+  ratingRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
+  ratingNumber: { marginLeft: 6, fontSize: 13.5, fontWeight: "700", color: "#FFA41C" },
+  reviewCountText: { fontSize: 12.5, color: "#888", fontWeight: "400" },
+  noRatingText: { fontSize: 13, fontStyle: "italic", marginTop: 6 },
+  bio: { marginTop: 12, fontSize: 16, lineHeight: 24, fontStyle: "italic" },
+  idCard: { padding: 20, alignItems: "center", justifyContent: "center" },
+  idWatermark: { ...StyleSheet.absoluteFillObject, opacity: 0.06, justifyContent: "center", alignItems: "center" },
+  watermarkText: { fontSize: 14, color: "#fff", fontWeight: "900", margin: 4 },
+  idAvatar: { width: 90, height: 90, borderRadius: 45, borderWidth: 3, borderColor: "#00ff9d", marginBottom: 12 },
+  idName: { fontSize: 22, fontWeight: "800", color: "#fff" },
+  idUsername: { fontSize: 15, color: "#00ff9d", marginBottom: 10 },
   verifiedBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -707,21 +532,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
   },
-  verifiedText: {
-    color: "#00ff9d",
-    marginLeft: 6,
-    fontWeight: "600",
-  },
-  verifyBtn: {
-    backgroundColor: "#00ff9d",
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 30,
-  },
-  verifyText: {
-    color: "#000",
-    fontWeight: "800",
-  },
+  verifiedText: { color: "#00ff9d", marginLeft: 6, fontWeight: "600" },
+  verifyBtn: { backgroundColor: "#00ff9d", paddingHorizontal: 20, paddingVertical: 10, borderRadius: 30 },
+  verifyText: { color: "#000", fontWeight: "800" },
   detailsCard: {
     marginTop: 8,
     marginHorizontal: 20,
@@ -731,48 +544,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)",
   },
-  detailRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  detailText: {
-    marginLeft: 14,
-    fontSize: 16,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "#000000CC",
-    justifyContent: "flex-end",
-  },
-  modalContent: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    textAlign: "center",
-    color: "#000",
-  },
-  modalOption: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 16,
-  },
-  modalOptionText: {
-    marginLeft: 16,
-    fontSize: 18,
-    color: "#000",
-  },
-  colorPick: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    marginHorizontal: 8,
-    borderWidth: 3,
-    borderColor: "#fff",
-  },
+  detailRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
+  detailText: { marginLeft: 14, fontSize: 16 },
+  modalOverlay: { flex: 1, backgroundColor: "#000000CC", justifyContent: "flex-end" },
+  modalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
+  modalTitle: { fontSize: 22, fontWeight: "800", textAlign: "center", color: "#000" },
+  modalOption: { flexDirection: "row", alignItems: "center", paddingVertical: 16 },
+  modalOptionText: { marginLeft: 16, fontSize: 18, color: "#000" },
+  colorPick: { width: 50, height: 50, borderRadius: 25, marginHorizontal: 8, borderWidth: 3, borderColor: "#fff" },
 });

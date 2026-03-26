@@ -46,7 +46,7 @@ function getRawBody(req) {
 }
 
 // ──────────────────────────────────────────────
-// INITIALIZE PAYSTACK PAYMENT
+// INITIALIZE PAYSTACK PAYMENT - FIXED FOR ADS
 // ──────────────────────────────────────────────
 exports.initializePaystack = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
@@ -56,9 +56,12 @@ exports.initializePaystack = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") return res.status(405).send("Not Allowed");
 
   try {
-    const { email, amount, reference, bookingId } = req.body;
-    if (!email || !amount || !reference || !bookingId) {
-      return res.status(400).json({ error: "Missing required fields (email, amount, reference, bookingId)" });
+    const { email, amount, reference, bookingId, adId } = req.body;
+
+    if (!email || !amount || !reference || (!bookingId && !adId)) {
+      return res.status(400).json({ 
+        error: "Missing required fields (email, amount, reference, and either bookingId or adId)" 
+      });
     }
 
     const response = await axios.post(
@@ -69,7 +72,8 @@ exports.initializePaystack = functions.https.onRequest(async (req, res) => {
         reference,
         callback_url: "roomlink://payment-success",
         metadata: {
-          bookingId,                    // Main key used by webhook
+          bookingId: bookingId || null,
+          adId: adId || null,
         },
       },
       { headers: { Authorization: `Bearer ${PAYSTACK_SK}` } }
@@ -83,12 +87,12 @@ exports.initializePaystack = functions.https.onRequest(async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// VERIFY PAYSTACK PAYMENT (client-side fallback)
+// VERIFY PAYSTACK PAYMENT (client-side fallback) - FIXED FOR ADS
 // ──────────────────────────────────────────────
 exports.verifyPaystackPayment = functions.https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Login required");
 
-  const { reference, bookingId } = data;
+  const { reference, bookingId, adId } = data;
 
   try {
     const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
@@ -98,14 +102,30 @@ exports.verifyPaystackPayment = functions.https.onCall(async (data, context) => 
     const result = response.data;
     if (result.data.status !== "success") throw new Error("Payment failed");
 
-    await db.collection("bookings").doc(bookingId).update({
-      status: "confirmed",
-      paymentStatus: "paid",
-      paymentReference: reference,
-      paidAt: admin.firestore.FieldValue.serverTimestamp(),
-      amountPaid: result.data.amount / 100,
-      customerEmail: result.data.customer.email,
-    });
+    const amount = result.data.amount / 100;
+
+    // Booking
+    if (bookingId) {
+      await db.collection("bookings").doc(bookingId).update({
+        status: "confirmed",
+        paymentStatus: "paid",
+        paymentReference: reference,
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+        amountPaid: amount,
+        customerEmail: result.data.customer.email,
+      });
+    }
+
+    // Ad
+    if (adId) {
+      await db.collection("ads").doc(adId).update({
+        status: "approved",
+        paymentReference: reference,
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+        amountPaid: amount,
+      });
+      console.log(`Ad ${adId} approved via verify function`);
+    }
 
     return { success: true };
   } catch (err) {
@@ -163,7 +183,7 @@ exports.createUserVirtualAccount = functions.auth.user().onCreate(async (user) =
 });
 
 // ──────────────────────────────────────────────
-// PAYSTACK WEBHOOK — SECURE & FIXED FOR BOOKINGS
+// PAYSTACK WEBHOOK — FIXED FOR ADS
 // ──────────────────────────────────────────────
 exports.paystackWebhook = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
@@ -210,9 +230,10 @@ exports.paystackWebhook = functions.https.onRequest(async (req, res) => {
       const amount = data.amount / 100;
       const email = data.customer?.email;
       const metadata = data.metadata || {};
-      const bookingId = metadata.bookingId || metadata.orderId; // fallback for old transactions
+      const bookingId = metadata.bookingId || metadata.orderId;
+      const adId = metadata.adId;                    // ← Added for Ads
 
-      console.log("Charge success →", { reference, amount, email, bookingId, metadata });
+      console.log("Charge success →", { reference, amount, email, bookingId, adId, metadata });
 
       // 1. Wallet deposit
       if (email) {
@@ -235,7 +256,7 @@ exports.paystackWebhook = functions.https.onRequest(async (req, res) => {
         }
       }
 
-      // 2. Billboard payment
+      // 2. Billboard payment (old logic - untouched)
       if (reference.startsWith("billboard_")) {
         const parts = reference.split("_");
         if (parts.length >= 3) {
@@ -260,7 +281,25 @@ exports.paystackWebhook = functions.https.onRequest(async (req, res) => {
         }
       }
 
-      // 3. Booking update (hotel/room bookings)
+      // 3. Ad Payment (NEW)
+      if (adId) {
+        const adRef = db.collection("ads").doc(adId);
+        const adSnap = await adRef.get();
+
+        if (adSnap.exists) {
+          await adRef.update({
+            status: "approved",
+            paymentReference: reference,
+            paidAt: admin.firestore.FieldValue.serverTimestamp(),
+            amountPaid: amount,
+          });
+          console.log(`✅ Ad ${adId} approved via webhook`);
+        } else {
+          console.warn(`Ad not found: ${adId}`);
+        }
+      }
+
+      // 4. Booking update (untouched)
       if (bookingId) {
         const bookingRef = db.collection("bookings").doc(bookingId);
         const bookingSnap = await bookingRef.get();

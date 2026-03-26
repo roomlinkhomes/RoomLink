@@ -1,4 +1,5 @@
-// screens/Home.jsx — FIXED: image count badge → top-left + camera icon + count
+// screens/Home.jsx — FIXED: Trust Badge added (identical to HotelFeed)
+
 import React, { useState, useEffect, useContext, useMemo, useRef, useCallback } from "react";
 import {
   View,
@@ -31,6 +32,9 @@ import { db } from "../firebaseConfig";
 import { useListingTab } from "../context/ListingTabContext";
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+
+// Trust Badge
+import Trust from "../component/Trust";   // ← Added
 
 // SVG badges
 import BlueBadge from "../assets/icons/blue.svg";
@@ -135,6 +139,7 @@ export default function Home({ navigation }) {
     setPosts(filtered);
   }, [listings, authUser?.uid, activeTab, activeCategory, contextLoading]);
 
+  // Fetch user info including isVerified for Trust badge
   useEffect(() => {
     const fetchMissingUserInfo = async () => {
       const uniqueUserIds = [...new Set(posts.map((p) => p.userId).filter(Boolean))];
@@ -153,16 +158,31 @@ export default function Home({ navigation }) {
               newInfo[uid] = {
                 name: getFullName(data),
                 avatar: data.avatar || data.photoURL || data.profileImage || null,
+                isVerified: data.isVerified === true || data.verificationStatus === "approved", // ← Trust badge control
                 verificationType: data.verificationType || null,
                 averageRating: data.averageRating || 0,
                 reviewCount: data.reviewCount || 0,
               };
             } else {
-              newInfo[uid] = { name: "User", avatar: null, verificationType: null, averageRating: 0, reviewCount: 0 };
+              newInfo[uid] = { 
+                name: "User", 
+                avatar: null, 
+                isVerified: false, 
+                verificationType: null, 
+                averageRating: 0, 
+                reviewCount: 0 
+              };
             }
           } catch (err) {
             console.warn(`Failed to fetch user ${uid}:`, err);
-            newInfo[uid] = { name: "User", avatar: null, verificationType: null, averageRating: 0, reviewCount: 0 };
+            newInfo[uid] = { 
+              name: "User", 
+              avatar: null, 
+              isVerified: false, 
+              verificationType: null, 
+              averageRating: 0, 
+              reviewCount: 0 
+            };
           }
         })
       );
@@ -267,7 +287,9 @@ export default function Home({ navigation }) {
     if (avatarUri) avatarUri = `${avatarUri}?v=${Date.now()}`;
 
     const fullName = userInfo.name || getFullName(authUser) || "User";
+    const isVerified = userInfo.isVerified === true;                    // ← Trust badge control
     const verificationType = userInfo.verificationType;
+    const hasRating = userInfo.averageRating > 0 || userInfo.reviewCount > 0;
 
     const images = Array.isArray(item.images) && item.images.length > 0
       ? item.images
@@ -276,7 +298,6 @@ export default function Home({ navigation }) {
     const imageCount = images.length;
 
     const isBoosted = item.boostedUntil && new Date(item.boostedUntil) > new Date();
-    const hasRating = userInfo.averageRating > 0 || userInfo.reviewCount > 0;
 
     const handlePressListing = () => {
       if (authUser && authUser.uid !== ownerId) {
@@ -313,6 +334,11 @@ export default function Home({ navigation }) {
             <View style={styles.nameContainer}>
               <View style={styles.nameRow}>
                 <Text style={[styles.userName, dynamicStyles.textColor]}>{fullName}</Text>
+
+                {/* Trust Badge - Only for verified hosts (exactly like HotelFeed) */}
+                {isVerified && <Trust text="Verified Host" />}
+
+                {/* Colored badges */}
                 {verificationType === "vendor" && <YellowBadge width={24} height={24} style={{ marginLeft: 6 }} />}
                 {verificationType === "studentLandlord" && <BlueBadge width={24} height={24} style={{ marginLeft: 6 }} />}
                 {verificationType === "realEstate" && <RedBadge width={24} height={24} style={{ marginLeft: 6 }} />}
@@ -376,7 +402,6 @@ export default function Home({ navigation }) {
                     <View key={imgIndex} style={styles.imageWrapper}>
                       <Image source={{ uri: imgUri }} style={styles.postImage} resizeMode="cover" />
 
-                      {/* ← CHANGED: camera + count badge on first image, top-left, only if 2+ images */}
                       {hasMultiple && imgIndex === 0 && (
                         <View style={styles.imageCountBadge}>
                           <Ionicons name="camera-outline" size={14} color="#fff" style={{ marginRight: 4 }} />
@@ -590,6 +615,7 @@ export default function Home({ navigation }) {
 }
 
 const styles = StyleSheet.create({
+  // ... your existing styles (unchanged)
   container: { flex: 1 },
   stickyHeader: {
     position: "absolute",
@@ -618,19 +644,10 @@ const styles = StyleSheet.create({
   defaultAvatar: { backgroundColor: "#017a6b", justifyContent: "center", alignItems: "center" },
   defaultAvatarText: { color: "#fff", fontWeight: "bold", fontSize: 20 },
 
-  nameContainer: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  nameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
-  },
-  userName: {
-    fontWeight: "700",
-    fontSize: 15.5,
-  },
+  nameContainer: { marginLeft: 12, flex: 1 },
+  nameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap" },
+  userName: { fontWeight: "700", fontSize: 15.5 },
+
   secondaryRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -638,30 +655,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
     gap: 8,
   },
-  ratingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  ratingText: {
-    marginLeft: 4,
-    fontSize: 11.5,
-    fontWeight: "600",
-    color: "#333",
-  },
-  reviewCount: {
-    fontSize: 10,
-    color: "#777",
-    fontWeight: "400",
-  },
-  timestamp: {
-    fontSize: 12,
-  },
+  ratingRow: { flexDirection: "row", alignItems: "center" },
+  ratingText: { marginLeft: 4, fontSize: 11.5, fontWeight: "600", color: "#333" },
+  reviewCount: { fontSize: 10, color: "#777", fontWeight: "400" },
+  timestamp: { fontSize: 12 },
 
-  menuButton: {
-    padding: 8,
-    marginLeft: 8,
-    borderRadius: 20,
-  },
+  menuButton: { padding: 8, marginLeft: 8, borderRadius: 20 },
 
   listingInfo: { padding: 10 },
   listingTitle: { fontSize: 18, fontWeight: "800", lineHeight: 24, marginBottom: 8 },
@@ -672,11 +671,10 @@ const styles = StyleSheet.create({
   imageWrapper: { width: SCREEN_WIDTH, height: 250 },
   postImage: { width: "100%", height: "100%" },
 
-  // ← CHANGED: position top-left, smaller padding, camera icon added
   imageCountBadge: {
     position: "absolute",
     top: 12,
-    left: 12,              // ← moved from right to left
+    left: 12,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(0,0,0,0.65)",
@@ -685,17 +683,9 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     zIndex: 10,
   },
-  imageCountText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "600",
-  },
+  imageCountText: { color: "#fff", fontSize: 13, fontWeight: "600" },
 
-  locationRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
+  locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
   locationIcon: { marginRight: 6 },
 
   ctaContainer: {
@@ -716,12 +706,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 8,
   },
-
-  messageHostText: {
-    color: "#000",
-    fontWeight: "600",
-    fontSize: 15,
-  },
+  messageHostText: { color: "#000", fontWeight: "600", fontSize: 15 },
 
   scheduleVisitButton: {
     flex: 1,
@@ -736,12 +721,7 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: "transparent",
   },
-
-  scheduleVisitText: {
-    color: "#000",
-    fontWeight: "600",
-    fontSize: 15,
-  },
+  scheduleVisitText: { color: "#000", fontWeight: "600", fontSize: 15 },
 
   dropdownContainer: {
     position: "absolute",
@@ -757,10 +737,7 @@ const styles = StyleSheet.create({
     minWidth: 140,
     zIndex: 10,
   },
-  dropdownItem: {
-    paddingVertical: 8,
-    fontSize: 16,
-  },
+  dropdownItem: { paddingVertical: 8, fontSize: 16 },
 
   rentedBadge: {
     backgroundColor: "red",

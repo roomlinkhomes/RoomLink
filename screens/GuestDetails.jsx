@@ -610,7 +610,7 @@ export default function GuestDetails() {
                   </Text>
                   <Text style={styles.noticeText}>
                     This is a <Text style={{ fontWeight: "bold" }}>final and non-refundable</Text> booking.
-                    No cancellations, changes, or refunds — even for emergencies.
+                    No cancellations, changes, or refunds, even for emergencies.
                   </Text>
                   {discountPercent > 0 && (
                     <Text style={{ color: "#059669", marginTop: 6, fontWeight: "600" }}>
@@ -634,7 +634,7 @@ export default function GuestDetails() {
                   {confirmedNonRefundable && <Ionicons name="checkmark" size={16} color="#fff" />}
                 </View>
                 <Text style={[styles.checkboxText, { color: isDark ? "#e0e0e0" : "#374151" }]}>
-                  I understand this booking is <Text style={{ fontWeight: "bold" }}>non-refundable</Text> —
+                  I understand this booking is <Text style={{ fontWeight: "bold" }}>non-refundable</Text> ,
                   no refunds, cancellations or changes allowed after payment.
                 </Text>
               </TouchableOpacity>

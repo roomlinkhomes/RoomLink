@@ -1,9 +1,20 @@
+import 'react-native-get-random-values';
+
+if (typeof WeakRef === "undefined") {
+  global.WeakRef = class {
+    constructor(value) {
+      this._value = value;
+    }
+    deref() {
+      return this._value;
+    }
+  };
+}
 import 'intl';
 import 'intl/locale-data/jsonp/en';
 import 'react-native-gesture-handler';
 import 'react-native-reanimated';
 import 'react-native-svg';
-
 import React, { useEffect, useRef, useState } from "react";
 import {
   BackHandler,

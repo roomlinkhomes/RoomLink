@@ -172,7 +172,7 @@ export default function AppTabs() {
         />
 
         <Tab.Screen
-          name="Events"
+          name="Trips"
           component={Trips}
           options={{
             tabBarLabel: "Events",

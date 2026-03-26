@@ -1,4 +1,4 @@
-// screens/Listing.jsx — FIXED: Gallery now uses DocumentPicker (stable like IdentityVerification)
+// screens/Listing.jsx — FIXED: Auto Location on Load + Only One Default Export
 import React, { useRef, useEffect } from "react";
 import {
   View,
@@ -15,7 +15,8 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import * as DocumentPicker from "expo-document-picker"; // <-- Added for stable gallery
+import * as DocumentPicker from "expo-document-picker";
+import * as Location from "expo-location";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { useListing } from "../context/ListingContext";
 import { homeCategories } from "./Config/Categories";
@@ -68,11 +69,46 @@ const HousesForm = () => {
     "Room-mate needed",
   ];
 
-  // Optional: Keep initial permission request (harmless, but DocumentPicker doesn't strictly need it)
+  // ===================== AUTO LOCATION FILLER (on mount - no tap) =====================
+  useEffect(() => {
+    const autoFillLocation = async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") return;
+
+        const pos = await Location.getCurrentPositionAsync({ 
+          accuracy: Location.Accuracy.Balanced 
+        });
+
+        const reverse = await Location.reverseGeocodeAsync({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        });
+
+        if (reverse.length > 0) {
+          const addr = reverse[0];
+          const detected = [
+            addr.name,
+            addr.city || addr.district || addr.subregion,
+            addr.region,
+          ].filter(Boolean).join(", ");
+
+          if (detected && !location) {
+            setLocation(detected);
+          }
+        }
+      } catch (err) {
+        console.log("Auto location failed silently:", err.message);
+      }
+    };
+
+    autoFillLocation();
+  }, []);
+  // ==========================================================================
+
   useEffect(() => {
     (async () => {
-      await ImagePicker.requestCameraPermissionsAsync(); // only for camera
-      // No need for media library request here anymore
+      await ImagePicker.requestCameraPermissionsAsync();
     })();
   }, []);
 
@@ -94,13 +130,12 @@ const HousesForm = () => {
     }
   };
 
-  // FIXED: Use DocumentPicker for gallery (same as IdentityVerification.jsx)
   const pickImages = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: "image/*",                    // restrict to images only
+        type: "image/*",
         copyToCacheDirectory: true,
-        multiple: true,                     // keep multi-select
+        multiple: true,
       });
 
       if (!result.canceled && result.assets?.length > 0) {
@@ -241,7 +276,7 @@ const HousesForm = () => {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      {/* Gallery Card - now uses DocumentPicker */}
+      {/* Gallery Card */}
       <TouchableOpacity
         style={[
           styles.galleryCard,
@@ -269,7 +304,7 @@ const HousesForm = () => {
         </Text>
       </TouchableOpacity>
 
-      {/* Camera Button - unchanged */}
+      {/* Camera Button */}
       <View style={styles.photoRow}>
         <TouchableOpacity
           style={[
@@ -292,7 +327,7 @@ const HousesForm = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Image Thumbnails - unchanged */}
+      {/* Image Thumbnails */}
       {images.length > 0 && (
         <FlatList
           horizontal
@@ -358,7 +393,7 @@ const HousesForm = () => {
         textAlignVertical="top"
       />
 
-      {/* Location */}
+      {/* Location - Auto-filled on load */}
       <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>Location</Text>
       <RNTextInput
         style={[
@@ -411,7 +446,6 @@ const HousesForm = () => {
         keyboardType="numeric"
       />
 
-      {/* Helper Text */}
       <Text style={[styles.helperText, { color: "#017a6b" }]}>
         ※ Fill at least one: Monthly or Yearly price
       </Text>
@@ -520,7 +554,7 @@ const HousesForm = () => {
 };
 
 // ────────────────────────────────────────────────
-// Main Listing Screen — unchanged
+// Main Listing Screen (Only ONE default export)
 // ────────────────────────────────────────────────
 export default function Listing({ navigation }) {
   const { activeTab, setActiveTab } = useListingTab();

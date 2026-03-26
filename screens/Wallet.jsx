@@ -1,5 +1,5 @@
-// screens/Wallet.jsx — Header matches EditProfile height + back button
-import React, { useEffect, useState } from "react";
+// screens/Wallet.jsx
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,93 +9,182 @@ import {
   RefreshControl,
   Clipboard,
   ToastAndroid,
+  Alert,
 } from "react-native";
 import { getAuth } from "firebase/auth";
-import { doc, onSnapshot, collection, query, orderBy, limit } from "firebase/firestore";
+import {
+  doc,
+  onSnapshot,
+  collection,
+  query,
+  where,
+  orderBy,
+  getDocs,
+  Timestamp,
+} from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native"; // ← Added for back button
+import { useNavigation } from "@react-navigation/native";
 
 export default function Wallet() {
-  const navigation = useNavigation(); // ← For back navigation
+  const navigation = useNavigation();
   const user = getAuth().currentUser;
+
   const [wallet, setWallet] = useState(null);
+  const [earnings, setEarnings] = useState(0);
+  const [spent, setSpent] = useState(0);
   const [transactions, setTransactions] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingError, setLoadingError] = useState(null);
 
+  // Virtual wallet listener
   useEffect(() => {
     if (!user) return;
 
-    const unsubWallet = onSnapshot(doc(db, "wallets", user.uid), snap => {
-      setWallet(snap.data());
+    const unsub = onSnapshot(doc(db, "wallets", user.uid), (snap) => {
+      setWallet(snap.exists() ? snap.data() : null);
     });
 
-    const q = query(
-      collection(db, "wallet_logs"),
-      orderBy("createdAt", "desc"),
-      limit(20)
-    );
+    return () => unsub();
+  }, [user]);
 
-    const unsubTx = onSnapshot(q, snap => {
-      const list = [];
-      snap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
-      setTransactions(list.filter(tx => tx.userId === user.uid));
-    });
+  const loadFinancials = useCallback(async () => {
+    if (!user) return;
 
-    return () => {
-      unsubWallet();
-      unsubTx();
-    };
-  }, []);
+    setLoadingError(null);
 
-  function copyAccount() {
+    try {
+      // Bookings (earnings)
+      const bookingsQ = query(
+        collection(db, "bookings"),
+        where("hostId", "==", user.uid),
+        where("status", "in", ["confirmed", "completed", "paid"]),
+        orderBy("confirmedAt", "desc")
+      );
+
+      const bookingsSnap = await getDocs(bookingsQ);
+
+      let totalEarnings = 0;
+      const earningsTx = [];
+
+      bookingsSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const amount = Number(data.amountPaid ?? data.totalAmount ?? data.price ?? 0);
+
+        totalEarnings += amount;
+
+        earningsTx.push({
+          id: `booking_${docSnap.id}`,
+          type: "Booking Payment",
+          amount,
+          timestamp: data.confirmedAt ?? data.completedAt ?? data.createdAt ?? Timestamp.now(),
+          direction: "in",
+          refId: docSnap.id,
+          status: data.status,
+        });
+      });
+
+      // Ads (spent)
+      const adsQ = query(
+        collection(db, "ads"),
+        where("userId", "==", user.uid),
+        where("paymentStatus", "in", ["confirmed", "paid", "completed"]),
+        orderBy("paidAt", "desc")
+      );
+
+      const adsSnap = await getDocs(adsQ);
+
+      let totalSpent = 0;
+      const spentTx = [];
+
+      adsSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const amount = Number(data.amountPaid ?? data.budget ?? data.paymentAmount ?? 0);
+
+        totalSpent += amount;
+
+        spentTx.push({
+          id: `ad_${docSnap.id}`,
+          type: "Ad Payment",
+          amount: -amount,
+          timestamp: data.paidAt ?? data.createdAt ?? Timestamp.now(),
+          direction: "out",
+          refId: docSnap.id,
+          status: data.paymentStatus,
+        });
+      });
+
+      // Merge & sort (newest first)
+      const allTx = [...earningsTx, ...spentTx].sort((a, b) => {
+        const ta = a.timestamp?.toMillis?.() ?? (a.timestamp?.seconds ?? 0) * 1000 ?? 0;
+        const tb = b.timestamp?.toMillis?.() ?? (b.timestamp?.seconds ?? 0) * 1000 ?? 0;
+        return tb - ta;
+      });
+
+      setEarnings(totalEarnings);
+      setSpent(totalSpent);
+      setTransactions(allTx.slice(0, 50));
+    } catch (err) {
+      console.error("Error loading wallet financials:", err);
+      setLoadingError(err.message || "Unknown error");
+      Alert.alert(
+        "Wallet Load Failed",
+        "Could not load financial data.\n\n" +
+          (err.message?.includes("index")
+            ? "Firestore is still setting up indexes – try refreshing in a minute."
+            : err.message || "Please check connection and try again.")
+      );
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) loadFinancials();
+  }, [user, loadFinancials]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadFinancials().finally(() => setRefreshing(false));
+  }, [loadFinancials]);
+
+  const copyAccount = () => {
     if (!wallet?.accountNumber) return;
     Clipboard.setString(wallet.accountNumber);
-    ToastAndroid.show("Account number copied", ToastAndroid.SHORT);
-  }
+    ToastAndroid.show("Account number copied!", ToastAndroid.SHORT);
+  };
 
-  const deposit = wallet?.depositBalance || 0;
-  const earnings = wallet?.earningsBalance || 0;
-  const total = deposit + earnings;
+  const deposit = wallet?.depositBalance || wallet?.balance || 0;
+  const netBalance = deposit + earnings - spent;
 
   return (
     <View style={styles.container}>
-      {/* ========== HEADER - SAME HEIGHT AS EDITPROFILE ========== */}
-      <View style={{
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "flex-start",
-        paddingHorizontal: 20,
-        paddingTop: 50,           // ← Matches EditProfile exactly
-        paddingBottom: 32,
-      }}>
-        {/* Back Button */}
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={{ padding: 10 }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="arrow-back" size={28} color="#000000" />
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={{ padding: 10 }}>
+          <Ionicons name="arrow-back" size={28} color="#000" />
         </TouchableOpacity>
-
-        {/* Title */}
         <View style={{ flex: 1, alignItems: "center", marginRight: 48 }}>
           <Text style={styles.pageTitle}>Wallet</Text>
         </View>
       </View>
-      {/* ========== END HEADER ========== */}
 
       <FlatList
         data={transactions}
-        keyExtractor={item => item.id}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => setRefreshing(false)} />
-        }
+        keyExtractor={(item) => item.id}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListHeaderComponent={
           <>
-            {/* WALLET SUMMARY */}
+            {loadingError && (
+              <View style={{ padding: 16, backgroundColor: "#ffebee", margin: 15, borderRadius: 12 }}>
+                <Text style={{ color: "#c62828", fontWeight: "600" }}>
+                  Load error: {loadingError}
+                </Text>
+                <Text style={{ color: "#555", marginTop: 4 }}>
+                  Pull down to refresh or check your connection.
+                </Text>
+              </View>
+            )}
+
             <View style={styles.card}>
-              <Text style={styles.title}>Wallet</Text>
+              <Text style={styles.title}>Wallet Overview</Text>
 
               <View style={styles.row}>
                 <Text>Deposit Balance</Text>
@@ -103,24 +192,38 @@ export default function Wallet() {
               </View>
 
               <View style={styles.row}>
-                <Text>Earnings Balance</Text>
-                <Text style={styles.amount}>₦{earnings.toLocaleString()}</Text>
+                <Text>Earnings (Bookings)</Text>
+                <Text style={[styles.amount, { color: "#0a7" }]}>
+                  ₦{earnings.toLocaleString()}
+                </Text>
+              </View>
+
+              <View style={styles.row}>
+                <Text>Spent (Ads)</Text>
+                <Text style={[styles.amount, { color: "#d32f2f" }]}>
+                  ₦{spent.toLocaleString()}
+                </Text>
               </View>
 
               <View style={styles.totalRow}>
-                <Text style={styles.total}>Total Balance</Text>
-                <Text style={styles.totalValue}>₦{total.toLocaleString()}</Text>
+                <Text style={styles.total}>Net Balance</Text>
+                <Text
+                  style={[
+                    styles.totalValue,
+                    { color: netBalance >= 0 ? "#0a7" : "#d32f2f" },
+                  ]}
+                >
+                  ₦{netBalance.toLocaleString()}
+                </Text>
               </View>
             </View>
 
-            {/* VIRTUAL ACCOUNT */}
             {wallet?.accountNumber && (
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Your Bank Account</Text>
 
                 <View style={styles.accountBox}>
                   <Text style={styles.acc}>{wallet.accountNumber}</Text>
-
                   <TouchableOpacity onPress={copyAccount}>
                     <Ionicons name="copy-outline" size={20} color="#444" />
                   </TouchableOpacity>
@@ -130,12 +233,11 @@ export default function Wallet() {
                 <Text>{wallet.accountName}</Text>
 
                 <Text style={styles.note}>
-                  Send money from any Nigerian bank to fund your Roomlink wallet.
+                  Transfer money from any Nigerian bank to top up your Roomlink wallet.
                 </Text>
               </View>
             )}
 
-            {/* HISTORY HEADER */}
             <Text style={styles.sectionTitle}>Recent Activity</Text>
           </>
         }
@@ -144,33 +246,48 @@ export default function Wallet() {
             <View>
               <Text style={styles.txTitle}>{item.type}</Text>
               <Text style={styles.txDate}>
-                {new Date(item.createdAt?.toDate()).toDateString()}
+                {item.timestamp
+                  ? new Date(
+                      item.timestamp?.toDate?.() ||
+                        item.timestamp?.toMillis?.() ||
+                        item.timestamp?.seconds * 1000 ||
+                        item.timestamp
+                    ).toLocaleString("en-NG", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })
+                  : "—"}
               </Text>
             </View>
 
             <Text
               style={[
                 styles.txAmount,
-                { color: item.amount > 0 ? "green" : "red" },
+                { color: item.amount > 0 ? "#0a7" : "#d32f2f" },
               ]}
             >
-              ₦{Math.abs(item.amount).toLocaleString()}
+              {item.amount > 0 ? "+" : ""}₦{Math.abs(item.amount).toLocaleString()}
             </Text>
           </View>
         )}
         ListEmptyComponent={
           <Text style={styles.empty}>No transactions yet</Text>
         }
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 140 }}
       />
     </View>
   );
 }
 
+// Styles remain the same as before
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fafafa",
+  container: { flex: 1, backgroundColor: "#fafafa" },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingTop: 50,
+    paddingBottom: 32,
   },
   pageTitle: {
     fontSize: 24,
@@ -180,86 +297,73 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: "#fff",
     margin: 15,
-    padding: 18,
-    borderRadius: 12,
-    elevation: 3,
+    padding: 20,
+    borderRadius: 16,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
   },
-  title: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 10,
-  },
+  title: { fontSize: 20, fontWeight: "bold", marginBottom: 16 },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
     marginHorizontal: 15,
-    marginTop: 10,
+    marginTop: 20,
+    marginBottom: 8,
   },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginVertical: 5,
+    marginVertical: 8,
   },
   totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 12,
+    marginTop: 16,
+    paddingTop: 12,
     borderTopWidth: 1,
-    paddingTop: 10,
     borderColor: "#eee",
   },
-  amount: {
-    fontWeight: "600",
-  },
-  total: {
-    fontWeight: "bold",
-  },
-  totalValue: {
-    fontWeight: "bold",
-    color: "#0a7",
-  },
+  amount: { fontWeight: "600", fontSize: 15 },
+  total: { fontWeight: "bold", fontSize: 16 },
+  totalValue: { fontWeight: "bold", fontSize: 17 },
   accountBox: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginVertical: 8,
+    marginVertical: 12,
   },
   acc: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: "bold",
-    letterSpacing: 1,
+    letterSpacing: 1.1,
   },
-  bank: {
-    fontWeight: "600",
-    marginBottom: 2,
-  },
+  bank: { fontWeight: "600", marginBottom: 4, fontSize: 15 },
   note: {
     color: "#666",
-    marginTop: 6,
-    fontSize: 12,
+    marginTop: 12,
+    fontSize: 13,
+    lineHeight: 18,
   },
   tx: {
     backgroundColor: "#fff",
     marginHorizontal: 15,
-    padding: 12,
-    borderRadius: 10,
+    padding: 16,
+    borderRadius: 12,
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 8,
   },
-  txTitle: {
-    fontWeight: "500",
-  },
-  txDate: {
-    fontSize: 11,
-    color: "#888",
-  },
-  txAmount: {
-    fontWeight: "600",
-  },
+  txTitle: { fontWeight: "500", fontSize: 15 },
+  txDate: { fontSize: 12, color: "#777", marginTop: 4 },
+  txAmount: { fontWeight: "700", fontSize: 16 },
   empty: {
     textAlign: "center",
-    marginTop: 40,
+    marginTop: 60,
     color: "#888",
+    fontSize: 15,
   },
 });

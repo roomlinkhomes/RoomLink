@@ -11,8 +11,14 @@ import {
 } from "react-native";
 import { useColorScheme } from "react-native";
 import { Easing } from "react-native-reanimated";
-import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
-import { db } from "../firebaseConfig"; // ← make sure this path is correct
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  orderBy 
+} from "firebase/firestore";
+import { db } from "../firebaseConfig";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -33,25 +39,36 @@ export default function Billboard() {
   const adIndexRef = useRef(0);
   const intervalRef = useRef(null);
 
-  // Real-time listener for ALL active ads
+  // Improved Real-time Listener
   useEffect(() => {
     const now = new Date();
 
     const q = query(
       collection(db, "ads"),
-      where("expiresAt", ">", now),
-      orderBy("expiresAt", "asc")   // oldest first → fair FIFO rotation
-      // NO userId filter — everyone sees everything
+      where("status", "==", "live"),           // ← Must be live
+      where("url", "!=", null),                // ← Must have image
+      orderBy("expiresAt", "asc")              // Fair rotation (oldest expiring first)
+      // Removed the "expiresAt > now" for now — we'll filter in JS (more reliable)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const ads = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      const nowTime = Date.now();
+      const ads = [];
 
-      console.log("Billboard fetched ads:", ads.length, ads); // ← keep for debugging
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const expiresAt = data.expiresAt?.toDate ? data.expiresAt.toDate() : new Date(data.expiresAt || 0);
 
+        if (expiresAt.getTime() > nowTime && data.url) {
+          ads.push({
+            id: docSnap.id,
+            ...data,
+            expiresAt,   // for debugging
+          });
+        }
+      });
+
+      console.log(`Billboard → Live ads after filter: ${ads.length}`, ads);
       setActiveAds(ads);
       setLoading(false);
     }, (error) => {
@@ -62,10 +79,10 @@ export default function Billboard() {
     return () => unsubscribe();
   }, []);
 
-  // Rotation logic
+  // Rotation logic (unchanged but safer)
   useEffect(() => {
-    const allAds = activeAds.length > 0
-      ? activeAds
+    const allAds = activeAds.length > 0 
+      ? activeAds 
       : DEFAULT_BANNERS.map((url) => ({ url }));
 
     adIndexRef.current = 0;
@@ -76,14 +93,13 @@ export default function Billboard() {
 
     intervalRef.current = setInterval(() => {
       adIndexRef.current = (adIndexRef.current + 1) % allAds.length;
-
       Animated.timing(translateX, {
         toValue: -SCREEN_WIDTH * adIndexRef.current,
         duration: 600,
         easing: Easing.inOut(Easing.ease),
         useNativeDriver: true,
       }).start();
-    }, 4000); // change interval if you want faster/slower rotation
+    }, 4000);
 
     return () => clearInterval(intervalRef.current);
   }, [activeAds]);
@@ -96,8 +112,8 @@ export default function Billboard() {
     );
   }
 
-  const displayAds = activeAds.length > 0
-    ? activeAds
+  const displayAds = activeAds.length > 0 
+    ? activeAds 
     : DEFAULT_BANNERS.map((url) => ({ url }));
 
   return (
@@ -125,16 +141,14 @@ export default function Billboard() {
           ))}
         </Animated.View>
       ) : (
-        <Text
-          style={{
-            textAlign: "center",
-            padding: 12,
-            fontSize: 16,
-            fontWeight: "500",
-            color: isDark ? "#fff" : "#036dd6",
-          }}
-        >
-          🎉 Promote your business today! Tap “Promote Your Ad” to get started.
+        <Text style={{
+          textAlign: "center",
+          padding: 12,
+          fontSize: 16,
+          fontWeight: "500",
+          color: isDark ? "#fff" : "#036dd6",
+        }}>
+          🎉 No active ads right now. Promote your business today!
         </Text>
       )}
     </View>

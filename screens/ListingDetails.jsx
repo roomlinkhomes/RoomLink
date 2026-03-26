@@ -1,4 +1,4 @@
-// screens/ListingDetails.jsx — FIXED: Comment image uploads to Firebase Storage + stable DocumentPicker
+// screens/ListingDetails.jsx — FIXED: Allow comments even with temporary user context issues
 import React, { useContext, useState, useEffect, useCallback } from "react";
 import {
   View,
@@ -21,7 +21,7 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { UserContext } from "../context/UserContext";
 import Avatar from "../component/avatar";
-import * as DocumentPicker from "expo-document-picker"; // Stable picker for comment images
+import * as DocumentPicker from "expo-document-picker";
 import { timeAgo } from "../utils/timeAgo";
 import {
   doc,
@@ -36,8 +36,6 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useFocusEffect } from "@react-navigation/native";
-
-// Firebase Storage imports
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 // SVG Badges
@@ -79,13 +77,13 @@ const getImageUri = (img) => {
 };
 
 const getFullName = (userData) => {
-  if (!userData) return "User";
+  if (!userData) return "Anonymous";
   if (userData.displayName?.trim()) return userData.displayName.trim();
   if (userData.firstName && userData.lastName)
     return `${userData.firstName.trim()} ${userData.lastName.trim()}`;
   if (userData.name?.trim()) return userData.name.trim();
   if (userData.username) return userData.username;
-  return "User";
+  return "Anonymous";
 };
 
 const VerificationBadge = ({ type }) => {
@@ -114,7 +112,6 @@ export default function ListingDetails() {
     reviewCount: 0,
   });
   const [loadingSeller, setLoadingSeller] = useState(true);
-
   const [comments, setComments] = useState([]);
   const [loadingComments, setLoadingComments] = useState(true);
   const [userCache, setUserCache] = useState({});
@@ -156,7 +153,6 @@ export default function ListingDetails() {
   };
 
   const rootComments = comments.filter((c) => !c.replyToCommentId);
-
   const hasSellerRating = poster.averageRating > 0 || poster.reviewCount > 0;
 
   // Fetch poster with rating info
@@ -174,17 +170,14 @@ export default function ListingDetails() {
     }
 
     let isMounted = true;
-
     const fetchPoster = async () => {
       try {
         setLoadingSeller(true);
-
         let userData = await getUserById?.(posterId);
         if (!userData) {
           const snap = await getDoc(doc(db, "users", posterId));
           userData = snap.exists() ? snap.data() : null;
         }
-
         if (isMounted) {
           if (userData) {
             setPoster({
@@ -219,9 +212,7 @@ export default function ListingDetails() {
         if (isMounted) setLoadingSeller(false);
       }
     };
-
     fetchPoster();
-
     return () => {
       isMounted = false;
     };
@@ -230,11 +221,8 @@ export default function ListingDetails() {
   // Comments fetching
   useEffect(() => {
     if (!listing?.id) return;
-
     setLoadingComments(true);
-
     const q = query(collection(db, "listings", listing.id, "comments"), orderBy("timestamp", "asc"));
-
     const unsub = onSnapshot(q, async (snap) => {
       try {
         if (snap.empty) {
@@ -242,12 +230,10 @@ export default function ListingDetails() {
           setLoadingComments(false);
           return;
         }
-
         const userIds = snap.docs.map((doc) => doc.data().userId).filter(Boolean);
         const uniqueUserIds = [...new Set(userIds)];
         const newUserCache = { ...userCache };
         const missingUserIds = uniqueUserIds.filter((id) => !userCache[id]);
-
         if (missingUserIds.length > 0) {
           const userPromises = missingUserIds.map((id) => getDoc(doc(db, "users", id)).catch(() => null));
           const userSnaps = await Promise.all(userPromises);
@@ -264,10 +250,8 @@ export default function ListingDetails() {
           });
           setUserCache(newUserCache);
         }
-
         const commentMap = {};
         const roots = [];
-
         snap.docs.forEach((docSnap) => {
           const data = docSnap.data();
           const userId = data.userId;
@@ -281,7 +265,6 @@ export default function ListingDetails() {
             children: [],
           };
           commentMap[comment.id] = comment;
-
           if (data.replyToCommentId) {
             const parent = commentMap[data.replyToCommentId];
             if (parent) parent.children.push(comment);
@@ -290,11 +273,9 @@ export default function ListingDetails() {
             roots.push(comment);
           }
         });
-
         const sortByTime = (a, b) => (a.timestamp?.toDate() || 0) - (b.timestamp?.toDate() || 0);
         roots.sort(sortByTime);
         roots.forEach((root) => root.children.sort(sortByTime));
-
         setComments(roots);
       } catch (error) {
         console.error("Comments fetch error:", error);
@@ -302,7 +283,6 @@ export default function ListingDetails() {
         setLoadingComments(false);
       }
     });
-
     return () => unsub();
   }, [listing?.id]);
 
@@ -315,7 +295,6 @@ export default function ListingDetails() {
     setExpandedComments((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // FIXED: Stable DocumentPicker for comment image attachment
   const pickCommentImage = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -323,23 +302,18 @@ export default function ListingDetails() {
         copyToCacheDirectory: true,
         multiple: false,
       });
-
       console.log("Comment image picker result:", JSON.stringify(result, null, 2));
-
       if (result.canceled) {
         console.log("Comment image picker canceled by user");
         return;
       }
-
       if (!result.assets || !result.assets[0]?.uri) {
         console.log("No image selected from picker");
         Alert.alert("No Image", "Couldn't load the selected image. Try again.");
         return;
       }
-
       const uri = result.assets[0].uri;
       console.log("Selected comment image URI:", uri);
-
       setAttachedImage(uri);
     } catch (err) {
       console.error("Comment image picker error:", err);
@@ -350,53 +324,47 @@ export default function ListingDetails() {
     }
   };
 
-  // FIXED: Upload image to Firebase Storage BEFORE saving comment
   const handleSendComment = async () => {
     const text = newComment.trim();
     if (!text && !attachedImage) return;
 
     setSendStatus("sending");
-
     let imageUrl = null;
 
     try {
       // Upload image if attached
       if (attachedImage) {
         console.log("Uploading comment image to Firebase Storage...");
-
         const response = await fetch(attachedImage);
         const blob = await response.blob();
-
         const timestamp = Date.now();
         const fileName = `comment-image-${user?.uid || "anon"}-${timestamp}.jpg`;
-
         const storage = getStorage();
         const storageRef = ref(storage, `comment_images/${listing.id}/${fileName}`);
-
         await uploadBytes(storageRef, blob);
-
         imageUrl = await getDownloadURL(storageRef);
         console.log("Comment image uploaded → public URL:", imageUrl);
       }
 
-      // Prepare comment data with remote URL
-      const fullName = getFullName(user || {});
+      // Prepare comment data – no hard requirement for user.uid
+      const isLoggedIn = !!user?.uid;
+      const fullName = getFullName(user);
       const photoURL = user?.photoURL || user?.profileImage || user?.avatar || null;
 
       const commentData = {
-        userId: user?.uid,
+        userId: isLoggedIn ? user.uid : null,
         userName: fullName,
         userAvatar: photoURL,
         text,
-        image: imageUrl,  // ← now it's the public HTTPS URL
+        image: imageUrl,
         timestamp: serverTimestamp(),
         replyToUser: replyToUser || null,
         replyToCommentId: replyToCommentId || null,
+        isGuest: !isLoggedIn, // optional flag
       };
 
       // Save to Firestore
       await addDoc(collection(db, "listings", listing.id, "comments"), commentData);
-
       console.log("Comment sent successfully");
 
       // Reset UI
@@ -407,10 +375,14 @@ export default function ListingDetails() {
       Keyboard.dismiss();
       setSendStatus("success");
       setTimeout(() => setSendStatus("idle"), 2000);
-
     } catch (error) {
       console.error("Comment send failed:", error);
-      Alert.alert("Error", "Failed to send comment" + (attachedImage ? " (image upload failed)" : "") + ". Try again.");
+      Alert.alert(
+        "Error",
+        "Failed to send comment" +
+          (attachedImage ? " (image upload failed)" : "") +
+          ". Try again."
+      );
       setSendStatus("idle");
     }
   };
@@ -429,6 +401,7 @@ export default function ListingDetails() {
     const isExpanded = !!expandedComments[comment.id];
     const hasReplies = comment.children.length > 0;
     const avatarSize = depth === 0 ? 44 : 36;
+
     return (
       <View key={comment.id} style={[styles.commentContainer, { marginVertical: depth === 0 ? 16 : 12 }]}>
         <View style={styles.commentRow}>
@@ -441,6 +414,11 @@ export default function ListingDetails() {
                 <Text style={[styles.commentUser, { color: theme.text }]}>
                   {comment.userName}
                 </Text>
+                {comment.isGuest && (
+                  <Text style={{ fontSize: 11, color: theme.textSecondary, marginLeft: 6 }}>
+                    • Guest
+                  </Text>
+                )}
                 <VerificationBadge type={comment.verificationType} />
               </View>
               {comment.replyToUser && (
@@ -449,24 +427,29 @@ export default function ListingDetails() {
                 </Text>
               )}
             </View>
+
             {comment.text && (
               <Text style={[styles.commentText, { color: theme.textSecondary }]}>
                 {comment.text}
               </Text>
             )}
+
             {comment.image && (
               <TouchableOpacity onPress={() => openImageViewer(getImageUri(comment.image))}>
                 <Image source={{ uri: getImageUri(comment.image) }} style={styles.commentImage} />
               </TouchableOpacity>
             )}
+
             <View style={styles.commentFooter}>
               <Text style={[styles.commentTime, { color: theme.textSecondary }]}>
                 {comment.timestamp ? timeAgo(comment.timestamp.toDate()) : "Just now"}
               </Text>
-              <TouchableOpacity onPress={() => {
-                setReplyToUser(comment.userName);
-                setReplyToCommentId(comment.id);
-              }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setReplyToUser(comment.userName);
+                  setReplyToCommentId(comment.id);
+                }}
+              >
                 <Text style={[styles.replyButton, { color: theme.primary }]}>Reply</Text>
               </TouchableOpacity>
               {depth === 0 && hasReplies && (
@@ -484,6 +467,7 @@ export default function ListingDetails() {
                 </TouchableOpacity>
               )}
             </View>
+
             {isExpanded && comment.children.map((child) => renderComment(child, depth + 1))}
           </View>
         </View>
@@ -549,13 +533,11 @@ export default function ListingDetails() {
           style={[styles.vendorBox, { borderColor }]}
         >
           <Avatar uri={poster.avatar} size={50} />
-
           <View style={{ marginLeft: 12, flex: 1 }}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <Text style={[styles.vendorName, { color: textColor }]}>{poster.name}</Text>
               <VerificationBadge type={poster.verificationType} />
             </View>
-
             {loadingSeller ? (
               <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 6 }} />
             ) : hasSellerRating ? (
@@ -587,10 +569,8 @@ export default function ListingDetails() {
                 No ratings yet
               </Text>
             )}
-
             <Text style={{ color: secondaryText }}>Tap to view profile</Text>
           </View>
-
           <Ionicons name="chevron-forward" size={20} color={secondaryText} />
         </TouchableOpacity>
 
@@ -657,14 +637,12 @@ export default function ListingDetails() {
               <Text style={styles.ctaText}>Rating</Text>
             </View>
           </TouchableOpacity>
-
           <TouchableOpacity style={styles.actionButtonFixed} onPress={() => setShowCommentModal(true)}>
             <View style={styles.ctaPill}>
               <Ionicons name="chatbubble-outline" size={18} color="#888" />
               <Text style={styles.ctaText}>Comment</Text>
             </View>
           </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.actionButtonFixed}
             onPress={() => navigation.navigate("ReportScreen", { listingId: listing?.id, title: listing?.title })}
@@ -694,6 +672,7 @@ export default function ListingDetails() {
                 <Ionicons name="close-outline" size={24} color={theme.textSecondary} />
               </TouchableOpacity>
             </View>
+
             <View style={styles.commentsListContainerFixed}>
               <KeyboardAwareScrollView
                 contentContainerStyle={styles.commentsListContent}
@@ -729,6 +708,7 @@ export default function ListingDetails() {
                   <Text style={[styles.successText, { color: theme.success }]}>Comment added successfully!</Text>
                 </View>
               )}
+
               {replyToUser && (
                 <View style={[styles.replyIndicatorContainer, { backgroundColor: `rgba(1,122,107,0.1)` }]}>
                   <Ionicons name="arrow-undo" size={16} color={theme.primary} />
@@ -743,6 +723,7 @@ export default function ListingDetails() {
                   </TouchableOpacity>
                 </View>
               )}
+
               {attachedImage && (
                 <View style={styles.attachedImageContainer}>
                   <Image source={{ uri: attachedImage }} style={styles.attachedImage} />
@@ -751,10 +732,12 @@ export default function ListingDetails() {
                   </TouchableOpacity>
                 </View>
               )}
+
               <View style={styles.commentInputWrapper}>
                 <TouchableOpacity onPress={pickCommentImage} style={styles.imagePickerButton}>
                   <Ionicons name="image-outline" size={24} color={theme.primary} />
                 </TouchableOpacity>
+
                 <TextInput
                   style={[
                     styles.commentInput,
@@ -771,6 +754,7 @@ export default function ListingDetails() {
                   multiline
                   maxLength={1000}
                 />
+
                 <TouchableOpacity
                   style={[
                     styles.sendButton,

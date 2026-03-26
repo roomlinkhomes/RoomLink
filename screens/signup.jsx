@@ -1,4 +1,4 @@
-// screens/Signup.jsx — FIXED: infinite re-render loop in username check
+// screens/Signup.jsx
 import React, { useState, useContext, useEffect } from "react";
 import {
   View,
@@ -15,12 +15,13 @@ import {
   Platform,
   ActivityIndicator,
   TouchableWithoutFeedback,
+  Linking,
 } from "react-native";
 import { TextInput, Checkbox } from "react-native-paper";
 import { Ionicons } from "@expo/vector-icons";
 import { AuthContext } from "../context/AuthContext";
 import { countries } from "../constants/countries";
-import { auth, db } from "../firebaseConfig";
+import { db } from "../firebaseConfig";
 import { doc, getDoc } from "firebase/firestore";
 import { useNavigation } from "@react-navigation/native";
 import { getFunctions, httpsCallable } from "firebase/functions";
@@ -76,7 +77,7 @@ export default function Signup() {
     }
   }, [setUserCountry, setUserCurrency]);
 
-  // Debounce username input to prevent too many checks
+  // Debounce username input
   const [debouncedUsername, setDebouncedUsername] = useState("");
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -86,7 +87,7 @@ export default function Signup() {
     return () => clearTimeout(timer);
   }, [username]);
 
-  // Username availability check — only runs when debounced value changes
+  // Username availability check
   useEffect(() => {
     const clean = debouncedUsername;
 
@@ -195,6 +196,14 @@ export default function Signup() {
     setCountryModalVisible(false);
   };
 
+  // Open Privacy Policy
+  const openPrivacyPolicy = () => {
+    Linking.openURL("https://roomlink.homes/privacy").catch((err) => {
+      console.error("Failed to open privacy policy:", err);
+      Alert.alert("Error", "Could not open the privacy policy. Please try again later.");
+    });
+  };
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Back Button */}
@@ -215,7 +224,7 @@ export default function Signup() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Slim Header */}
+          {/* Header */}
           <View style={styles.header}>
             <View
               style={[
@@ -239,7 +248,7 @@ export default function Signup() {
             </View>
           </View>
 
-          {/* Slim Signup Card */}
+          {/* Signup Card */}
           <View
             style={[
               styles.signupCard,
@@ -467,7 +476,7 @@ export default function Signup() {
               {errors.confirmPassword && <Text style={[styles.errorText, { color: theme.error }]}>{errors.confirmPassword}</Text>}
             </View>
 
-            {/* Terms */}
+            {/* Terms & Privacy */}
             <View style={styles.agreeContainer}>
               <Checkbox.Android
                 status={agree ? "checked" : "unchecked"}
@@ -477,7 +486,12 @@ export default function Signup() {
               />
               <Text style={[styles.agreeText, { color: theme.text }]}>
                 I agree to the{" "}
-                <Text style={[styles.linkText, { color: theme.primary }]}>Terms & Privacy</Text>
+                <Text
+                  style={[styles.linkText, { color: theme.primary }]}
+                  onPress={openPrivacyPolicy}
+                >
+                  Terms & Privacy
+                </Text>
               </Text>
             </View>
             {errors.agree && <Text style={[styles.errorText, { color: theme.error }]}>{errors.agree}</Text>}
@@ -638,18 +652,6 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   inputContainer: { marginBottom: 14 },
-  countryItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-  },
-  countryFlag: { fontSize: 22, marginRight: 12 },
-  countryInfo: { flex: 1 },
-  countryName: { fontSize: 15, fontWeight: "600" },
-  countryDetails: { fontSize: 13, marginTop: 1 },
-  comingSoon: { fontSize: 12, fontWeight: "500" },
   agreeContainer: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -657,7 +659,10 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   agreeText: { fontSize: 14, lineHeight: 20, flex: 1, marginLeft: 8 },
-  linkText: { fontWeight: "700" },
+  linkText: {
+    fontWeight: "700",
+    textDecorationLine: "underline",
+  },
   signupButton: {
     paddingVertical: 14,
     borderRadius: 12,
@@ -709,4 +714,16 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 18, fontWeight: "700" },
   searchInput: { margin: 16, marginBottom: 8 },
+  countryItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+  },
+  countryFlag: { fontSize: 22, marginRight: 12 },
+  countryInfo: { flex: 1 },
+  countryName: { fontSize: 15, fontWeight: "600" },
+  countryDetails: { fontSize: 13, marginTop: 1 },
+  comingSoon: { fontSize: 12, fontWeight: "500" },
 });

@@ -1,4 +1,4 @@
-// screens/ChangeEmail.jsx — FIXED: Safe Firebase init + proper re-auth + error handling
+// screens/ChangeEmail.jsx
 import React, { useState, useContext } from "react";
 import {
   View,
@@ -16,11 +16,12 @@ import { TextInput } from "react-native-paper";
 import { Ionicons } from "@expo/vector-icons";
 import { AuthContext } from "../context/AuthContext";
 
-// Firebase imports - only import what we need
-import { getAuth, EmailAuthProvider, reauthenticateWithCredential, updateEmail, sendEmailVerification } from "firebase/auth";
+// Native Firebase Auth
+import auth from '@react-native-firebase/auth';
+import { EmailAuthProvider } from '@react-native-firebase/auth';
 
 export default function ChangeEmail({ navigation }) {
-  const { user } = useContext(AuthContext); // Get current user from context
+  const { user } = useContext(AuthContext); // Only for presence check + email comparison
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -28,7 +29,6 @@ export default function ChangeEmail({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Light theme
   const theme = {
     background: "#fafafa",
     card: "#ffffff",
@@ -44,7 +44,6 @@ export default function ChangeEmail({ navigation }) {
   };
 
   const handleSubmit = async () => {
-    // Validation
     if (newEmail !== confirmEmail) {
       Alert.alert("Mismatch", "New email addresses do not match.");
       return;
@@ -73,25 +72,26 @@ export default function ChangeEmail({ navigation }) {
     setLoading(true);
 
     try {
-      const auth = getAuth();
+      // Get the LIVE Firebase User instance (has all methods: reauthenticateWithCredential, updateEmail, etc.)
+      const currentUser = auth().currentUser;
 
-      // If auth is undefined → Firebase not initialized
-      if (!auth || !auth.currentUser) {
-        throw new Error("Firebase Auth not initialized or no current user");
+      if (!currentUser) {
+        throw new Error("No current authenticated user found. Please sign in again.");
       }
 
-      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      // Use currentUser.email (matches context user.email if everything is in sync)
+      const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
 
-      // 1. Re-authenticate
-      await reauthenticateWithCredential(user, credential);
+      // 1. Re-authenticate (required for email change)
+      await currentUser.reauthenticateWithCredential(credential);
       console.log("Re-authentication successful");
 
       // 2. Update email
-      await updateEmail(user, newEmail);
+      await currentUser.updateEmail(newEmail);
       console.log("Email updated to:", newEmail);
 
-      // 3. Send verification email
-      await sendEmailVerification(user);
+      // 3. Send verification email to new address
+      await currentUser.sendEmailVerification();
       console.log("Verification email sent");
 
       Alert.alert(
@@ -99,29 +99,38 @@ export default function ChangeEmail({ navigation }) {
         "Your email has been updated!\n\nA verification email has been sent to the new address. Please verify it soon.",
         [{ text: "OK", onPress: () => navigation.goBack() }]
       );
+
+      // Optional: reload user to get updated emailVerified, etc.
+      // await currentUser.reload();
+      // If your context doesn't auto-update via onAuthStateChanged, call updateUser({ email: newEmail, emailVerified: false }) here
+
     } catch (err) {
       console.error("Change email error:", err);
 
       let message = "Failed to update email. Please try again.";
-      switch (err.code) {
-        case "auth/wrong-password":
-          message = "Incorrect current password.";
-          break;
-        case "auth/requires-recent-login":
-          message = "Your session is too old. Please log out and log back in.";
-          break;
-        case "auth/email-already-in-use":
-          message = "This email is already in use by another account.";
-          break;
-        case "auth/invalid-email":
-          message = "Invalid email format.";
-          break;
-        case "auth/user-not-found":
-        case "auth/user-disabled":
-          message = "Account issue. Contact support.";
-          break;
-        default:
-          message = err.message || "Unknown error";
+      if (err.code) {
+        switch (err.code) {
+          case "auth/wrong-password":
+            message = "Incorrect current password.";
+            break;
+          case "auth/requires-recent-login":
+            message = "Your session is too old. Please log out and log back in.";
+            break;
+          case "auth/email-already-in-use":
+            message = "This email is already in use by another account.";
+            break;
+          case "auth/invalid-email":
+            message = "Invalid email format.";
+            break;
+          case "auth/user-not-found":
+          case "auth/user-disabled":
+            message = "Account issue. Contact support.";
+            break;
+          default:
+            message = err.message || err.code || "Unknown error";
+        }
+      } else {
+        message = err.message || "Unknown error";
       }
 
       Alert.alert("Error", message);

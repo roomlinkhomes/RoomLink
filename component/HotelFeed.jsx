@@ -1,4 +1,4 @@
-// component/HotelFeed.jsx
+// component/HotelFeed.jsx — Updated with Trust badge for verified hosts
 import React, { useContext, useMemo, useEffect, useState } from "react";
 import {
   View,
@@ -24,6 +24,9 @@ import { db } from "../firebaseConfig";
 import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
 import RedBadge from "../assets/icons/red.svg";
+
+// Trust Badge
+import Trust from "../component/Trust";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
@@ -112,6 +115,7 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
     setPosts(hotelListings);
   }, [listings]);
 
+  // Fetch user info including isVerified for Trust badge
   useEffect(() => {
     const fetchUserInfo = async () => {
       const uniqueUserIds = [...new Set(posts.map((p) => p.userId).filter(Boolean))];
@@ -127,16 +131,17 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
                 newInfo[uid] = {
                   name: getFullName(data),
                   avatar: data.photoURL || data.profileImage || data.avatar || null,
+                  isVerified: data.isVerified === true || data.verificationStatus === "approved", // Trust badge control
                   verificationType: data.verificationType || null,
                   averageRating: data.averageRating || 0,
                   reviewCount: data.reviewCount || 0,
                 };
               } else {
-                newInfo[uid] = { name: "User", avatar: null, verificationType: null, averageRating: 0, reviewCount: 0 };
+                newInfo[uid] = { name: "User", avatar: null, isVerified: false, verificationType: null, averageRating: 0, reviewCount: 0 };
               }
             } catch (err) {
               console.warn(`Failed to fetch user ${uid}:`, err);
-              newInfo[uid] = { name: "User", avatar: null, verificationType: null, averageRating: 0, reviewCount: 0 };
+              newInfo[uid] = { name: "User", avatar: null, isVerified: false, verificationType: null, averageRating: 0, reviewCount: 0 };
             }
           }
         })
@@ -197,10 +202,11 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
     const ownerId = item.userId;
     const userInfo = userInfoMap[ownerId] || {};
     const fullName = userInfo.name || "User";
-    const avatarUri =
-      userInfo.avatar || (isMyPost ? currentUser?.photoURL || currentUser?.avatar : null);
+    const isVerified = userInfo.isVerified === true;        // ← Trust badge control
     const verificationType = userInfo.verificationType;
     const hasRating = userInfo.averageRating > 0 || userInfo.reviewCount > 0;
+
+    const avatarUri = userInfo.avatar || (isMyPost ? currentUser?.photoURL || currentUser?.avatar : null);
 
     const images = Array.isArray(item.images) && item.images.length > 0 ? item.images : [];
     const hasMultiple = images.length > 1;
@@ -231,6 +237,11 @@ export default function HotelFeed({ navigation, scrollY, onScroll }) {
             <View style={styles.nameContainer}>
               <View style={styles.nameRow}>
                 <Text style={[styles.userName, dynamicStyles.textColor]}>{fullName}</Text>
+
+                {/* Trust Badge - Only for verified hosts */}
+                {isVerified && <Trust text="Verified Host" />}
+
+                {/* Colored badges (kept as before) */}
                 {verificationType === "vendor" && <YellowBadge width={24} height={24} style={{ marginLeft: 6 }} />}
                 {verificationType === "studentLandlord" && <BlueBadge width={24} height={24} style={{ marginLeft: 6 }} />}
                 {verificationType === "realEstate" && <RedBadge width={24} height={24} style={{ marginLeft: 6 }} />}
@@ -479,22 +490,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
 
-  // ── New styles for multi-image carousel ────────────────────────────────
-  imagesContainer: {
-    position: "relative",
-  },
-  imageScroll: {
-    width: SCREEN_WIDTH,
-    height: 250,
-  },
-  imageWrapper: {
-    width: SCREEN_WIDTH,
-    height: 250,
-  },
-  postImage: {
-    width: "100%",
-    height: "100%",
-  },
+  imagesContainer: { position: "relative" },
+  imageScroll: { width: SCREEN_WIDTH, height: 250 },
+  imageWrapper: { width: SCREEN_WIDTH, height: 250 },
+  postImage: { width: "100%", height: "100%" },
 
   imageCountBadge: {
     position: "absolute",
@@ -513,7 +512,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
   },
-  // ──────────────────────────────────────────────────────────────────────
 
   listingInfo: { padding: 10 },
 

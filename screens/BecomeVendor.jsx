@@ -1,4 +1,4 @@
-// screens/BecomeVendorScreen.jsx — FIXED: No blank screen, edit works, stable ID picker with DocumentPicker
+// screens/BecomeVendorScreen.jsx
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -19,19 +19,38 @@ import { useNavigation } from "@react-navigation/native";
 import { useColorScheme } from "react-native";
 import { TextInput, Button, Checkbox } from "react-native-paper";
 import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 
-// Firebase imports
+// Firebase
 import { auth, db } from "../firebaseConfig";
-import { doc, setDoc, onSnapshot } from "firebase/firestore";
+import { doc, setDoc, onSnapshot, updateDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
-const BANKS = [
-  "Access Bank", "GTBank", "Zenith Bank", "First Bank", "UBA",
-  "FCMB", "Wema Bank", "Fidelity Bank", "Polaris Bank", "Kuda",
-  "Opay", "Moniepoint", "PalmPay", "VFD Microfinance Bank",
-  "Sterling Bank", "Union Bank", "Keystone Bank", "Stanbic IBTC",
-  "Unity Bank", "Taj Bank", "Lotus Bank",
-];
+const BANK_CODES = {
+  "Access Bank": "044",
+  "GTBank": "058",
+  "Zenith Bank": "057",
+  "First Bank": "011",
+  "UBA": "033",
+  "FCMB": "214",
+  "Wema Bank": "035",
+  "Fidelity Bank": "070",
+  "Polaris Bank": "076",
+  "Kuda": "50211",
+  "Opay": "999992",
+  "Moniepoint": "505",
+  "PalmPay": "999991",
+  "VFD Microfinance Bank": "090110",
+  "Sterling Bank": "232",
+  "Union Bank": "032",
+  "Keystone Bank": "082",
+  "Stanbic IBTC": "221",
+  "Unity Bank": "215",
+  "Taj Bank": "302",
+  "Lotus Bank": "303",
+};
+
+const BANKS = Object.keys(BANK_CODES);
 
 export default function BecomeVendorScreen() {
   const navigation = useNavigation();
@@ -50,49 +69,45 @@ export default function BecomeVendorScreen() {
 
   const [status, setStatus] = useState("loading");
   const [errorMsg, setErrorMsg] = useState(null);
+
+  // Form states
   const [role, setRole] = useState("Host");
   const [fullName, setFullName] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [bankName, setBankName] = useState("");
+  const [bankCode, setBankCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [accountHolderName, setAccountHolderName] = useState("");
   const [governmentIdUri, setGovernmentIdUri] = useState(null);
   const [governmentIdUrl, setGovernmentIdUrl] = useState(null);
+  const [livePhotoUri, setLivePhotoUri] = useState(null);
+  const [livePhotoUrl, setLivePhotoUrl] = useState(null);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [bankModalVisible, setBankModalVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploadingId, setUploadingId] = useState(false);
+  const [uploadingLivePhoto, setUploadingLivePhoto] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
 
   const storage = getStorage();
 
-  // Real-time listener with proper error handling & logging
+  // Real-time listener for vendor application
   useEffect(() => {
-    console.log("BecomeVendorScreen mounted");
-
     const unsubscribeAuth = auth.onAuthStateChanged((user) => {
-      console.log("Auth state changed - user:", user ? user.uid : "null");
-
       if (!user) {
         setStatus("error");
-        setErrorMsg("Please sign in to access this screen.");
-        console.log("No authenticated user → error state");
+        setErrorMsg("Please sign in to continue.");
         return;
       }
 
       const appRef = doc(db, "vendorApplications", user.uid);
-      console.log("Listening to Firestore doc:", `vendorApplications/${user.uid}`);
 
-      const unsubscribeSnap = onSnapshot(appRef, (docSnap) => {
-        console.log("Snapshot received - exists:", docSnap.exists());
-        setErrorMsg(null);
-
+      const unsubSnap = onSnapshot(appRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          console.log("Vendor data loaded:", data.status, data);
           setStatus(data.status || "pending");
           setRole(data.role || "Host");
           setFullName(data.fullName || "");
@@ -100,39 +115,50 @@ export default function BecomeVendorScreen() {
           setEmail(data.email || user.email || "");
           setPhoneNumber(data.phoneNumber || "");
           setBankName(data.bankName || "");
+          setBankCode(data.bankCode || "");
           setAccountNumber(data.accountNumber || "");
           setAccountHolderName(data.accountHolderName || "");
           setGovernmentIdUrl(data.governmentIdUrl || null);
           setGovernmentIdUri(data.governmentIdUrl || null);
+          setLivePhotoUrl(data.livePhotoUrl || null);
+          setLivePhotoUri(data.livePhotoUrl || null);
           setAgreedToTerms(true);
         } else {
-          console.log("No vendor application doc found → not_submitted");
           setStatus("not_submitted");
           setEmail(user.email || "");
+          setFullName("");
+          setBusinessName("");
           setPhoneNumber("");
+          setBankName("");
+          setBankCode("");
+          setAccountNumber("");
+          setAccountHolderName("");
           setGovernmentIdUri(null);
           setGovernmentIdUrl(null);
+          setLivePhotoUri(null);
+          setLivePhotoUrl(null);
           setAgreedToTerms(false);
         }
-      }, (err) => {
-        console.error("Firestore snapshot error:", err.code, err.message);
-        setStatus("error");
-        setErrorMsg(`Failed to load application status: ${err.message || "Unknown error"}`);
       });
 
-      return () => {
-        console.log("Unsubscribing Firestore listener");
-        unsubscribeSnap();
-      };
+      return () => unsubSnap();
     });
 
-    return () => {
-      console.log("Unsubscribing auth listener");
-      unsubscribeAuth();
-    };
-  }, [navigation]);
+    return unsubscribeAuth;
+  }, []);
 
-  // Stable Government ID upload using DocumentPicker
+  // When application is approved → update main user document so flip card shows "Verified"
+  useEffect(() => {
+    if (status === "approved" && auth.currentUser?.uid) {
+      const userRef = doc(db, "users", auth.currentUser.uid);
+      updateDoc(userRef, {
+        isVerified: true,
+        // Do NOT set verificationType here (to avoid showing premium badge)
+      }).catch((err) => console.error("Failed to update verification status:", err));
+    }
+  }, [status]);
+
+  // ===================== Upload Functions =====================
   const uploadGovernmentId = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -140,51 +166,94 @@ export default function BecomeVendorScreen() {
         copyToCacheDirectory: true,
         multiple: false,
       });
+      if (result.canceled || !result.assets?.[0]) return;
 
-      console.log("DocumentPicker result for ID:", result);
+      const uri = result.assets[0].uri;
+      setGovernmentIdUri(uri);
+      setUploadingId(true);
 
-      if (!result.canceled && result.assets?.[0]) {
-        const uri = result.assets[0].uri;
-        setGovernmentIdUri(uri);
-        setUploadingId(true);
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error("Not logged in");
 
-        const currentUser = auth.currentUser;
-        if (!currentUser) throw new Error("No user logged in");
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const fileRef = ref(storage, `vendorIds/${currentUser.uid}/id_${Date.now()}.jpg`);
+      const uploadTask = uploadBytesResumable(fileRef, blob);
 
-        const response = await fetch(uri);
-        const blob = await response.blob();
-        const fileRef = ref(storage, `vendorIds/${currentUser.uid}/id_${Date.now()}.jpeg`);
-        const uploadTask = uploadBytesResumable(fileRef, blob);
-
-        const url = await new Promise((resolve, reject) => {
-          uploadTask.on("state_changed", null, reject, async () => {
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve(downloadUrl);
-          });
+      const url = await new Promise((resolve, reject) => {
+        uploadTask.on("state_changed", null, reject, async () => {
+          const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+          resolve(downloadUrl);
         });
+      });
 
-        setGovernmentIdUrl(url);
-        Alert.alert("Success", "Government ID uploaded successfully!");
-      }
+      setGovernmentIdUrl(url);
+      Alert.alert("Success", "Government ID uploaded successfully");
     } catch (err) {
-      console.error("ID upload error:", err);
-      Alert.alert("Error", err.message || "Failed to upload ID. Try again.");
+      console.error(err);
+      Alert.alert("Error", "Could not upload ID. Try again.");
     } finally {
       setUploadingId(false);
     }
   };
 
+  const takeAndUploadLivePhoto = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (permission.status !== "granted") {
+        Alert.alert("Camera Access Required", "Please allow camera access in your device settings.");
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const uri = result.assets[0].uri;
+      setLivePhotoUri(uri);
+      setUploadingLivePhoto(true);
+
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error("Not logged in");
+
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const fileRef = ref(storage, `vendorLivePhotos/${currentUser.uid}/selfie_${Date.now()}.jpg`);
+      const uploadTask = uploadBytesResumable(fileRef, blob);
+
+      const url = await new Promise((resolve, reject) => {
+        uploadTask.on("state_changed", null, reject, async () => {
+          const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+          resolve(downloadUrl);
+        });
+      });
+
+      setLivePhotoUrl(url);
+      Alert.alert("Success", "Live photo captured and uploaded");
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", err.message || "Failed to capture/upload photo");
+    } finally {
+      setUploadingLivePhoto(false);
+    }
+  };
+
+  // ===================== Submit =====================
   const handleSubmit = async () => {
     if (submitting) return;
 
     if (!fullName.trim()) return Alert.alert("Required", "Full name is required");
     if (!email.trim() || !/\S+@\S+\.\S+/.test(email)) return Alert.alert("Invalid", "Valid email required");
-    if (!phoneNumber || phoneNumber.length < 10) return Alert.alert("Invalid", "Phone ≥ 10 digits");
-    if (!bankName) return Alert.alert("Required", "Select a bank");
-    if (accountNumber.length !== 10) return Alert.alert("Invalid", "Account number must be 10 digits");
+    if (phoneNumber.length < 10) return Alert.alert("Invalid", "Phone number must be at least 10 digits");
+    if (!bankName || !bankCode) return Alert.alert("Required", "Please select a valid bank");
+    if (accountNumber.length !== 10) return Alert.alert("Invalid", "Account number must be exactly 10 digits");
     if (!accountHolderName.trim()) return Alert.alert("Required", "Account holder name required");
-    if (!governmentIdUrl) return Alert.alert("Required", "Upload Government ID");
-    if (!agreedToTerms) return Alert.alert("Required", "Agree to terms");
+    if (!governmentIdUrl) return Alert.alert("Required", "Please upload Government ID");
+    if (!livePhotoUrl) return Alert.alert("Required", "Please take a live photo / selfie");
+    if (!agreedToTerms) return Alert.alert("Required", "You must agree to the terms");
 
     const currentUser = auth.currentUser;
     if (!currentUser) return Alert.alert("Error", "No user logged in");
@@ -197,9 +266,11 @@ export default function BecomeVendorScreen() {
       fullName: fullName.trim(),
       businessName: businessName.trim() || null,
       bankName,
+      bankCode,
       accountNumber,
       accountHolderName: accountHolderName.trim(),
       governmentIdUrl,
+      livePhotoUrl,
       submittedAt: new Date().toISOString(),
       status: "pending",
       reviewedAt: null,
@@ -209,24 +280,19 @@ export default function BecomeVendorScreen() {
 
     try {
       setSubmitting(true);
-      const appRef = doc(db, "vendorApplications", currentUser.uid);
-      await setDoc(appRef, applicationData, { merge: true });
-
+      await setDoc(doc(db, "vendorApplications", currentUser.uid), applicationData, { merge: true });
       setStatus("pending");
       setIsEditing(false);
-
-      Alert.alert("Success!", "Application submitted/updated. Pending review.");
+      Alert.alert("Success", "Application submitted successfully. It is now pending review.");
     } catch (err) {
-      console.error("Submit error:", err);
-      Alert.alert("Error", "Failed to submit. Check connection and try again.");
+      console.error(err);
+      Alert.alert("Error", "Failed to submit application.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Fixed: Edit button now forces form visibility
   const startEditing = () => {
-    console.log("Edit button pressed → forcing form");
     setIsEditing(true);
     setStatus("not_submitted");
   };
@@ -235,7 +301,7 @@ export default function BecomeVendorScreen() {
     bank.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Loading UI
+  // ===================== Render =====================
   if (status === "loading") {
     return (
       <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
@@ -247,34 +313,20 @@ export default function BecomeVendorScreen() {
     );
   }
 
-  // Error UI
   if (status === "error") {
     return (
       <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
-        <Ionicons name="alert-circle" size={80} color={theme.error} />
-        <Text style={{ color: theme.text, fontSize: 20, fontWeight: "bold", marginTop: 24 }}>
-          Error Loading
-        </Text>
-        <Text style={{ color: theme.textSecondary, textAlign: "center", marginTop: 12, paddingHorizontal: 40 }}>
-          {errorMsg || "Failed to load application data. Check your internet connection."}
-        </Text>
-        <TouchableOpacity
-          onPress={() => setStatus("loading")}
-          style={{ marginTop: 32, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: theme.primary, borderRadius: 12 }}
-        >
-          <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>Retry</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={{ marginTop: 16 }}
-        >
-          <Text style={{ color: theme.primary, fontSize: 16 }}>Go Back</Text>
+        <Ionicons name="alert-circle-outline" size={80} color={theme.error} />
+        <Text style={{ color: theme.text, fontSize: 20, fontWeight: "bold", marginTop: 24 }}>Something went wrong</Text>
+        <Text style={{ color: theme.textSecondary, textAlign: "center", marginTop: 12 }}>{errorMsg}</Text>
+        <TouchableOpacity onPress={() => setStatus("loading")} style={[styles.retryBtn, { backgroundColor: theme.primary }]}>
+          <Text style={{ color: "#fff", fontWeight: "600" }}>Retry</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  // Form UI (new or edit)
+  // Form Mode
   if (status === "not_submitted" || isEditing) {
     return (
       <KeyboardAvoidingView
@@ -282,10 +334,12 @@ export default function BecomeVendorScreen() {
         style={{ flex: 1, backgroundColor: theme.background }}
       >
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => {
-            if (isEditing) setIsEditing(false);
-            navigation.goBack();
-          }}>
+          <TouchableOpacity
+            onPress={() => {
+              if (isEditing) setIsEditing(false);
+              navigation.goBack();
+            }}
+          >
             <Ionicons name="arrow-back" size={28} color={theme.text} />
           </TouchableOpacity>
           <Text style={[styles.pageTitle, { color: theme.text }]}>
@@ -311,146 +365,85 @@ export default function BecomeVendorScreen() {
           </View>
 
           <View style={[styles.card, { backgroundColor: theme.card }]}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>
-              {isEditing ? "Update Details" : "Personal & Contact Details"}
-            </Text>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>Personal & Contact Details</Text>
+            <TextInput label="Full Name *" value={fullName} onChangeText={setFullName} mode="outlined" style={styles.input} theme={{ colors: { primary: theme.primary } }} />
+            <TextInput label="Email *" value={email} onChangeText={setEmail} mode="outlined" keyboardType="email-address" autoCapitalize="none" style={styles.input} theme={{ colors: { primary: theme.primary } }} />
+            <TextInput label="Phone Number *" value={phoneNumber} onChangeText={(text) => setPhoneNumber(text.replace(/[^0-9]/g, "").slice(0, 11))} mode="outlined" keyboardType="phone-pad" maxLength={11} style={styles.input} theme={{ colors: { primary: theme.primary } }} />
+            <TextInput label="Business Name (optional)" value={businessName} onChangeText={setBusinessName} mode="outlined" style={styles.input} theme={{ colors: { primary: theme.primary } }} />
 
-            <TextInput
-              label="Full Name *"
-              value={fullName}
-              onChangeText={setFullName}
-              mode="outlined"
-              style={styles.input}
-              theme={{ colors: { primary: theme.primary } }}
-            />
-
-            <TextInput
-              label="Email *"
-              value={email}
-              onChangeText={setEmail}
-              mode="outlined"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              style={styles.input}
-              theme={{ colors: { primary: theme.primary } }}
-            />
-
-            <TextInput
-              label="Phone Number *"
-              value={phoneNumber}
-              onChangeText={(text) => setPhoneNumber(text.replace(/[^0-9]/g, "").slice(0, 11))}
-              mode="outlined"
-              keyboardType="phone-pad"
-              maxLength={11}
-              style={styles.input}
-              theme={{ colors: { primary: theme.primary } }}
-            />
-
-            <TextInput
-              label="Business Name (optional)"
-              value={businessName}
-              onChangeText={setBusinessName}
-              mode="outlined"
-              style={styles.input}
-              theme={{ colors: { primary: theme.primary } }}
-            />
-
-            <Text style={[styles.label, { color: theme.textSecondary }]}>Government ID *</Text>
+            <Text style={[styles.label, { color: theme.textSecondary, marginTop: 16 }]}>Government ID *</Text>
             <TouchableOpacity style={styles.uploadBtn} onPress={uploadGovernmentId} disabled={uploadingId}>
               {governmentIdUri ? (
-                <View style={{ position: 'relative' }}>
-                  <Image
-                    source={{ uri: governmentIdUri }}
-                    style={{ width: "100%", height: 180, borderRadius: 12 }}
-                    resizeMode="cover"
-                  />
-                  {uploadingId && (
-                    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
-                      <ActivityIndicator size="large" color={theme.primary} />
-                    </View>
-                  )}
+                <Image source={{ uri: governmentIdUri }} style={{ width: "100%", height: 180, borderRadius: 12 }} resizeMode="cover" />
+              ) : (
+                <View style={{ alignItems: "center", padding: 30 }}>
+                  <Ionicons name="cloud-upload-outline" size={48} color={theme.primary} />
+                  <Text style={{ color: theme.textSecondary, marginTop: 12, textAlign: "center" }}>Tap to upload Government ID</Text>
+                </View>
+              )}
+              {uploadingId && <ActivityIndicator size="large" color={theme.primary} style={{ position: "absolute" }} />}
+            </TouchableOpacity>
+
+            <Text style={[styles.label, { color: theme.textSecondary, marginTop: 32 }]}>Live Photo / Selfie *</Text>
+            <Text style={{ color: "#e65100", fontSize: 13, marginBottom: 8, fontStyle: "italic" }}>Make sure the picture matches with the one on your ID</Text>
+            <TouchableOpacity style={styles.uploadBtn} onPress={takeAndUploadLivePhoto} disabled={uploadingLivePhoto}>
+              {livePhotoUri ? (
+                <View style={{ position: "relative" }}>
+                  <Image source={{ uri: livePhotoUri }} style={{ width: "100%", height: 180, borderRadius: 12 }} resizeMode="cover" />
+                  {uploadingLivePhoto && <View style={styles.overlay}><ActivityIndicator size="large" color={theme.primary} /></View>}
                 </View>
               ) : (
-                <View style={{ alignItems: "center", padding: 20 }}>
-                  <Ionicons name="cloud-upload-outline" size={40} color={theme.primary} />
-                  <Text style={[styles.uploadText, { color: theme.textSecondary, marginTop: 12 }]}>
-                    Tap to {governmentIdUrl ? "replace" : "upload"} Government ID
-                  </Text>
+                <View style={{ alignItems: "center", padding: 30 }}>
+                  <Ionicons name="camera-outline" size={48} color={theme.primary} />
+                  <Text style={{ color: theme.textSecondary, marginTop: 12, textAlign: "center" }}>Tap to take live photo (camera)</Text>
                 </View>
               )}
             </TouchableOpacity>
 
-            <Text style={[styles.label, { color: theme.textSecondary }]}>Bank Name *</Text>
+            {livePhotoUri && (
+              <Button mode="outlined" onPress={takeAndUploadLivePhoto} style={{ marginTop: 12, alignSelf: "center" }} disabled={uploadingLivePhoto}>
+                Retake Photo
+              </Button>
+            )}
+
+            <Text style={[styles.label, { color: theme.textSecondary, marginTop: 32 }]}>Bank Name *</Text>
             <TouchableOpacity onPress={() => setBankModalVisible(true)}>
-              <TextInput
-                value={bankName}
-                editable={false}
-                mode="outlined"
-                placeholder="Select your bank"
-                right={<TextInput.Icon icon="chevron-down" color={theme.primary} />}
-                theme={{ colors: { primary: theme.primary } }}
-              />
+              <TextInput value={bankName} editable={false} mode="outlined" placeholder="Select your bank" right={<TextInput.Icon icon="chevron-down" color={theme.primary} />} theme={{ colors: { primary: theme.primary } }} />
             </TouchableOpacity>
 
-            <TextInput
-              label="Account Number *"
-              value={accountNumber}
-              onChangeText={(text) => setAccountNumber(text.replace(/[^0-9]/g, "").slice(0, 10))}
-              mode="outlined"
-              keyboardType="numeric"
-              maxLength={10}
-              style={styles.input}
-              theme={{ colors: { primary: theme.primary } }}
-            />
-
-            <TextInput
-              label="Account Holder Name *"
-              value={accountHolderName}
-              onChangeText={setAccountHolderName}
-              mode="outlined"
-              style={styles.input}
-              theme={{ colors: { primary: theme.primary } }}
-            />
+            <TextInput label="Account Number *" value={accountNumber} onChangeText={(text) => setAccountNumber(text.replace(/[^0-9]/g, "").slice(0, 10))} mode="outlined" keyboardType="numeric" maxLength={10} style={styles.input} theme={{ colors: { primary: theme.primary } }} />
+            <TextInput label="Account Holder Name *" value={accountHolderName} onChangeText={setAccountHolderName} mode="outlined" style={styles.input} theme={{ colors: { primary: theme.primary } }} />
           </View>
 
-          <View style={[styles.card, { marginTop: 20, backgroundColor: theme.card }]}>
+          <View style={[styles.card, { marginTop: 24, backgroundColor: theme.card }]}>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>Rules & Agreement</Text>
             <ScrollView style={styles.termsBox} nestedScrollEnabled>
               <Text style={[styles.termsText, { color: theme.textSecondary }]}>
-                • Payouts processed 24h after booking confirmation (hosts) or delivery (vendors){'\n\n'}
-                • RoomLink commission: 10-15% + Paystack fees{'\n\n'}
+                • Payouts processed 24h after confirmation{'\n\n'}
+                • RoomLink commission: 10-15% + transaction fees{'\n\n'}
                 • You agree to RoomLink Terms, Privacy Policy & Community Guidelines{'\n\n'}
-                • Bank details used to create Paystack sub-account for payouts{'\n\n'}
-                • Review time: 48-72 hours. Fraud = rejection/ban{'\n\n'}
-                • You're responsible for accurate listings & local law compliance
+                • Accurate information required – false details = rejection{'\n\n'}
+                • Review time: 48-72 hours
               </Text>
             </ScrollView>
-
             <View style={styles.checkboxRow}>
-              <Checkbox
-                status={agreedToTerms ? "checked" : "unchecked"}
-                onPress={() => setAgreedToTerms(!agreedToTerms)}
-                color={theme.primary}
-              />
-              <Text style={[styles.checkboxLabel, { color: theme.text }]}>
-                I agree to the rules and RoomLink's Terms of Service
-              </Text>
+              <Checkbox status={agreedToTerms ? "checked" : "unchecked"} onPress={() => setAgreedToTerms(!agreedToTerms)} color={theme.primary} />
+              <Text style={[styles.checkboxLabel, { color: theme.text }]}>I agree to the rules and RoomLink's Terms of Service</Text>
             </View>
           </View>
 
           <Button
             mode="contained"
             onPress={handleSubmit}
-            disabled={submitting || uploadingId || !agreedToTerms}
+            disabled={submitting || uploadingId || uploadingLivePhoto || !agreedToTerms}
             loading={submitting}
             style={styles.submitBtn}
             theme={{ colors: { primary: theme.primary } }}
           >
-            {submitting ? "Submitting..." : (isEditing ? "Update & Re-submit" : "Submit Application")}
+            {submitting ? "Submitting..." : isEditing ? "Update & Re-submit" : "Submit Application"}
           </Button>
         </ScrollView>
 
-        {/* Bank Modal */}
         <Modal visible={bankModalVisible} transparent animationType="slide">
           <View style={styles.modalBackdrop}>
             <View style={[styles.modalContainer, { backgroundColor: theme.card }]}>
@@ -460,15 +453,7 @@ export default function BecomeVendorScreen() {
                   <Ionicons name="close" size={28} color={theme.text} />
                 </TouchableOpacity>
               </View>
-
-              <TextInput
-                placeholder="Search bank..."
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                style={[styles.searchInput, { borderColor: theme.border }]}
-                placeholderTextColor={theme.textSecondary}
-              />
-
+              <TextInput placeholder="Search bank..." value={searchQuery} onChangeText={setSearchQuery} style={[styles.searchInput, { borderColor: theme.border }]} placeholderTextColor={theme.textSecondary} />
               <FlatList
                 data={filteredBanks}
                 keyExtractor={(item) => item}
@@ -477,6 +462,7 @@ export default function BecomeVendorScreen() {
                     style={styles.bankItem}
                     onPress={() => {
                       setBankName(item);
+                      setBankCode(BANK_CODES[item] || "");
                       setBankModalVisible(false);
                       setSearchQuery("");
                     }}
@@ -492,158 +478,80 @@ export default function BecomeVendorScreen() {
     );
   }
 
-  // Approved / Rejected
-  if (status === "approved" || status === "rejected") {
-    const isApproved = status === "approved";
-    return (
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.background }}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={28} color={theme.text} />
-          </TouchableOpacity>
-          <Text style={[styles.pageTitle, { color: theme.text }]}>
-            {isApproved ? "You're Approved!" : "Application Rejected"}
-          </Text>
-          <View style={{ width: 48 }} />
-        </View>
-
-        <View style={styles.successContainer}>
-          <Ionicons
-            name={isApproved ? "checkmark-circle" : "close-circle"}
-            size={90}
-            color={isApproved ? theme.primary : theme.error}
-          />
-          <Text style={[styles.successTitle, { color: theme.text }]}>
-            {isApproved ? "Congratulations!" : "Not Approved"}
-          </Text>
-          <Text style={[styles.successText, { color: theme.textSecondary }]}>
-            {isApproved
-              ? `Your application to become a ${role.toLowerCase()} has been approved!\n\nYou can now create listings and earn.`
-              : `Your application to become a ${role.toLowerCase()} was not approved.\n\nYou can edit and re-submit.`}
-          </Text>
-
-          <Button
-            mode="contained"
-            onPress={startEditing}
-            style={styles.submitBtn}
-            theme={{ colors: { primary: theme.primary } }}
-          >
-            {isApproved ? "Edit Profile/Details" : "Edit & Re-apply"}
-          </Button>
-        </View>
-      </KeyboardAvoidingView>
-    );
-  }
-
-  // Pending
+  // Pending Screen
   if (status === "pending") {
     return (
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.background }}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={28} color={theme.text} />
-          </TouchableOpacity>
-          <Text style={[styles.pageTitle, { color: theme.text }]}>Pending Review</Text>
-          <View style={{ width: 48 }} />
-        </View>
-        <View style={styles.successContainer}>
-          <Ionicons name="hourglass" size={80} color={theme.primary} />
-          <Text style={[styles.successTitle, { color: theme.text }]}>Under Review</Text>
-          <Text style={[styles.successText, { color: theme.textSecondary }]}>
-            Your application is being reviewed.{'\n\n'}
-            Expect feedback within 48-72 hours.
-          </Text>
-        </View>
-      </KeyboardAvoidingView>
+      <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
+        <Ionicons name="hourglass-outline" size={80} color={theme.primary} />
+        <Text style={[styles.successTitle, { color: theme.text }]}>Under Review</Text>
+        <Text style={[styles.successText, { color: theme.textSecondary }]}>
+          Your application is being reviewed.{'\n\n'}Expect feedback within 48-72 hours.
+        </Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={{ color: theme.primary, marginTop: 32, fontSize: 16 }}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
-  // Final fallback UI (should never hit, but visible if it does)
+  // Approved / Rejected Screen
+  if (status === "approved" || status === "rejected") {
+    const isApproved = status === "approved";
+
+    return (
+      <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
+        <Ionicons
+          name={isApproved ? "checkmark-circle" : "close-circle"}
+          size={90}
+          color={isApproved ? theme.primary : theme.error}
+        />
+        <Text style={[styles.successTitle, { color: theme.text }]}>
+          {isApproved ? "Approved!" : "Not Approved"}
+        </Text>
+        <Text style={[styles.successText, { color: theme.textSecondary, textAlign: "center" }]}>
+          {isApproved
+            ? "Your application has been approved!\nYou can now start hosting or vending."
+            : "Your application was not approved.\nYou may edit and re-apply."}
+        </Text>
+        <Button
+          mode="contained"
+          onPress={startEditing}
+          style={styles.submitBtn}
+          theme={{ colors: { primary: theme.primary } }}
+        >
+          {isApproved ? "Edit Details" : "Edit & Re-apply"}
+        </Button>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
-      <Ionicons name="alert-circle" size={80} color={theme.error} />
-      <Text style={{ color: theme.text, fontSize: 20, fontWeight: "bold", marginTop: 24 }}>
-        Unknown Application State
-      </Text>
-      <Text style={{ color: theme.textSecondary, textAlign: "center", marginTop: 12, paddingHorizontal: 40 }}>
-        Something went wrong loading your status. Please try again or contact support.
-      </Text>
-      <TouchableOpacity
-        onPress={() => setStatus("loading")}
-        style={{ marginTop: 32, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: theme.primary, borderRadius: 12 }}
-      >
-        <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>Retry</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={() => navigation.goBack()}
-        style={{ marginTop: 16 }}
-      >
-        <Text style={{ color: theme.primary, fontSize: 16 }}>Go Back</Text>
-      </TouchableOpacity>
+      <Text style={{ color: theme.text, fontSize: 18 }}>Unknown application state</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 50,
-    paddingBottom: 16,
-  },
+  centerContainer: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 20 },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingTop: 50, paddingBottom: 16 },
   pageTitle: { fontSize: 24, fontWeight: "800" },
-  roleToggle: {
-    flexDirection: "row",
-    backgroundColor: "#eee",
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 24,
-  },
-  roleBtn: { flex: 1, paddingVertical: 12, alignItems: "center", borderRadius: 10 },
-  roleActive: { backgroundColor: "#fff", elevation: 3 },
-  roleText: { fontSize: 16, fontWeight: "600", color: "#666" },
-  card: {
-    padding: 20,
-    borderRadius: 16,
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-  },
+  card: { padding: 20, borderRadius: 16, marginBottom: 16, elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6 },
   sectionTitle: { fontSize: 18, fontWeight: "bold", marginBottom: 16 },
   label: { fontSize: 15, fontWeight: "600", marginBottom: 8, marginTop: 12 },
   input: { marginBottom: 12 },
-  uploadBtn: {
-    borderWidth: 1.5,
-    borderColor: "#aaa",
-    borderStyle: "dashed",
-    borderRadius: 12,
-    padding: 12,
-    marginVertical: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 180,
-  },
-  uploadText: { fontSize: 15 },
-  termsBox: {
-    maxHeight: 220,
-    borderWidth: 1,
-    borderColor: "#444",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-  },
+  uploadBtn: { borderWidth: 1.5, borderColor: "#aaa", borderStyle: "dashed", borderRadius: 12, padding: 12, marginVertical: 8, minHeight: 180, justifyContent: "center" },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center" },
+  termsBox: { maxHeight: 220, borderWidth: 1, borderColor: "#444", borderRadius: 12, padding: 12, marginBottom: 16 },
   termsText: { fontSize: 14, lineHeight: 22 },
   checkboxRow: { flexDirection: "row", alignItems: "center", marginTop: 8 },
-  checkboxLabel: { marginLeft: 12, fontSize: 14, flex: 1, lineHeight: 20 },
+  checkboxLabel: { marginLeft: 12, fontSize: 14, flex: 1 },
   submitBtn: { marginTop: 32, marginBottom: 40, borderRadius: 12 },
-  successContainer: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 32 },
-  successTitle: { fontSize: 26, fontWeight: "bold", marginTop: 24, marginBottom: 12 },
-  successText: { fontSize: 16, textAlign: "center", lineHeight: 24 },
+  retryBtn: { marginTop: 32, paddingVertical: 12, paddingHorizontal: 32, borderRadius: 12 },
+  roleToggle: { flexDirection: "row", backgroundColor: "#eee", borderRadius: 12, padding: 4, marginBottom: 24 },
+  roleBtn: { flex: 1, paddingVertical: 12, alignItems: "center", borderRadius: 10 },
+  roleActive: { backgroundColor: "#fff", elevation: 3 },
+  roleText: { fontSize: 16, fontWeight: "600", color: "#666" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
   modalContainer: { borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "85%", padding: 20 },
   modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },

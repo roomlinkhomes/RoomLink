@@ -1,6 +1,5 @@
-// components/HotelListingForm.jsx — COMPLETE FULL FILE (copy-paste ready)
-// UPDATED: Host enters THEIR price (e.g. ₦2000), app auto-calculates +11% service fee
-// Feed will now show the GUEST price (₦2220) — saved as guestPricePerNight
+// components/HotelListingForm.jsx — COMPLETE FULL FILE
+// Non-verified users limited to 5 listings with beautiful modern warning modal
 
 import React, { useState, useEffect } from "react";
 import {
@@ -24,7 +23,7 @@ import { homeCategories } from "../screens/Config/Categories";
 import { useUser } from "../context/UserContext";
 
 const HotelListingForm = ({ navigation }) => {
-  const { addListing } = useListing();
+  const { addListing, listings = [] } = useListing();
   const { user } = useUser();
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
@@ -47,6 +46,9 @@ const HotelListingForm = ({ navigation }) => {
   const [uploading, setUploading] = useState(false);
   const [titleModalVisible, setTitleModalVisible] = useState(false);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
+
+  // New state for beautiful limit modal
+  const [limitModalVisible, setLimitModalVisible] = useState(false);
 
   const titleOptions = [
     "1 Bedroom short-let",
@@ -236,6 +238,17 @@ const HotelListingForm = ({ navigation }) => {
       Alert.alert("Error", "You must be logged in to create a listing.");
       return;
     }
+
+    // ===================== LIMIT CHECK =====================
+    const userListingsCount = listings.filter((l) => l.userId === user.id).length;
+    const isVerified = user.isVerified === true;
+
+    if (!isVerified && userListingsCount >= 5) {
+      setLimitModalVisible(true);   // Show beautiful modal
+      return;
+    }
+    // =======================================================
+
     if (!title || !description || !location || !category) {
       Alert.alert("Error", "Please fill all required fields and select a category.");
       return;
@@ -245,7 +258,7 @@ const HotelListingForm = ({ navigation }) => {
       return;
     }
 
-    const priceNum = parseInt(pricePerNight.replace(/[^0-9]/g, ""), 10); // Host's price
+    const priceNum = parseInt(pricePerNight.replace(/[^0-9]/g, ""), 10);
     if (isNaN(priceNum) || priceNum <= 0) {
       Alert.alert("Invalid Price", "Please enter a valid price per night.");
       return;
@@ -285,8 +298,8 @@ const HotelListingForm = ({ navigation }) => {
         title,
         description,
         location,
-        pricePerNight: priceNum,                    // ← What HOST receives
-        guestPricePerNight: guestPrice,             // ← NEW: What GUEST sees on feed (₦2000 + 11%)
+        pricePerNight: priceNum,
+        guestPricePerNight: guestPrice,
         category,
         images: uploadedUrls,
         userId: user.id,
@@ -520,7 +533,7 @@ const HotelListingForm = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
-      {/* PRICE SECTION — WITH 11% FEE CALCULATION */}
+      {/* PRICE SECTION */}
       <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
         Your Price Per Night (₦) — <Text style={{ fontSize: 13, fontWeight: "500" }}>what you receive</Text>
       </Text>
@@ -540,7 +553,6 @@ const HotelListingForm = ({ navigation }) => {
         keyboardType="numeric"
       />
 
-      {/* LIVE GUEST PRICE PREVIEW */}
       {hostPrice > 0 && (
         <Text style={[styles.guestPriceText, { color: isDark ? "#a0a0a0" : "#6c757d" }]}>
           Guests will see: ₦{guestPrice.toLocaleString()} (includes 11% service fee)
@@ -548,9 +560,7 @@ const HotelListingForm = ({ navigation }) => {
       )}
 
       {/* Cancellation Policy */}
-      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
-        Cancellation Policy
-      </Text>
+      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>Cancellation Policy</Text>
       <View style={[
         styles.policyContainer,
         {
@@ -647,13 +657,8 @@ const HotelListingForm = ({ navigation }) => {
         </Text>
       </TouchableOpacity>
 
-      {/* Bedrooms, Bathrooms, Toilets, Amenities, House Rules — unchanged from previous version */}
-      {/* (All house features, amenities, house rules sections are exactly the same as last full file) */}
-
       {/* Bedrooms */}
-      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
-        Bedrooms
-      </Text>
+      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>Bedrooms</Text>
       <View style={styles.amenitiesContainer}>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
           {[1, 2, 3, 4, 5, 6].map((num) => (
@@ -682,9 +687,7 @@ const HotelListingForm = ({ navigation }) => {
       </View>
 
       {/* Bathrooms */}
-      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
-        Bathrooms
-      </Text>
+      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>Bathrooms</Text>
       <View style={styles.amenitiesContainer}>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
           {[1, 2, 3, 4, 5, 6].map((num) => (
@@ -713,9 +716,7 @@ const HotelListingForm = ({ navigation }) => {
       </View>
 
       {/* Toilets */}
-      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>
-        Toilets
-      </Text>
+      <Text style={[styles.label, { color: isDark ? "#e0e0e0" : "#212529" }]}>Toilets</Text>
       <View style={styles.amenitiesContainer}>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
           {[1, 2, 3, 4, 5, 6].map((num) => (
@@ -881,6 +882,46 @@ const HotelListingForm = ({ navigation }) => {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* ===================== BEAUTIFUL LIMIT WARNING MODAL ===================== */}
+      <Modal visible={limitModalVisible} transparent animationType="fade">
+        <View style={styles.limitModalOverlay}>
+          <View style={[styles.limitModalContainer, { backgroundColor: isDark ? "#1e1e1e" : "#ffffff" }]}>
+            <View style={styles.limitIconContainer}>
+              <Ionicons name="lock-closed" size={70} color="#ff9500" />
+            </View>
+
+            <Text style={[styles.limitTitle, { color: isDark ? "#fff" : "#1a1a1a" }]}>
+              Posting Limit Reached
+            </Text>
+
+            <Text style={[styles.limitSubtitle, { color: isDark ? "#ddd" : "#333" }]}>
+              You have reached the maximum of 5 listings allowed for non-verified hosts.
+            </Text>
+
+            <Text style={[styles.limitDescription, { color: isDark ? "#bbb" : "#555" }]}>
+              Become a verified host to unlock unlimited listings and build trust with guests.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.becomeVendorBtn}
+              onPress={() => {
+                setLimitModalVisible(false);
+                navigation.navigate("BecomeVendor");
+              }}
+            >
+              <Text style={styles.becomeVendorText}>Become a Verified Host</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={() => setLimitModalVisible(false)}
+            >
+              <Text style={[styles.cancelText, { color: isDark ? "#888" : "#666" }]}>Maybe Later</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAwareScrollView>
   );
 };
@@ -898,15 +939,85 @@ const styles = StyleSheet.create({
   thumbWrap: { position: "relative", marginRight: 12 },
   thumb: { width: 100, height: 100, borderRadius: 16, borderWidth: 3, borderColor: "#e0e6ed" },
   removeBtn: { position: "absolute", top: -12, right: -12, zIndex: 10 },
-  removeBtnBg: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#ff4757", justifyContent: "center", alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 },
+  removeBtnBg: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#ff4757", justifyContent: "center", alignItems: "center" },
   label: { fontWeight: "800", fontSize: 16, marginTop: 24, marginBottom: 8 },
   smallLabel: { fontWeight: "700", fontSize: 14, marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 12, padding: 16, marginBottom: 16, fontSize: 16 },
   textArea: { height: 100, textAlignVertical: "top" },
   submitBtn: { marginTop: 32, paddingVertical: 16, borderRadius: 16, alignItems: "center", marginBottom: 20 },
   submitText: { color: "#fff", fontWeight: "800", fontSize: 18 },
+
+  // Beautiful Limit Modal Styles
+  limitModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  limitModalContainer: {
+    width: "100%",
+    maxWidth: 340,
+    borderRadius: 24,
+    padding: 32,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 15 },
+    shadowOpacity: 0.35,
+    shadowRadius: 25,
+    elevation: 25,
+  },
+  limitIconContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: "rgba(255, 149, 0, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  limitTitle: {
+    fontSize: 26,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  limitSubtitle: {
+    fontSize: 17,
+    textAlign: "center",
+    marginBottom: 10,
+    lineHeight: 24,
+  },
+  limitDescription: {
+    fontSize: 15.5,
+    textAlign: "center",
+    marginBottom: 32,
+    lineHeight: 23,
+  },
+  becomeVendorBtn: {
+    backgroundColor: "#017a6b",
+    width: "100%",
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  becomeVendorText: {
+    color: "#fff",
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  cancelBtn: {
+    paddingVertical: 12,
+  },
+  cancelText: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
+  // Existing modal styles
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
-  bottomSheet: { padding: 0, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "70%", shadowColor: "#000", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 10 },
+  bottomSheet: { padding: 0, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "70%" },
   sheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 24, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: "#e9ecef" },
   sheetTitle: { fontSize: 20, fontWeight: "800" },
   sheetList: { padding: 20, paddingBottom: 40 },
@@ -978,7 +1089,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  // NEW STYLE FOR GUEST PRICE PREVIEW
   guestPriceText: {
     fontSize: 15,
     fontWeight: "600",
