@@ -1,5 +1,3 @@
-// screens/GetVerified.jsx — Fixed null error + Proper Google Play Integration
-
 import React, { useState, useEffect, useContext } from "react";
 import {
   View,
@@ -9,28 +7,22 @@ import {
   ScrollView,
   Dimensions,
   Modal,
-  Linking,
-  TouchableWithoutFeedback,
-  useColorScheme,
   Alert,
   ActivityIndicator,
-  Platform,
+  useColorScheme,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { UserContext } from "../context/UserContext";
 import { Ionicons } from "@expo/vector-icons";
 import { db } from "../firebaseConfig";
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
-import * as RNIap from "react-native-iap";
+import Purchases from "react-native-purchases";
 
 // SVG badges
 import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
 import RedBadge from "../assets/icons/red.svg";
-
-// === YOUR SUBSCRIPTION IDs FROM GOOGLE PLAY CONSOLE ===
-const MONTHLY_VENDOR_ID = "vendor_monthly";
-const YEARLY_VENDOR_ID = "vendor_yearly";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 
@@ -40,51 +32,24 @@ const verificationOptions = [
     title: "Vendor Verification",
     Badge: YellowBadge,
     borderColor: "#FFD700",
-    features: [
-      "Unlimited listings",
-      "Stand out to your customers",
-      "Edit post",
-      "Vendor check mark",
-      "Less ads",
-    ],
-    monthlySku: MONTHLY_VENDOR_ID,
-    yearlySku: YEARLY_VENDOR_ID,
-    monthlyPrice: 4990,
-    yearlyPrice: 49880,
+    entitlement: "vendor_premium",
+    features: ["Unlimited listings", "Stand out to your customers", "Edit post", "Vendor check mark", "Less ads"],
   },
   {
     type: "studentLandlord",
     title: "Student / Landlord Verification",
     Badge: BlueBadge,
     borderColor: "#1E90FF",
-    features: [
-      "Unlimited listings",
-      "Stand out to potential tenants",
-      "Edit post",
-      "Blue check mark",
-      "No frequent ads",
-    ],
-    monthlySku: "student_monthly",     // ← CHANGE TO YOUR ACTUAL SKU
-    yearlySku: "student_yearly",       // ← CHANGE TO YOUR ACTUAL SKU
-    monthlyPrice: 3000,
-    yearlyPrice: 26000,
+    entitlement: "student_premium",
+    features: ["Unlimited listings", "Stand out to potential tenants", "Edit post", "Blue check mark", "No frequent ads"],
   },
   {
     type: "realEstate",
     title: "Real Estate Verification",
     Badge: RedBadge,
     borderColor: "#FF4500",
-    features: [
-      "Unlimited listings",
-      "Stand out to customers",
-      "Edit post",
-      "Red check mark",
-      "No frequent ads",
-    ],
-    monthlySku: "realestate_monthly",   // ← CHANGE TO YOUR ACTUAL SKU
-    yearlySku: "realestate_yearly",     // ← CHANGE TO YOUR ACTUAL SKU
-    monthlyPrice: 3000,
-    yearlyPrice: 26000,
+    entitlement: "realestate_premium",
+    features: ["Unlimited listings", "Stand out to customers", "Edit post", "Red check mark", "No frequent ads"],
   },
 ];
 
@@ -93,133 +58,170 @@ export default function GetVerified() {
   const navigation = useNavigation();
 
   const [selectedOption, setSelectedOption] = useState(null);
-  const [billing, setBilling] = useState("monthly");
   const [modalVisible, setModalVisible] = useState(false);
   const [activeBadge, setActiveBadge] = useState(null);
-  const [products, setProducts] = useState([]);
-  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [offerings, setOfferings] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
 
-  // Initialize Billing
+  // RevenueCat Initialization
   useEffect(() => {
-    const initBilling = async () => {
+    let isMounted = true;
+
+    const initializeRevenueCat = async () => {
       try {
-        await RNIap.initConnection();
+        setErrorMessage("");
+        setLoading(true);
 
-        const allSkus = verificationOptions.flatMap((opt) => [
-          opt.monthlySku,
-          opt.yearlySku,
-        ]);
+        // Your RevenueCat Google Public Key
+        const GOOGLE_API_KEY = "goog_LdPWuZBMhUKwayGKKouYdMmaBGG";
 
-        const fetched = await RNIap.getSubscriptions({ skus: allSkus });
-        setProducts(fetched || []);
-        console.log("Subscriptions loaded:", fetched);
+        console.log("🚀 Configuring RevenueCat...");
+
+        // Enable verbose logging for debugging
+        Purchases.setLogLevel("VERBOSE");
+
+        // 1. Configure RevenueCat (MUST be done first)
+        await Purchases.configure({ apiKey: GOOGLE_API_KEY });
+
+        // 2. Set App User ID
+        const appUserID = currentUser?.uid || `roomlink_${Date.now()}`;
+        await Purchases.setAppUserID(appUserID);
+
+        console.log(`✅ RevenueCat configured for user: ${appUserID}`);
+
+        // 3. Fetch offerings
+        const offeringsData = await Purchases.getOfferings();
+
+        if (isMounted) {
+          setOfferings(offeringsData);
+          console.log("✅ Offerings loaded successfully:", JSON.stringify(offeringsData?.current, null, 2));
+        }
       } catch (err) {
-        console.error("Billing init failed:", err);
-        Alert.alert("Error", "Failed to load subscription options.");
+        console.error("❌ RevenueCat Error:", err);
+        const msg = err.message || "Failed to initialize RevenueCat";
+        setErrorMessage(msg);
+
+        if (isMounted) {
+          Alert.alert("RevenueCat Error", msg);
+        }
       } finally {
-        setLoadingProducts(false);
+        if (isMounted) setLoading(false);
       }
     };
 
-    initBilling();
+    initializeRevenueCat();
 
-    // Purchase Listener
-    const purchaseListener = RNIap.purchaseUpdatedListener(async (purchase) => {
-      try {
-        if (purchase.transactionReceipt && selectedOption) {
-          await activatePremium(purchase.productId);
-          Alert.alert("Success", `${selectedOption.title} activated!`);
-          setActiveBadge({ type: selectedOption.type });
-          updateUser({ badge: selectedOption.type, isPremium: true });
-        }
-      } catch (err) {
-        console.error(err);
-        Alert.alert("Error", "Failed to activate subscription.");
-      } finally {
-        await RNIap.finishTransaction({ purchase, isConsumable: false });
-        setPurchasing(false);
-        setModalVisible(false);
-      }
+    // Customer info listener
+    const listener = Purchases.addCustomerInfoUpdateListener((customerInfo) => {
+      console.log("👤 Customer info updated:", customerInfo);
     });
 
     return () => {
-      purchaseListener.remove();
-      RNIap.endConnection();
+      isMounted = false;
+      if (listener?.remove) listener.remove();
     };
-  }, [selectedOption]);
-
-  const getProductDetails = (sku) => products.find((p) => p.productId === sku);
+  }, [currentUser?.uid]);
 
   const handleSubscribe = (option) => {
+    if (!offerings) {
+      Alert.alert("Error", "Subscription options are still loading. Please wait.");
+      return;
+    }
     setSelectedOption(option);
-    setBilling("monthly");
     setModalVisible(true);
   };
 
   const handlePay = async () => {
-    if (!currentUser?.uid || !selectedOption) {
-      Alert.alert("Error", "Please log in again.");
-      return;
-    }
-
-    const sku = billing === "monthly" ? selectedOption.monthlySku : selectedOption.yearlySku;
-    const product = getProductDetails(sku);
-
-    if (!product) {
-      Alert.alert("Error", "Subscription not found. Please try again.");
+    if (!selectedOption || !offerings?.current) {
+      Alert.alert("Error", "Offerings not loaded yet.");
       return;
     }
 
     setPurchasing(true);
 
     try {
-      let requestParams = { sku };
+      const currentOffering = offerings.current;
+      const packageToBuy = currentOffering.monthly || currentOffering.availablePackages?.[0];
 
-      if (Platform.OS === "android") {
-        const offerToken = product.subscriptionOfferDetails?.[0]?.offerToken;
-
-        if (!offerToken) {
-          throw new Error("Offer token not found. Check Google Play Console.");
-        }
-
-        requestParams = {
-          sku,
-          subscriptionOffers: [{ sku, offerToken }],
-        };
+      if (!packageToBuy) {
+        Alert.alert("Error", "No package found for this plan. Check RevenueCat dashboard.");
+        return;
       }
 
-      await RNIap.requestSubscription(requestParams);
+      const { customerInfo } = await Purchases.purchasePackage(packageToBuy);
+
+      await activatePremium(selectedOption, customerInfo);
+
+      Alert.alert("Success", `${selectedOption.title} activated successfully!`);
+
+      setActiveBadge({ type: selectedOption.type });
+      updateUser({
+        badge: selectedOption.type,
+        isPremium: true,
+        verificationType: selectedOption.type,
+      });
+
+      setModalVisible(false);
     } catch (err) {
       console.error("Purchase error:", err);
-      Alert.alert("Purchase Failed", err.message || "Something went wrong.");
+      if (err.userCancelled) {
+        Alert.alert("Cancelled", "Purchase was cancelled.");
+      } else {
+        Alert.alert("Purchase Failed", err.message || "Something went wrong.");
+      }
+    } finally {
       setPurchasing(false);
     }
   };
 
-  const activatePremium = async (productId) => {
-    if (!currentUser?.uid || !selectedOption) return;
+  const activatePremium = async (option, customerInfo) => {
+    if (!currentUser?.uid) return;
 
     const userRef = doc(db, "users", currentUser.uid);
     await updateDoc(userRef, {
-      verificationType: selectedOption.type,
+      verificationType: option.type,
       verifiedAt: serverTimestamp(),
       isPremium: true,
-      premiumPlan: productId,
+      premiumPlan: option.entitlement,
       premiumSince: serverTimestamp(),
+      revenuecatCustomerInfo: customerInfo,
     });
   };
 
-  // Safe price display
-  const getDisplayPrice = (option, isMonthly) => {
-    if (!option) return "₦0";
-    const sku = isMonthly ? option.monthlySku : option.yearlySku;
-    const product = getProductDetails(sku);
-    return product?.price || (isMonthly ? `₦${option.monthlyPrice}` : `₦${option.yearlyPrice}`);
-  };
+  // Loading Screen
+  if (loading) {
+    return (
+      <View style={[styles.container, { backgroundColor: isDark ? "#000" : "#fff", justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator size="large" color="#017a6b" />
+        <Text style={{ marginTop: 16, color: isDark ? "#aaa" : "#666" }}>Connecting to RevenueCat...</Text>
+      </View>
+    );
+  }
+
+  // Error Screen
+  if (errorMessage) {
+    return (
+      <View style={[styles.container, { backgroundColor: isDark ? "#000" : "#fff", justifyContent: "center", padding: 30, alignItems: "center" }]}>
+        <Ionicons name="alert-circle-outline" size={70} color="#ff4444" />
+        <Text style={{ fontSize: 18, fontWeight: "bold", color: "#ff4444", marginTop: 20, textAlign: "center" }}>
+          Failed to Load Plans
+        </Text>
+        <Text style={{ color: isDark ? "#ddd" : "#333", marginTop: 12, textAlign: "center" }}>{errorMessage}</Text>
+
+        <TouchableOpacity
+          style={[styles.subscribeButton, { marginTop: 30, backgroundColor: "#017a6b" }]}
+          onPress={() => navigation.replace("GetVerified")} // Simple retry by reloading screen
+        >
+          <Text style={styles.subscribeButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: isDark ? "#000" : "#fff" }]}>
@@ -229,93 +231,52 @@ export default function GetVerified() {
           <Ionicons name="arrow-back" size={28} color={isDark ? "#fff" : "#000"} />
         </TouchableOpacity>
         <View style={{ flex: 1, alignItems: "center", marginRight: 48 }}>
-          <Text style={[styles.header, { color: isDark ? "#fff" : "#000" }]}>
-            Choose Verification Type
-          </Text>
+          <Text style={[styles.header, { color: isDark ? "#fff" : "#000" }]}>Choose Verification Type</Text>
         </View>
       </View>
 
-      {loadingProducts ? (
-        <ActivityIndicator size="large" color="#017a6b" style={styles.loader} />
-      ) : (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 20 }}
-          snapToInterval={SCREEN_WIDTH - 100}
-          decelerationRate="fast"
-        >
-          {verificationOptions.map((option, idx) => (
-            <View
-              key={idx}
-              style={[
-                styles.card,
-                {
-                  marginRight: idx === verificationOptions.length - 1 ? 0 : 15,
-                  backgroundColor: isDark ? "#121212" : "#f9f9f9",
-                },
-                activeBadge?.type === option.type && { borderColor: option.borderColor, borderWidth: 3 },
-              ]}
-            >
-              <View style={styles.titleRow}>
-                <option.Badge width={32} height={32} />
-                <Text style={[styles.title, { color: isDark ? "#fff" : "#000" }]}>
-                  {option.title}
-                </Text>
-              </View>
-
-              <View style={styles.billingRow}>
-                <TouchableOpacity
-                  style={[styles.billingOption, billing === "monthly" && styles.selectedBilling]}
-                  onPress={() => setBilling("monthly")}
-                >
-                  <Text style={styles.billingText}>Monthly {getDisplayPrice(option, true)}</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.billingOption, billing === "yearly" && styles.selectedBilling]}
-                  onPress={() => setBilling("yearly")}
-                >
-                  <Text style={styles.billingText}>
-                    Yearly {getDisplayPrice(option, false)}{" "}
-                    <Text style={styles.saveText}>
-                      (Save ₦{option.monthlyPrice * 12 - option.yearlyPrice})
-                    </Text>
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.features}>
-                {option.features.map((feat, i) => (
-                  <View key={i} style={styles.featureRow}>
-                    <Ionicons name="checkmark-circle" size={18} color="#036dd6" style={{ marginRight: 8 }} />
-                    <Text style={[styles.featureItem, { color: isDark ? "#ddd" : "#333" }]}>
-                      {feat}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-
-              <TouchableOpacity
-                style={[styles.subscribeButton, { backgroundColor: isDark ? "#a8c8fb" : "#036dd6" }]}
-                onPress={() => handleSubscribe(option)}
-              >
-                <Text style={styles.subscribeButtonText}>
-                  Subscribe • {getDisplayPrice(option, billing === "monthly")}
-                </Text>
-              </TouchableOpacity>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 20 }}
+        snapToInterval={SCREEN_WIDTH - 100}
+        decelerationRate="fast"
+      >
+        {verificationOptions.map((option, idx) => (
+          <View
+            key={idx}
+            style={[
+              styles.card,
+              { backgroundColor: isDark ? "#121212" : "#f9f9f9" },
+              activeBadge?.type === option.type && { borderColor: option.borderColor, borderWidth: 3 },
+            ]}
+          >
+            <View style={styles.titleRow}>
+              <option.Badge width={32} height={32} />
+              <Text style={[styles.title, { color: isDark ? "#fff" : "#000" }]}>{option.title}</Text>
             </View>
-          ))}
-        </ScrollView>
-      )}
+
+            <View style={styles.features}>
+              {option.features.map((feat, i) => (
+                <View key={i} style={styles.featureRow}>
+                  <Ionicons name="checkmark-circle" size={18} color="#036dd6" style={{ marginRight: 8 }} />
+                  <Text style={[styles.featureItem, { color: isDark ? "#ddd" : "#333" }]}>{feat}</Text>
+                </View>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              style={[styles.subscribeButton, { backgroundColor: isDark ? "#a8c8fb" : "#036dd6" }]}
+              onPress={() => handleSubscribe(option)}
+            >
+              <Text style={styles.subscribeButtonText}>Subscribe Now</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+      </ScrollView>
 
       {/* CONFIRMATION MODAL */}
-      <Modal
-        visible={modalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setModalVisible(false)}
-      >
+      <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
         <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
           <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback>
@@ -324,30 +285,10 @@ export default function GetVerified() {
                   Confirm {selectedOption?.title}
                 </Text>
 
-                <Text style={{ marginBottom: 16, color: isDark ? "#aaa" : "#555" }}>
-                  Choose billing cycle:
-                </Text>
-
-                <View style={styles.modalBillingRow}>
-                  <TouchableOpacity
-                    style={[styles.billingOption, billing === "monthly" && styles.selectedBilling]}
-                    onPress={() => setBilling("monthly")}
-                  >
-                    <Text style={styles.billingText}>Monthly {getDisplayPrice(selectedOption, true)}</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.billingOption, billing === "yearly" && styles.selectedBilling]}
-                    onPress={() => setBilling("yearly")}
-                  >
-                    <Text style={styles.billingText}>Yearly {getDisplayPrice(selectedOption, false)}</Text>
-                  </TouchableOpacity>
-                </View>
-
                 <TouchableOpacity
-                  style={[styles.subscribeButton, { backgroundColor: isDark ? "#a8c8fb" : "#036dd6" }]}
+                  style={[styles.subscribeButton, { backgroundColor: isDark ? "#a8c8fb" : "#036dd6", marginTop: 20 }]}
                   onPress={handlePay}
-                  disabled={purchasing || !selectedOption}
+                  disabled={purchasing}
                 >
                   {purchasing ? (
                     <ActivityIndicator color="#fff" />
@@ -357,7 +298,7 @@ export default function GetVerified() {
                 </TouchableOpacity>
 
                 <Text style={styles.disclaimer}>
-                  Payment will be charged to your Google Play account. Subscription renews automatically unless canceled at least 24 hours before renewal.
+                  Payment will be charged to your Google Play account. Subscription renews automatically unless canceled.
                 </Text>
               </View>
             </TouchableWithoutFeedback>
@@ -378,7 +319,6 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   header: { fontSize: 18, fontWeight: "bold" },
-  loader: { flex: 1, justifyContent: "center" },
   card: {
     width: SCREEN_WIDTH - 100,
     borderRadius: 16,
@@ -390,23 +330,6 @@ const styles = StyleSheet.create({
   },
   titleRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
   title: { fontSize: 18, fontWeight: "700", marginLeft: 8, flex: 1 },
-  billingRow: { flexDirection: "row", marginBottom: 20, gap: 10 },
-  modalBillingRow: { flexDirection: "row", marginBottom: 24, gap: 12 },
-  billingOption: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: "#ddd",
-    alignItems: "center",
-    backgroundColor: "#f8f8f8",
-  },
-  selectedBilling: {
-    borderColor: "#036dd6",
-    backgroundColor: "#e6f0ff",
-  },
-  billingText: { fontWeight: "600" },
-  saveText: { color: "#00aa00", fontWeight: "700" },
   features: { marginBottom: 24 },
   featureRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
   featureItem: { fontSize: 14.5, flex: 1 },

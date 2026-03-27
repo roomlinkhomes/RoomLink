@@ -1,7 +1,6 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
-
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
 react {
@@ -9,40 +8,32 @@ react {
         "node", "-e",
         "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"
     ].execute(null, rootDir).text.trim())
-
     reactNativeDir = new File([
         "node", "--print", "require.resolve('react-native/package.json')"
     ].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
-
     hermesCommand = new File([
         "node", "--print", "require.resolve('react-native/package.json')"
     ].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
-
     codegenDir = new File([
         "node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"
     ].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
-
     enableBundleCompression = (findProperty('android.enableBundleCompression') ?: false).toBoolean()
     cliFile = new File([
         "node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"
     ].execute(null, rootDir).text.trim())
     bundleCommand = "export:embed"
-
     autolinkLibrariesWithApp()
 }
 
 // Enable ProGuard for release builds
 def enableProguardInReleaseBuilds = true
-
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
-
     namespace 'com.roomlink.app'
-
     defaultConfig {
         missingDimensionStrategy "store", "play"
         applicationId 'com.roomlink.app'
@@ -51,7 +42,6 @@ android {
         versionCode 2        // <-- Incremented for Play Store
         versionName "1.0.1"  // <-- Optional, update for clarity
     }
-
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -59,7 +49,6 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
-
         release {
             storeFile file(MYAPP_UPLOAD_STORE_FILE)
             storePassword MYAPP_UPLOAD_STORE_PASSWORD
@@ -67,14 +56,12 @@ android {
             keyPassword MYAPP_UPLOAD_KEY_PASSWORD
         }
     }
-
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
             minifyEnabled false
             shrinkResources false
         }
-
         release {
             signingConfig signingConfigs.release
             minifyEnabled enableProguardInReleaseBuilds
@@ -83,13 +70,11 @@ android {
             crunchPngs true
         }
     }
-
     packagingOptions {
         jniLibs {
             useLegacyPackaging (findProperty('expo.useLegacyPackaging')?.toBoolean() ?: false)
         }
     }
-
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
@@ -110,27 +95,27 @@ android {
 
 dependencies {
     implementation("com.facebook.react:react-android")
-
+    
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
     def isWebpAnimatedEnabled = (findProperty('expo.webp.animated') ?: "") == "true";
-
     if (isGifEnabled) {
         implementation("com.facebook.fresco:animated-gif:${expoLibs.versions.fresco.get()}")
     }
-
     if (isWebpEnabled) {
         implementation("com.facebook.fresco:webpsupport:${expoLibs.versions.fresco.get()}")
         if (isWebpAnimatedEnabled) {
             implementation("com.facebook.fresco:animated-webp:${expoLibs.versions.fresco.get()}")
         }
     }
-
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
     }
+
+    // Google Play Billing Library (Added for RoomLink Pro subscription)
+    implementation "com.android.billingclient:billing:7.0.0"
 }
 
 // Google services plugin for Firebase
