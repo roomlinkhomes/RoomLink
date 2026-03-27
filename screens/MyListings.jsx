@@ -1,4 +1,5 @@
-// screens/MyListing.jsx — FIXED: Removed "Create Listing" button from empty state
+// screens/MyListing.jsx — FIXED: Removed "Create Listing" button + Boost button completely removed
+
 import React, { useContext, useState, useEffect } from "react";
 import {
   View,
@@ -35,10 +36,12 @@ export default function MyListing() {
     loading: listingsLoading,
   } = useContext(ListingContext);
   const { user: currentUser } = useContext(UserContext);
+
   const [menuVisible, setMenuVisible] = useState(false);
   const [analyticsVisible, setAnalyticsVisible] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
   const [viewCounts, setViewCounts] = useState({});
+
   const colorScheme = useColorScheme();
   const isDarkMode = colorScheme === "dark";
 
@@ -153,17 +156,20 @@ export default function MyListing() {
               >
                 <Image source={{ uri: img }} style={styles.image} />
               </TouchableOpacity>
+
               {item.rented && (
                 <View style={styles.rentedTag}>
                   <Text style={styles.rentedText}>RENTED</Text>
                 </View>
               )}
+
               {isBoosted && (
                 <View style={styles.boostedBadge}>
                   <Ionicons name="flame" size={16} color="#FF9500" />
                   <Text style={styles.boostedBadgeText}>Boosted</Text>
                 </View>
               )}
+
               <TouchableOpacity style={styles.menuButton} onPress={() => openMenu(item)}>
                 <Ionicons name="ellipsis-vertical" size={18} color="#fff" />
               </TouchableOpacity>
@@ -190,13 +196,7 @@ export default function MyListing() {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.boostButton}
-              onPress={() => navigation.navigate("BoostPost", { listing: item })}
-            >
-              <Ionicons name="trending-up-outline" size={18} color="#fff" />
-              <Text style={styles.boostText}>Boost</Text>
-            </TouchableOpacity>
+            {/* Boost button completely removed */}
 
             {isBoosted && (
               <TouchableOpacity
@@ -242,14 +242,13 @@ export default function MyListing() {
         <Text style={{ color: isDarkMode ? "#aaa" : "gray", textAlign: "center" }}>
           You have no listings yet.
         </Text>
-        {/* Removed the "Create Listing" button as requested */}
       </View>
     );
   }
 
   return (
     <View style={[styles.container, { backgroundColor: isDarkMode ? "#000" : "#fff" }]}>
-      {/* ========== HEADER - SAME HEIGHT AS EDITPROFILE/WALLET/GETVERIFIED ========== */}
+      {/* ========== HEADER ========== */}
       <View style={{
         flexDirection: "row",
         alignItems: "center",
@@ -258,7 +257,6 @@ export default function MyListing() {
         paddingTop: 50,
         paddingBottom: 32,
       }}>
-        {/* Back Button */}
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={{ padding: 10 }}
@@ -267,7 +265,6 @@ export default function MyListing() {
           <Ionicons name="arrow-back" size={28} color={isDarkMode ? "#fff" : "#000"} />
         </TouchableOpacity>
 
-        {/* Title */}
         <View style={{ flex: 1, alignItems: "center", marginRight: 48 }}>
           <Text style={[styles.pageTitle, { color: isDarkMode ? "#fff" : "#000" }]}>
             My Listings
@@ -360,11 +357,11 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "800",
   },
-  emptyState: { 
-    flex: 1, 
-    justifyContent: "center", 
-    alignItems: "center", 
-    padding: 20 
+  emptyState: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
   },
   card: {
     marginBottom: 15,
@@ -426,20 +423,7 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     fontSize: 14,
   },
-  boostButton: {
-    backgroundColor: "#FF9500",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  boostText: {
-    color: "#fff",
-    marginLeft: 6,
-    fontWeight: "bold",
-    fontSize: 14,
-  },
+
   insightsButton: {
     backgroundColor: "#017a6b",
     flexDirection: "row",
@@ -454,6 +438,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 14,
   },
+
   modalOverlay: {
     flex: 1,
     justifyContent: "flex-end",
