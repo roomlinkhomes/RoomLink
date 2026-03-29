@@ -1,4 +1,4 @@
-// screens/ReportScreen.jsx — FIXED: Removed all image/screenshot logic
+// screens/ReportScreen.jsx
 import React, { useState, useContext, useEffect } from "react";
 import {
   View,
@@ -16,16 +16,17 @@ import { useRoute, useNavigation } from "@react-navigation/native";
 import { UserContext } from "../context/UserContext";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "../firebase"; // Make sure db is imported
+import { db } from "../firebaseConfig";
+import { auth } from "../firebaseConfig";
 
 export default function ReportScreen() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { user } = useContext(UserContext);
+  const { user: currentUser } = useContext(UserContext);
   const isDark = useColorScheme() === "dark";
 
   const { listingId: rawListingId, listingTitle = "This listing" } = route.params || {};
-  const [listingId] = useState(rawListingId);
+  const listingId = rawListingId;
 
   const [selectedReason, setSelectedReason] = useState("");
   const [comment, setComment] = useState("");
@@ -51,14 +52,30 @@ export default function ReportScreen() {
   ];
 
   const handleSubmit = async () => {
-    if (!selectedReason) return Alert.alert("Required", "Please select a reason.");
-    if (selectedReason === "Other" && !comment.trim()) return Alert.alert("Required", "Please explain the issue.");
+    if (!selectedReason) {
+      return Alert.alert("Required", "Please select a reason.");
+    }
+    if (selectedReason === "Other" && !comment.trim()) {
+      return Alert.alert("Required", "Please explain the issue.");
+    }
+
+    // Get UID with multiple fallbacks
+    const uid = currentUser?.uid || auth.currentUser?.uid;
+
+    if (!uid) {
+      Alert.alert(
+        "Not Ready",
+        "Please wait a moment and try again.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
 
     setSubmitting(true);
+
     try {
-      // Saves directly to Firestore (same as MessageScreenHeader)
       await addDoc(collection(db, "reports"), {
-        reporterId: user?.uid,
+        reporterId: uid,
         reportedListingId: listingId,
         reportedListingTitle: listingTitle,
         reason: selectedReason,
@@ -67,12 +84,14 @@ export default function ReportScreen() {
         status: "pending",
       });
 
-      Alert.alert("Report Sent", "Thank you for helping keep RoomLink safe!", [
-        { text: "Done", onPress: () => navigation.goBack() }
-      ]);
+      Alert.alert(
+        "Report Sent ✅",
+        "Thank you for helping keep RoomLink safe!",
+        [{ text: "Done", onPress: () => navigation.goBack() }]
+      );
     } catch (err) {
       console.error("Report submission error:", err);
-      Alert.alert("Error", err.message || "Failed to submit report.");
+      Alert.alert("Error", "Failed to submit report. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -84,7 +103,6 @@ export default function ReportScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: isDark ? "#121212" : "#fafafa" }]}>
       <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
 
-        {/* RLMARKET OFFICIAL HEADER — SAME AS EVERYWHERE */}
         <View style={styles.pageHeader}>
           <View style={[
             styles.rlBadge,
@@ -105,14 +123,12 @@ export default function ReportScreen() {
           <View style={{ width: 48 }} />
         </View>
 
-        {/* LISTING TITLE */}
         <View style={styles.titleCard}>
           <Text style={[styles.listingTitle, { color: isDark ? "#e0e0e0" : "#1a1a1a" }]}>
             {listingTitle}
           </Text>
         </View>
 
-        {/* REASON SELECTION */}
         <View style={styles.card}>
           <Text style={[styles.sectionTitle, { color: isDark ? "#e0e0e0" : "#1a1a1a" }]}>
             Select a reason
@@ -140,7 +156,10 @@ export default function ReportScreen() {
 
           {selectedReason === "Other" && (
             <TextInput
-              style={[styles.input, { color: isDark ? "#e0e0e0" : "#1a1a1a", backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}
+              style={[styles.input, { 
+                color: isDark ? "#e0e0e0" : "#1a1a1a", 
+                backgroundColor: isDark ? "#1e1e1e" : "#fff" 
+              }]}
               placeholder="Explain the issue..."
               placeholderTextColor={isDark ? "#666" : "#999"}
               multiline
@@ -149,10 +168,8 @@ export default function ReportScreen() {
             />
           )}
         </View>
-
       </ScrollView>
 
-      {/* RLMARKET BOTTOM ACTION BAR */}
       <View style={[
         styles.footer,
         { backgroundColor: isDark ? "#1e1e1e" : "#ffffff", borderTopColor: isDark ? "#333" : "#e0e6ed" }
@@ -182,7 +199,6 @@ export default function ReportScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
 
-  // SAME HEADER AS CART, REVIEWS, ADDREVIEW
   pageHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -200,25 +216,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(1, 122, 107, 0.2)",
   },
-  rlText: {
-    fontSize: 20,
-    fontWeight: "900",
-    letterSpacing: -1,
-  },
-  headerContent: {
-    flex: 1,
-    alignItems: "center",
-  },
-  pageTitle: {
-    fontSize: 24,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-  },
-  subtitle: {
-    fontSize: 14,
-    marginTop: 4,
-    fontWeight: "500",
-  },
+  rlText: { fontSize: 20, fontWeight: "900", letterSpacing: -1 },
+  headerContent: { flex: 1, alignItems: "center" },
+  pageTitle: { fontSize: 24, fontWeight: "800", letterSpacing: 0.5 },
+  subtitle: { fontSize: 14, marginTop: 4, fontWeight: "500" },
 
   titleCard: {
     marginHorizontal: 20,
@@ -227,11 +228,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 8,
   },
-  listingTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    textAlign: "center",
-  },
+  listingTitle: { fontSize: 17, fontWeight: "700", textAlign: "center" },
 
   card: {
     margin: 20,
@@ -247,16 +244,8 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 6,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 20,
-  },
-  reasonRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 14,
-  },
+  sectionTitle: { fontSize: 18, fontWeight: "700", marginBottom: 20 },
+  reasonRow: { flexDirection: "row", alignItems: "center", paddingVertical: 14 },
   radio: {
     width: 26,
     height: 26,
@@ -266,19 +255,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  radioSelected: {
-    borderColor: "#017a6b",
-  },
-  radioDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#017a6b",
-  },
-  reasonText: {
-    fontSize: 16,
-    flex: 1,
-  },
+  radioSelected: { borderColor: "#017a6b" },
+  radioDot: { width: 14, height: 14, borderRadius: 7, backgroundColor: "#017a6b" },
+  reasonText: { fontSize: 16, flex: 1 },
+
   input: {
     borderWidth: 1.5,
     borderColor: "#ddd",
@@ -290,7 +270,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 
-  // SAME FOOTER AS EVERYWHERE
   footer: {
     position: "absolute",
     bottom: 0,

@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function ProfileTopBar({ userId }) {
   const navigation = useNavigation();
-  const { dark } = useTheme(); // ← dark comes from here
+  const { dark } = useTheme();
   const insets = useSafeAreaInsets();
 
   const supportUID = "PdEzQK2PxUccxbJLJo67lRi21NR2";
@@ -45,6 +45,10 @@ export default function ProfileTopBar({ userId }) {
     });
   };
 
+  const handleGoBack = () => {
+    navigation.goBack();
+  };
+
   const iconColor = dark ? "#fff" : "#000";
 
   return (
@@ -63,6 +67,15 @@ export default function ProfileTopBar({ userId }) {
           },
         ]}
       >
+        {/* Back Button - Left Side */}
+        <TouchableOpacity
+          onPress={handleGoBack}
+          style={styles.backButton}
+        >
+          <Ionicons name="arrow-back" size={26} color={iconColor} />
+        </TouchableOpacity>
+
+        {/* Right Side Icons */}
         <View style={styles.icons}>
           {/* Support Chat with Help badge */}
           <TouchableOpacity
@@ -85,24 +98,25 @@ export default function ProfileTopBar({ userId }) {
   );
 }
 
-
-
-
 const styles = StyleSheet.create({
   container: {
     backgroundColor: "transparent",
     flexDirection: "row",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 16,
     paddingBottom: 10,
+  },
+  backButton: {
+    padding: 4,
   },
   icons: {
     flexDirection: "row",
     alignItems: "center",
   },
   iconButton: {
-    marginLeft: 35,
-    position: "relative", // required for absolute positioning of badge
+    marginLeft: 28,
+    position: "relative",
   },
   badge: {
     position: "absolute",
@@ -116,7 +130,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1.5,
-    // borderColor moved INSIDE component because it depends on dark
   },
   badgeText: {
     color: "#fff",

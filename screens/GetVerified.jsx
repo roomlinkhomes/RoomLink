@@ -68,7 +68,6 @@ export default function GetVerified() {
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
 
-  // RevenueCat Initialization
   useEffect(() => {
     let isMounted = true;
 
@@ -77,38 +76,21 @@ export default function GetVerified() {
         setErrorMessage("");
         setLoading(true);
 
-        // Your RevenueCat Google Public Key
         const GOOGLE_API_KEY = "goog_LdPWuZBMhUKwayGKKouYdMmaBGG";
 
-        console.log("🚀 Configuring RevenueCat...");
-
-        // Enable verbose logging for debugging
         Purchases.setLogLevel("VERBOSE");
-
-        // 1. Configure RevenueCat (MUST be done first)
         await Purchases.configure({ apiKey: GOOGLE_API_KEY });
 
-        // 2. Set App User ID
-        const appUserID = currentUser?.uid || `roomlink_${Date.now()}`;
-        await Purchases.setAppUserID(appUserID);
+        const appUserID = currentUser?.uid || null;
+        if (appUserID) await Purchases.identify(appUserID);
 
-        console.log(`✅ RevenueCat configured for user: ${appUserID}`);
-
-        // 3. Fetch offerings
         const offeringsData = await Purchases.getOfferings();
-
-        if (isMounted) {
-          setOfferings(offeringsData);
-          console.log("✅ Offerings loaded successfully:", JSON.stringify(offeringsData?.current, null, 2));
-        }
+        if (isMounted) setOfferings(offeringsData);
       } catch (err) {
-        console.error("❌ RevenueCat Error:", err);
+        console.error("RevenueCat Error:", err);
         const msg = err.message || "Failed to initialize RevenueCat";
         setErrorMessage(msg);
-
-        if (isMounted) {
-          Alert.alert("RevenueCat Error", msg);
-        }
+        if (isMounted) Alert.alert("RevenueCat Error", msg);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -116,9 +98,8 @@ export default function GetVerified() {
 
     initializeRevenueCat();
 
-    // Customer info listener
     const listener = Purchases.addCustomerInfoUpdateListener((customerInfo) => {
-      console.log("👤 Customer info updated:", customerInfo);
+      console.log("Customer info updated:", customerInfo);
     });
 
     return () => {
@@ -154,7 +135,6 @@ export default function GetVerified() {
       }
 
       const { customerInfo } = await Purchases.purchasePackage(packageToBuy);
-
       await activatePremium(selectedOption, customerInfo);
 
       Alert.alert("Success", `${selectedOption.title} activated successfully!`);
@@ -181,7 +161,6 @@ export default function GetVerified() {
 
   const activatePremium = async (option, customerInfo) => {
     if (!currentUser?.uid) return;
-
     const userRef = doc(db, "users", currentUser.uid);
     await updateDoc(userRef, {
       verificationType: option.type,
@@ -193,7 +172,6 @@ export default function GetVerified() {
     });
   };
 
-  // Loading Screen
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: isDark ? "#000" : "#fff", justifyContent: "center", alignItems: "center" }]}>
@@ -203,19 +181,15 @@ export default function GetVerified() {
     );
   }
 
-  // Error Screen
   if (errorMessage) {
     return (
       <View style={[styles.container, { backgroundColor: isDark ? "#000" : "#fff", justifyContent: "center", padding: 30, alignItems: "center" }]}>
         <Ionicons name="alert-circle-outline" size={70} color="#ff4444" />
-        <Text style={{ fontSize: 18, fontWeight: "bold", color: "#ff4444", marginTop: 20, textAlign: "center" }}>
-          Failed to Load Plans
-        </Text>
+        <Text style={{ fontSize: 18, fontWeight: "bold", color: "#ff4444", marginTop: 20, textAlign: "center" }}>Failed to Load Plans</Text>
         <Text style={{ color: isDark ? "#ddd" : "#333", marginTop: 12, textAlign: "center" }}>{errorMessage}</Text>
-
         <TouchableOpacity
           style={[styles.subscribeButton, { marginTop: 30, backgroundColor: "#017a6b" }]}
-          onPress={() => navigation.replace("GetVerified")} // Simple retry by reloading screen
+          onPress={() => navigation.replace("GetVerified")}
         >
           <Text style={styles.subscribeButtonText}>Retry</Text>
         </TouchableOpacity>
@@ -225,7 +199,7 @@ export default function GetVerified() {
 
   return (
     <View style={[styles.container, { backgroundColor: isDark ? "#000" : "#fff" }]}>
-      {/* HEADER */}
+      {/* Header */}
       <View style={styles.headerContainer}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={{ padding: 10 }}>
           <Ionicons name="arrow-back" size={28} color={isDark ? "#fff" : "#000"} />
@@ -235,6 +209,7 @@ export default function GetVerified() {
         </View>
       </View>
 
+      {/* Verification Cards */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -275,7 +250,7 @@ export default function GetVerified() {
         ))}
       </ScrollView>
 
-      {/* CONFIRMATION MODAL */}
+      {/* Confirmation Modal */}
       <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
         <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
           <View style={styles.modalOverlay}>
@@ -290,11 +265,7 @@ export default function GetVerified() {
                   onPress={handlePay}
                   disabled={purchasing}
                 >
-                  {purchasing ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.subscribeButtonText}>Pay & Subscribe Now</Text>
-                  )}
+                  {purchasing ? <ActivityIndicator color="#fff" /> : <Text style={styles.subscribeButtonText}>Pay & Subscribe Now</Text>}
                 </TouchableOpacity>
 
                 <Text style={styles.disclaimer}>
@@ -311,54 +282,18 @@ export default function GetVerified() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  headerContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingTop: 50,
-    paddingBottom: 32,
-  },
+  headerContainer: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingTop: 50, paddingBottom: 32 },
   header: { fontSize: 18, fontWeight: "bold" },
-  card: {
-    width: SCREEN_WIDTH - 100,
-    borderRadius: 16,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
-    elevation: 5,
-  },
+  card: { width: SCREEN_WIDTH - 100, borderRadius: 16, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, elevation: 5 },
   titleRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
   title: { fontSize: 18, fontWeight: "700", marginLeft: 8, flex: 1 },
   features: { marginBottom: 24 },
   featureRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
   featureItem: { fontSize: 14.5, flex: 1 },
-  subscribeButton: {
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: "center",
-  },
-  subscribeButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 16,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "flex-end",
-  },
-  modalContent: {
-    padding: 24,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-  },
+  subscribeButton: { paddingVertical: 14, borderRadius: 30, alignItems: "center" },
+  subscribeButtonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
+  modalContent: { padding: 24, borderTopLeftRadius: 24, borderTopRightRadius: 24 },
   modalTitle: { fontSize: 20, fontWeight: "700", marginBottom: 12 },
-  disclaimer: {
-    fontSize: 12.5,
-    color: "#888",
-    marginTop: 20,
-    lineHeight: 17,
-    textAlign: "center",
-  },
+  disclaimer: { fontSize: 12.5, color: "#888", marginTop: 20, lineHeight: 17, textAlign: "center" },
 });

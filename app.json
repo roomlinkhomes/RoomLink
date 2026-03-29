@@ -46,7 +46,6 @@
       "expo-web-browser",
       "expo-font",
       "expo-asset",
-      "react-native-iap",
       "@react-native-firebase/app",
       "@react-native-firebase/messaging",
       "expo-audio",

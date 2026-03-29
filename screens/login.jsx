@@ -1,8 +1,4 @@
 // screens/Login.jsx
-// FIXED: Direct FCM token save on login success (no delay/race)
-// Removed delayed setupPushNotifications() call
-// Ensures profile exists + better error messages
-
 import React, { useState, useContext } from "react";
 import {
   View,
@@ -19,7 +15,7 @@ import {
 } from "react-native";
 import { TextInput } from "react-native-paper";
 import { Ionicons } from "@expo/vector-icons";
-import { UserContext } from "../context/UserContext"; // remove if not needed
+import { UserContext } from "../context/UserContext";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth, db } from "../firebaseConfig";
 import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore";
@@ -29,37 +25,26 @@ import { getMessaging, getToken } from '@react-native-firebase/messaging';
 const ensureUserProfile = async (uid, email) => {
   const userRef = doc(db, "users", uid);
   const userSnap = await getDoc(userRef);
-  let userData = {
-    id: uid,
-    uid,
-    email,
-    firstName: "",
-    lastName: "",
-    username: email.split("@")[0],
-    country: "NG",
-    currency: "₦",
-    isVendor: false,
-    photoURL: null,
-  };
+
   if (!userSnap.exists()) {
-    await setDoc(userRef, {
-      ...userData,
+    const newUserData = {
+      id: uid,
+      uid,
+      email,
+      firstName: "",
+      lastName: "",
+      username: email.split("@")[0],
+      country: "NG",
+      currency: "₦",
+      isVendor: false,
+      photoURL: null,
       createdAt: serverTimestamp(),
-    });
-  } else {
-    const data = userSnap.data();
-    userData = {
-      ...userData,
-      firstName: data.firstName || "",
-      lastName: data.lastName || "",
-      username: data.username || email.split("@")[0],
-      country: data.country || "NG",
-      currency: data.currency || "₦",
-      isVendor: data.isVendor ?? false,
-      photoURL: data.photoURL || null,
     };
+    await setDoc(userRef, newUserData);
+    return newUserData;
   }
-  return userData;
+
+  return { uid, ...userSnap.data() };
 };
 
 export default function Login() {
@@ -70,6 +55,7 @@ export default function Login() {
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [generalError, setGeneralError] = useState("");
+
   const { setUser } = useContext(UserContext) || { setUser: () => {} };
   const scheme = useColorScheme();
   const isDarkMode = scheme === "dark";
@@ -89,102 +75,82 @@ export default function Login() {
     setEmailError("");
     setPasswordError("");
     setGeneralError("");
+
     const cleanEmail = email.trim().toLowerCase();
     const cleanPassword = password.trim();
 
-    if (!cleanEmail) {
-      setEmailError("Email is required");
-      return;
-    }
-    if (!cleanPassword) {
-      setPasswordError("Password is required");
-      return;
-    }
+    if (!cleanEmail) return setEmailError("Email is required");
+    if (!cleanPassword) return setPasswordError("Password is required");
 
     setLoading(true);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(
-        auth,
-        cleanEmail,
-        cleanPassword
-      );
+      // 1. Sign in
+      const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
       const user = userCredential.user;
 
-      // Force refresh ID token
-      await user.getIdToken(true);
+      console.log("[Login] Sign in successful:", user.uid);
 
-      // Reload user object
-      await user.reload();
-      const refreshedUser = auth.currentUser;
-
-      console.log("[Login] Successful sign-in. UID:", refreshedUser?.uid);
-
-      // Ensure profile exists & get full data
-      const userData = await ensureUserProfile(refreshedUser.uid, refreshedUser.email);
+      // 2. Ensure profile exists (fast)
+      const userData = await ensureUserProfile(user.uid, user.email);
       setUser(userData);
 
-      // ── DIRECT FCM TOKEN SAVE ── Reliable post-login
-      try {
-        const messaging = getMessaging();
-        const token = await getToken(messaging);
+      // 3. Save FCM Token in background (NON-BLOCKING)
+      saveFCMTokenInBackground(user.uid);
 
-        if (token) {
-          await updateDoc(doc(db, 'users', refreshedUser.uid), {
-            fcmToken: token,
-            fcmTokenUpdatedAt: new Date().toISOString(),
-            platform: Platform.OS,
-            pushEnabled: true,
-          });
-          console.log('[Login] FCM token DIRECTLY saved to Firestore:', token.substring(0, 20) + '...');
-        } else {
-          console.log('[Login] No FCM token available');
-        }
-      } catch (pushErr) {
-        console.error('[Login] FCM token save failed:', pushErr.code || pushErr.message);
-      }
-
-      // Navigate to home
+      // 4. Navigate immediately
       navigation.replace("HomeTabs");
+
     } catch (error) {
       console.error("LOGIN FAILED:", error.code, error.message);
-      let message = "An error occurred. Please try again.";
-      let fieldError = null;
+
+      let message = "Login failed. Please try again.";
       switch (error.code) {
         case "auth/invalid-credential":
-          message = "Invalid email or password (account may not exist or credentials are wrong). Try 'Forgot Password' if this is an older account.";
-          fieldError = "general";
-          break;
-        case "auth/invalid-email":
-        case "auth/user-not-found":
-          fieldError = "email";
-          message = "Invalid email or no account found";
-          break;
         case "auth/wrong-password":
-          fieldError = "password";
-          message = "Incorrect password";
+          message = "Incorrect email or password";
+          break;
+        case "auth/user-not-found":
+        case "auth/invalid-email":
+          message = "No account found with this email";
           break;
         case "auth/too-many-requests":
-          message = "Too many attempts. Try again later.";
+          message = "Too many failed attempts. Try again later.";
           break;
         case "auth/network-request-failed":
-          message = "Network error — check your internet connection.";
+          message = "Network error. Check your connection.";
           break;
-        default:
-          message = `${error.code || "Unknown error"}: ${error.message || "Login failed"}`;
       }
-      if (fieldError === "email") setEmailError(message);
-      else if (fieldError === "password") setPasswordError(message);
-      else setGeneralError(message);
-      Alert.alert("Login Issue", message);
+
+      setGeneralError(message);
+      Alert.alert("Login Failed", message);
     } finally {
       setLoading(false);
     }
   };
 
+  // Run FCM token saving without blocking login
+  const saveFCMTokenInBackground = async (uid) => {
+    try {
+      const messaging = getMessaging();
+      const token = await getToken(messaging);
+
+      if (token) {
+        await updateDoc(doc(db, "users", uid), {
+          fcmToken: token,
+          fcmTokenUpdatedAt: new Date().toISOString(),
+          platform: Platform.OS,
+          pushEnabled: true,
+        });
+        console.log("[FCM] Token saved successfully");
+      }
+    } catch (err) {
+      console.warn("[FCM] Failed to save token (non-critical):", err.message);
+    }
+  };
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-      {/* Back Button */}
       <TouchableOpacity
         style={styles.backButton}
         onPress={() => navigation.goBack()}
@@ -204,21 +170,11 @@ export default function Login() {
         >
           {/* Header */}
           <View style={styles.header}>
-            <View
-              style={[
-                styles.rlBadge,
-                {
-                  backgroundColor: `${theme.primary}15`,
-                  borderColor: theme.primary,
-                },
-              ]}
-            >
+            <View style={[styles.rlBadge, { backgroundColor: `${theme.primary}15`, borderColor: theme.primary }]}>
               <Text style={[styles.rlText, { color: theme.primary }]}>RL</Text>
             </View>
             <View style={styles.headerContent}>
-              <Text style={[styles.welcomeTitle, { color: theme.text }]}>
-                Welcome Back
-              </Text>
+              <Text style={[styles.welcomeTitle, { color: theme.text }]}>Welcome Back</Text>
               <Text style={[styles.welcomeSubtitle, { color: theme.textSecondary }]}>
                 Sign in to continue
               </Text>
@@ -226,98 +182,45 @@ export default function Login() {
           </View>
 
           {/* Login Card */}
-          <View
-            style={[
-              styles.loginCard,
-              {
-                backgroundColor: theme.card,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            {/* Email Input */}
+          <View style={[styles.loginCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <View style={styles.inputContainer}>
               <TextInput
                 value={email}
-                onChangeText={(text) => {
-                  setEmail(text);
-                  setEmailError("");
-                }}
+                onChangeText={(text) => { setEmail(text); setEmailError(""); }}
                 mode="outlined"
                 label="Email"
                 placeholder="your@email.com"
-                placeholderTextColor={theme.textSecondary}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 outlineColor={emailError ? theme.error : theme.border}
                 activeOutlineColor={emailError ? theme.error : theme.primary}
-                style={{ backgroundColor: "transparent" }}
-                theme={{
-                  colors: {
-                    onSurfaceVariant: theme.textSecondary,
-                    primary: theme.primary,
-                    text: theme.text,
-                    error: theme.error,
-                  },
-                }}
                 left={<TextInput.Icon icon="email-outline" color={theme.primary} />}
                 error={!!emailError}
               />
-              {emailError ? (
-                <Text style={[styles.errorText, { color: theme.error }]}>
-                  {emailError}
-                </Text>
-              ) : null}
+              {emailError && <Text style={[styles.errorText, { color: theme.error }]}>{emailError}</Text>}
             </View>
 
-            {/* Password Input */}
             <View style={styles.inputContainer}>
               <TextInput
                 value={password}
-                onChangeText={(text) => {
-                  setPassword(text);
-                  setPasswordError("");
-                }}
+                onChangeText={(text) => { setPassword(text); setPasswordError(""); }}
                 secureTextEntry={!showPassword}
                 mode="outlined"
                 label="Password"
                 placeholder="••••••••"
                 outlineColor={passwordError ? theme.error : theme.border}
                 activeOutlineColor={passwordError ? theme.error : theme.primary}
-                style={{ backgroundColor: "transparent" }}
-                theme={{
-                  colors: {
-                    onSurfaceVariant: theme.textSecondary,
-                    primary: theme.primary,
-                    text: theme.text,
-                    error: theme.error,
-                  },
-                }}
                 left={<TextInput.Icon icon="lock-outline" color={theme.primary} />}
-                right={
-                  <TextInput.Icon
-                    icon={showPassword ? "eye-off" : "eye"}
-                    onPress={() => setShowPassword(!showPassword)}
-                    color={theme.primary}
-                  />
-                }
+                right={<TextInput.Icon icon={showPassword ? "eye-off" : "eye"} onPress={() => setShowPassword(!showPassword)} color={theme.primary} />}
                 error={!!passwordError}
               />
-              {passwordError ? (
-                <Text style={[styles.errorText, { color: theme.error }]}>
-                  {passwordError}
-                </Text>
-              ) : null}
+              {passwordError && <Text style={[styles.errorText, { color: theme.error }]}>{passwordError}</Text>}
             </View>
 
-            {/* General Error */}
-            {generalError ? (
-              <Text style={[styles.generalError, { color: theme.error }]}>
-                {generalError}
-              </Text>
-            ) : null}
+            {generalError && (
+              <Text style={[styles.generalError, { color: theme.error }]}>{generalError}</Text>
+            )}
 
-            {/* Login Button */}
             <TouchableOpacity
               style={[styles.loginButton, { backgroundColor: theme.primary }]}
               onPress={handleLogin}
@@ -331,26 +234,18 @@ export default function Login() {
               )}
             </TouchableOpacity>
 
-            {/* Forgot Password */}
             <TouchableOpacity
               style={styles.forgotPassword}
               onPress={() => navigation.navigate("ForgotPassword")}
             >
-              <Text style={[styles.forgotText, { color: theme.primary }]}>
-                Forgot password?
-              </Text>
+              <Text style={[styles.forgotText, { color: theme.primary }]}>Forgot password?</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Create Account */}
           <View style={styles.createAccount}>
-            <Text style={[styles.createText, { color: theme.textSecondary }]}>
-              Don't have an account?
-            </Text>
+            <Text style={[styles.createText, { color: theme.textSecondary }]}>Don't have an account?</Text>
             <TouchableOpacity onPress={() => navigation.navigate("Signup")}>
-              <Text style={[styles.createLink, { color: theme.primary }]}>
-                Sign up
-              </Text>
+              <Text style={[styles.createLink, { color: theme.primary }]}>Sign up</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -359,86 +254,27 @@ export default function Login() {
   );
 }
 
+// Styles remain the same
 const styles = StyleSheet.create({
   container: { flex: 1 },
   keyboardView: { flex: 1 },
-  scrollContainer: {
-    flexGrow: 1,
-    padding: 24,
-    paddingTop: 60,
-    paddingBottom: 80,
-  },
-  backButton: {
-    position: "absolute",
-    top: 1,
-    left: 10,
-    zIndex: 10,
-    padding: 8,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 36,
-  },
-  rlBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1.5,
-    marginRight: 16,
-  },
+  scrollContainer: { flexGrow: 1, padding: 24, paddingTop: 60, paddingBottom: 80 },
+  backButton: { position: "absolute", top: 10, left: 10, zIndex: 10, padding: 8 },
+  header: { flexDirection: "row", alignItems: "center", marginBottom: 36 },
+  rlBadge: { width: 44, height: 44, borderRadius: 12, justifyContent: "center", alignItems: "center", borderWidth: 1.5, marginRight: 16 },
   rlText: { fontSize: 20, fontWeight: "900", letterSpacing: -1 },
   headerContent: { flex: 1 },
   welcomeTitle: { fontSize: 26, fontWeight: "900" },
   welcomeSubtitle: { fontSize: 15, marginTop: 4 },
-  loginCard: {
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
+  loginCard: { borderRadius: 20, padding: 20, borderWidth: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   inputContainer: { marginBottom: 16 },
-  loginButton: {
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 12,
-  },
-  loginButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "900",
-  },
-  forgotPassword: {
-    alignItems: "center",
-    marginTop: 16,
-  },
+  loginButton: { paddingVertical: 14, borderRadius: 12, alignItems: "center", marginTop: 12 },
+  loginButtonText: { color: "#fff", fontSize: 16, fontWeight: "900" },
+  forgotPassword: { alignItems: "center", marginTop: 16 },
   forgotText: { fontSize: 14, fontWeight: "900" },
-  generalError: {
-    textAlign: "center",
-    marginTop: 12,
-    fontSize: 14,
-  },
-  errorText: {
-    fontSize: 13,
-    marginTop: 4,
-    marginLeft: 4,
-  },
-  createAccount: {
-    flexDirection: "row",
-    justifyContent: "center",
-    marginTop: 32,
-  },
+  generalError: { textAlign: "center", marginTop: 12, fontSize: 14 },
+  errorText: { fontSize: 13, marginTop: 4, marginLeft: 4 },
+  createAccount: { flexDirection: "row", justifyContent: "center", marginTop: 32 },
   createText: { fontSize: 15 },
-  createLink: {
-    fontSize: 15,
-    fontWeight: "700",
-    marginLeft: 6,
-  },
+  createLink: { fontSize: 15, fontWeight: "700", marginLeft: 6 },
 });

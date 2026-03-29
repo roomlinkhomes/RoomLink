@@ -1,4 +1,4 @@
-// ProductReviews.jsx — UPDATED: Single rating per user (edit instead of duplicate) + Block self-rating
+// ProductReviews.jsx
 import React, { useContext, useState, useEffect, useMemo } from "react";
 import {
   View,
@@ -16,58 +16,33 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { UserContext } from "../context/UserContext";
 import { addReview } from "../firebase/reviewService";
-import { doc, getDoc, updateDoc } from "firebase/firestore"; // ← updateDoc added
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
+import { auth } from "../firebaseConfig";
 
-// Helper function: "X time ago" timestamp
 const formatTimeAgo = (timestamp) => {
   if (!timestamp) return "Just now";
 
-  let date;
-  if (timestamp.toDate) {
-    date = timestamp.toDate();
-  } else if (timestamp.seconds) {
-    date = new Date(timestamp.seconds * 1000);
-  } else if (timestamp instanceof Date) {
-    date = timestamp;
-  } else {
-    return "Just now";
-  }
-
-  const now = new Date();
-  const secondsAgo = Math.floor((now - date) / 1000);
+  let date = timestamp?.toDate ? timestamp.toDate() : new Date(timestamp);
+  const secondsAgo = Math.floor((new Date() - date) / 1000);
 
   if (secondsAgo < 60) return "Just now";
-  if (secondsAgo < 3600) {
-    const mins = Math.floor(secondsAgo / 60);
-    return `${mins} minute${mins > 1 ? "s" : ""} ago`;
-  }
-  if (secondsAgo < 86400) {
-    const hours = Math.floor(secondsAgo / 3600);
-    return `${hours} hour${hours > 1 ? "s" : ""} ago`;
-  }
-  if (secondsAgo < 2592000) {
-    const days = Math.floor(secondsAgo / 86400);
-    return `${days} day${days > 1 ? "s" : ""} ago`;
-  }
-  if (secondsAgo < 31536000) {
-    const months = Math.floor(secondsAgo / 2592000);
-    return `${months} month${months > 1 ? "s" : ""} ago`;
-  }
-
-  const years = Math.floor(secondsAgo / 31536000);
-  return `${years} year${years > 1 ? "s" : ""} ago`;
+  if (secondsAgo < 3600) return `${Math.floor(secondsAgo / 60)}m ago`;
+  if (secondsAgo < 86400) return `${Math.floor(secondsAgo / 3600)}h ago`;
+  if (secondsAgo < 2592000) return `${Math.floor(secondsAgo / 86400)}d ago`;
+  return `${Math.floor(secondsAgo / 2592000)}mo ago`;
 };
 
 export default function ProductReviews() {
   const navigation = useNavigation();
   const route = useRoute();
   const { targetUserId } = route.params || {};
+
   const { user: currentUser, getUserReviews } = useContext(UserContext);
   const colorScheme = useColorScheme();
   const isDarkMode = colorScheme === "dark";
 
-  const isSelf = currentUser?.uid === targetUserId; // ← NEW: Prevent self-rating
+  const isSelf = currentUser?.uid === targetUserId;
 
   const theme = {
     primary: "#28a745",
@@ -88,28 +63,22 @@ export default function ProductReviews() {
   const [sellerAvatar, setSellerAvatar] = useState(null);
   const [reviewerInfoMap, setReviewerInfoMap] = useState({});
 
-  // NEW: Track if current user already rated this seller (for edit mode)
   const [userHasReview, setUserHasReview] = useState(false);
   const [userReviewId, setUserReviewId] = useState(null);
   const [userReviewRating, setUserReviewRating] = useState(0);
 
-  const dynamicStyles = useMemo(
-    () => ({
-      container: { flex: 1, backgroundColor: theme.background },
-      reviewCard: { backgroundColor: theme.card, borderColor: theme.border },
-      ratingSummaryCard: { backgroundColor: theme.card, borderColor: theme.border },
-      writeRatingSection: { backgroundColor: theme.card, borderColor: theme.border },
-      bottomActionBar: { backgroundColor: theme.card, borderTopColor: theme.border },
-    }),
-    [theme]
-  );
+  const dynamicStyles = useMemo(() => ({
+    container: { flex: 1, backgroundColor: theme.background },
+    reviewCard: { backgroundColor: theme.card, borderColor: theme.border },
+    ratingSummaryCard: { backgroundColor: theme.card, borderColor: theme.border },
+    writeRatingSection: { backgroundColor: theme.card, borderColor: theme.border },
+    bottomActionBar: { backgroundColor: theme.card, borderTopColor: theme.border },
+  }), [theme]);
 
   const getFullName = (userData) => {
     if (!userData) return "Seller";
-    if (userData.displayName?.trim()) return userData.displayName.trim();
-    if (userData.firstName && userData.lastName)
-      return `${userData.firstName.trim()} ${userData.lastName.trim()}`;
-    if (userData.name?.trim()) return userData.name.trim();
+    if (userData.firstName && userData.lastName) return `${userData.firstName} ${userData.lastName}`;
+    if (userData.displayName) return userData.displayName;
     if (userData.username) return userData.username;
     return "Seller";
   };
@@ -127,7 +96,7 @@ export default function ProductReviews() {
         if (userDoc.exists()) {
           const data = userDoc.data();
           setSellerName(getFullName(data));
-          setSellerAvatar(data.photoURL || data.profileImage || data.avatar || null);
+          setSellerAvatar(data.avatar || data.photoURL || null);
         }
       } catch (err) {
         console.error("Error fetching seller info:", err);
@@ -141,20 +110,18 @@ export default function ProductReviews() {
   const fetchReviews = async () => {
     try {
       setLoading(true);
-      const data = await getUserReviews?.(targetUserId);
-      const safeData = Array.isArray(data) ? data : [];
-      const avg =
-        safeData.length > 0
-          ? safeData.reduce((sum, r) => sum + (typeof r.rating === "number" ? r.rating : 0), 0) / safeData.length
-          : 0;
+      const data = await getUserReviews?.(targetUserId) || [];
+      
+      const avg = data.length > 0 
+        ? data.reduce((sum, r) => sum + (r.rating || 0), 0) / data.length 
+        : 0;
 
-      setReviews(safeData);
+      setReviews(data);
       setAverageRating(avg);
 
-      // NEW: Detect if current user already rated (enables edit mode)
-      const userReview = safeData.find(
-        (r) => (r.reviewerId || r.uid) === currentUser?.uid
-      );
+      const activeUid = currentUser?.uid || auth.currentUser?.uid;
+      const userReview = data.find(r => (r.reviewerId || r.uid) === activeUid);
+
       if (userReview) {
         setUserHasReview(true);
         setUserReviewId(userReview.id);
@@ -171,52 +138,6 @@ export default function ProductReviews() {
     }
   };
 
-  // NEW: Prefill stars when entering edit mode
-  useEffect(() => {
-    if (viewMode === "write") {
-      if (userHasReview) {
-        setSelectedRating(userReviewRating);
-      } else {
-        setSelectedRating(0);
-      }
-    }
-  }, [viewMode, userHasReview, userReviewRating]);
-
-  useEffect(() => {
-    const fetchReviewerInfo = async () => {
-      if (reviews.length === 0) {
-        setReviewerInfoMap({});
-        return;
-      }
-
-      const reviewerIds = [...new Set(reviews.map((r) => r.reviewerId || r.uid).filter(Boolean))];
-      const newMap = { ...reviewerInfoMap };
-
-      for (const uid of reviewerIds) {
-        if (newMap[uid]) continue;
-
-        try {
-          const userDoc = await getDoc(doc(db, "users", uid));
-          if (userDoc.exists()) {
-            const data = userDoc.data();
-            newMap[uid] = {
-              name: getFullName(data),
-              avatar: data.photoURL || data.profileImage || data.avatar || null,
-            };
-          } else {
-            newMap[uid] = { name: "User", avatar: null };
-          }
-        } catch (err) {
-          newMap[uid] = { name: "User", avatar: null };
-        }
-      }
-
-      setReviewerInfoMap(newMap);
-    };
-
-    fetchReviewerInfo();
-  }, [reviews]);
-
   const handleSubmitRating = async () => {
     if (selectedRating === 0) {
       Alert.alert("Rating Required", "Please select a star rating.");
@@ -226,46 +147,37 @@ export default function ProductReviews() {
       Alert.alert("Not Allowed", "You cannot rate yourself.");
       return;
     }
-    if (!currentUser || !currentUser.uid) {
-      Alert.alert("Login Required", "You must be logged in to submit a rating.");
+
+    const uid = currentUser?.uid || auth.currentUser?.uid;
+    if (!uid) {
+      Alert.alert("Oops!", "Unable to submit rating. Please try again.");
       return;
     }
 
-    const reviewerName =
-      currentUser.displayName || currentUser.email?.split("@")[0] || "Anonymous";
+    const reviewerName = currentUser?.displayName || 
+                        currentUser?.email?.split("@")[0] || 
+                        "Anonymous";
 
     try {
       if (userHasReview && userReviewId) {
-        // EDIT existing review (single rating enforced)
-        await updateDoc(
-          doc(db, "reviews", userReviewId), // ← Change "reviews" to your collection path if using subcollection (e.g. `users/${targetUserId}/reviews/${userReviewId}`)
-          {
-            rating: selectedRating,
-            timestamp: new Date(),
-          }
-        );
+        // Update existing review
+        await updateDoc(doc(db, "users", targetUserId, "reviews", userReviewId), {
+          rating: selectedRating,
+          timestamp: new Date(),
+        });
         Alert.alert("Success!", `Your rating has been updated to ${selectedRating} stars!`);
       } else {
-        // NEW review
-        await addReview(
-          targetUserId,
-          selectedRating,
-          currentUser.uid,
-          reviewerName,
-          ""
-        );
+        // Add new review
+        await addReview(targetUserId, selectedRating, uid, reviewerName, "");
         Alert.alert("Success!", `You rated ${sellerName} ${selectedRating} star${selectedRating > 1 ? "s" : ""}!`);
       }
 
       setViewMode("reviews");
       setSelectedRating(0);
-
-      setRefreshing(true);
-      await fetchReviews(); // Refreshes list + userHasReview state
-      setRefreshing(false);
+      await fetchReviews();
     } catch (error) {
       console.error("Rating submit error:", error);
-      Alert.alert("Error", "Failed to submit rating. Try again.");
+      Alert.alert("Error", "Failed to submit rating. Please try again.");
     }
   };
 
@@ -274,7 +186,6 @@ export default function ProductReviews() {
     const reviewerInfo = reviewerInfoMap[reviewerId] || {};
     const fullName = reviewerInfo.name || item.reviewerName || "User";
     const avatarUri = reviewerInfo.avatar;
-
     const commentText = item.comment || item.review || item.text;
 
     return (
@@ -288,7 +199,6 @@ export default function ProductReviews() {
                 <Ionicons name="person" size={20} color="#999" />
               </View>
             )}
-
             <View style={styles.userDetails}>
               <Text style={[styles.userName, { color: theme.text }]} numberOfLines={1}>
                 {fullName}
@@ -337,8 +247,6 @@ export default function ProductReviews() {
           <Text style={[styles.headerTitle, { color: theme.text, marginLeft: 12 }]}>
             {sellerName}'s Ratings
           </Text>
-
-          <View style={styles.headerSpacer} />
         </View>
       </View>
 
@@ -346,27 +254,16 @@ export default function ProductReviews() {
         <View style={styles.ratingHeader}>
           <Text style={[styles.ratingTitle, { color: theme.text }]}>Overall Rating</Text>
 
-          {/* NEW: Hide toggle for self-rating */}
           {!isSelf && (
             <TouchableOpacity
               onPress={() => setViewMode(viewMode === "reviews" ? "write" : "reviews")}
               style={styles.toggleButton}
             >
               <Text style={[styles.toggleText, { color: theme.primary }]}>
-                {viewMode === "reviews"
-                  ? userHasReview
-                    ? "Edit Rating"
-                    : "Add Rating"
-                  : "View Ratings"}
+                {viewMode === "reviews" ? (userHasReview ? "Edit Rating" : "Add Rating") : "View Ratings"}
               </Text>
               <Ionicons
-                name={
-                  viewMode === "reviews"
-                    ? userHasReview
-                      ? "create-outline"
-                      : "add-circle-outline"
-                    : "list-outline"
-                }
+                name={viewMode === "reviews" ? (userHasReview ? "create-outline" : "add-circle-outline") : "list-outline"}
                 size={20}
                 color={theme.primary}
               />
@@ -405,29 +302,6 @@ export default function ProductReviews() {
                 {reviews.length} rating{reviews.length !== 1 ? "s" : ""}
               </Text>
             </View>
-
-            <View style={styles.ratingBars}>
-              {[5, 4, 3, 2, 1].map((star) => {
-                const count = reviews.filter((r) => typeof r.rating === "number" && r.rating === star).length;
-                const percentage = reviews.length > 0 ? (count / reviews.length) * 100 : 0;
-                return (
-                  <View key={star} style={styles.ratingBarRow}>
-                    <Text style={[styles.starLabel, { color: theme.textSecondary }]}>
-                      {star} <Ionicons name="star" size={14} color="#FFD700" />
-                    </Text>
-                    <View style={styles.barContainer}>
-                      <View
-                        style={[
-                          styles.barFill,
-                          { width: `${percentage}%`, backgroundColor: theme.primary },
-                        ]}
-                      />
-                      <Text style={[styles.barCount, { color: theme.textSecondary }]}>{count}</Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
           </View>
         )}
       </View>
@@ -463,7 +337,7 @@ export default function ProductReviews() {
     <SafeAreaView style={dynamicStyles.container}>
       <FlatList
         data={viewMode === "reviews" ? reviews : []}
-        keyExtractor={(item) => (item.id ? item.id.toString() : Math.random().toString())}
+        keyExtractor={(item) => item.id || Math.random().toString()}
         renderItem={renderReviewItem}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={
@@ -483,17 +357,15 @@ export default function ProductReviews() {
         onRefresh={fetchReviews}
       />
 
-      {/* NEW: Hide bottom bar for self-rating */}
       {!isSelf && (
         <View style={dynamicStyles.bottomActionBar}>
           <TouchableOpacity
             style={[
               styles.actionButton,
               {
-                backgroundColor:
-                  (viewMode === "write" && selectedRating > 0) || viewMode === "reviews"
-                    ? theme.primary
-                    : "#aaa",
+                backgroundColor: (viewMode === "write" && selectedRating > 0) || viewMode === "reviews"
+                  ? theme.primary
+                  : "#aaa",
               },
             ]}
             disabled={viewMode === "write" && selectedRating === 0}
@@ -506,24 +378,14 @@ export default function ProductReviews() {
             }}
           >
             <Ionicons
-              name={
-                viewMode === "write"
-                  ? "checkmark-circle-outline"
-                  : userHasReview
-                  ? "create-outline"
-                  : "pencil"
-              }
+              name={viewMode === "write" ? "checkmark-circle-outline" : userHasReview ? "create-outline" : "pencil"}
               size={20}
               color="#fff"
             />
             <Text style={styles.buttonText}>
               {viewMode === "write"
-                ? userHasReview
-                  ? "Update Rating"
-                  : "Submit Rating"
-                : userHasReview
-                ? "Edit Rating"
-                : "Add Rating"}
+                ? userHasReview ? "Update Rating" : "Submit Rating"
+                : userHasReview ? "Edit Rating" : "Add Rating"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -532,8 +394,8 @@ export default function ProductReviews() {
   );
 }
 
+/* ==================== STYLES ==================== */
 const styles = StyleSheet.create({
-  // ... (unchanged - same as your original)
   headerCard: {
     backgroundColor: "#fff",
     borderBottomWidth: 1,
@@ -550,14 +412,8 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingTop: 12,
   },
-  profileAvatarContainer: {
-    marginLeft: 8,
-  },
-  profileAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
+  profileAvatarContainer: { marginLeft: 8 },
+  profileAvatar: { width: 40, height: 40, borderRadius: 20 },
   profileAvatarPlaceholder: {
     width: 40,
     height: 40,
@@ -566,16 +422,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    flex: 1,
-    textAlign: "left",
-  },
-  headerSpacer: {
-    width: 44,
-    height: 44,
-  },
+  headerTitle: { fontSize: 20, fontWeight: "800", flex: 1, textAlign: "left" },
+
   ratingSummaryCard: {
     margin: 20,
     marginTop: 12,
@@ -594,10 +442,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
-  ratingTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-  },
+  ratingTitle: { fontSize: 18, fontWeight: "800" },
   toggleButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -608,76 +453,18 @@ const styles = StyleSheet.create({
     borderColor: "rgba(40, 167, 69, 0.2)",
     backgroundColor: "rgba(40, 167, 69, 0.05)",
   },
-  toggleText: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginRight: 6,
-  },
-  loadingContainer: {
-    alignItems: "center",
-    paddingVertical: 40,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-  },
-  ratingContent: {
-    alignItems: "center",
-  },
-  mainRating: {
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  averageRating: {
-    fontSize: 48,
-    fontWeight: "900",
-    lineHeight: 52,
-  },
-  ratingLabel: {
-    fontSize: 16,
-    marginTop: 4,
-  },
-  ratingBreakdown: {
-    alignItems: "center",
-    marginBottom: 24,
-  },
-  reviewCount: {
-    fontSize: 16,
-    marginTop: 8,
-    fontWeight: "600",
-  },
-  ratingBars: {
-    width: "100%",
-  },
-  ratingBarRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  starLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    minWidth: 60,
-  },
-  barContainer: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    marginLeft: 16,
-  },
-  barFill: {
-    height: 8,
-    borderRadius: 4,
-    marginRight: 12,
-    minWidth: 20,
-  },
-  barCount: {
-    fontSize: 12,
-    fontWeight: "600",
-    minWidth: 20,
-    textAlign: "right",
-  },
+  toggleText: { fontSize: 14, fontWeight: "600", marginRight: 6 },
+
+  loadingContainer: { alignItems: "center", paddingVertical: 40 },
+  loadingText: { marginTop: 12, fontSize: 16 },
+
+  ratingContent: { alignItems: "center" },
+  mainRating: { alignItems: "center", marginBottom: 20 },
+  averageRating: { fontSize: 48, fontWeight: "900", lineHeight: 52 },
+  ratingLabel: { fontSize: 16, marginTop: 4 },
+  ratingBreakdown: { alignItems: "center", marginBottom: 24 },
+  reviewCount: { fontSize: 16, marginTop: 8, fontWeight: "600" },
+
   writeRatingSection: {
     alignItems: "center",
     padding: 30,
@@ -686,17 +473,12 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
   },
-  writePrompt: {
-    fontSize: 20,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  ratingHint: {
-    fontSize: 16,
-    marginTop: 10,
-  },
+  writePrompt: { fontSize: 20, fontWeight: "700", textAlign: "center" },
+  ratingHint: { fontSize: 16, marginTop: 10, textAlign: "center" },
+
   reviewCard: {
     padding: 16,
+    marginHorizontal: 20,
     marginBottom: 12,
     borderRadius: 16,
     borderWidth: 1,
@@ -712,18 +494,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  userInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
-    backgroundColor: "#e9ecef",
-  },
+  userInfo: { flexDirection: "row", alignItems: "center", flex: 1 },
+  avatar: { width: 40, height: 40, borderRadius: 20, marginRight: 12 },
   avatarPlaceholder: {
     width: 40,
     height: 40,
@@ -733,21 +505,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  userDetails: {
-    flex: 1,
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  reviewDate: {
-    fontSize: 13,
-    marginTop: 2,
-  },
-  reviewComment: {
-    fontSize: 15,
-    lineHeight: 22,
-  },
+  userDetails: { flex: 1 },
+  userName: { fontSize: 16, fontWeight: "700" },
+  reviewDate: { fontSize: 13, marginTop: 2 },
+  reviewComment: { fontSize: 15, lineHeight: 22 },
+
   emptyReviewsCard: {
     alignItems: "center",
     padding: 40,
@@ -758,17 +520,9 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(40, 167, 69, 0.02)",
     marginTop: 20,
   },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 16,
-    textAlign: "center",
-    maxWidth: 280,
-  },
+  emptyTitle: { fontSize: 20, fontWeight: "800", marginTop: 16, marginBottom: 8 },
+  emptySubtitle: { fontSize: 16, textAlign: "center", maxWidth: 280 },
+
   bottomActionBar: {
     position: "absolute",
     bottom: 0,
