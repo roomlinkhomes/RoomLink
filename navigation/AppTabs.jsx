@@ -31,8 +31,8 @@ import Trips from "../screens/Trips";
 const Tab = createBottomTabNavigator();
 
 const SIZES = {
-  icon: 22,     // smaller icons
-  avatar: 24,   // avatar slightly larger than icons
+  icon: 22,
+  avatar: 24,
 };
 
 export default function AppTabs() {
@@ -48,11 +48,8 @@ export default function AppTabs() {
     tabBarBackground: isDarkMode ? "#121212" : "#fafafa",
     tabBarActive: isDarkMode ? "#00ff7f" : "#017a6b",
     tabBarInactive: isDarkMode ? "#b0b0b0" : "#666",
-    badgeBackground: "#ef4444",
-    badgeText: "#ffffff",
   };
 
-  // Realtime avatar listener
   useEffect(() => {
     if (!user?.uid) return;
     const unsub = onSnapshot(doc(db, "users", user.uid), (snap) => {
@@ -65,7 +62,7 @@ export default function AppTabs() {
 
   const tabBarStyle = {
     backgroundColor: theme.tabBarBackground,
-    height: Platform.OS === "ios" ? 64 : 60,           // slightly shorter
+    height: Platform.OS === "ios" ? 64 : 60,
     paddingBottom: Platform.OS === "ios" ? 20 : 6,
     paddingTop: 6,
   };
@@ -77,7 +74,7 @@ export default function AppTabs() {
 
       const hideTabBarRoutes = [
         "Message",
-        "Listing",
+        "ListingTab",
         "VendorListing",
         "VendorCategory",
         "ListingDetails",
@@ -91,11 +88,9 @@ export default function AppTabs() {
         headerShown: false,
         tabBarActiveTintColor: theme.tabBarActive,
         tabBarInactiveTintColor: theme.tabBarInactive,
-        tabBarLabelStyle: [styles.tabLabel],
+        tabBarLabelStyle: styles.tabLabel,
         tabBarStyle: isHidden ? { display: "none" } : tabBarStyle,
         tabBarHideOnKeyboard: true,
-        tabBarPressColor: "transparent",
-        tabBarPressOpacity: 1,
       };
     },
     [theme]
@@ -116,13 +111,10 @@ export default function AppTabs() {
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0} // match new tab height
+      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
       enabled={Platform.OS === "ios"}
     >
-      <Tab.Navigator
-        screenOptions={screenOptions}
-        backBehavior="history"
-      >
+      <Tab.Navigator screenOptions={screenOptions} backBehavior="history">
         <Tab.Screen
           name="Home"
           component={Home}
@@ -162,11 +154,24 @@ export default function AppTabs() {
           options={{
             tabBarLabel: "Post",
             tabBarIcon: ({ focused }) => (
-              <Ionicons
-                name={focused ? "add-circle" : "add-circle-outline"}
-                size={SIZES.icon}
-                color={focused ? theme.tabBarActive : theme.tabBarInactive}
-              />
+              <View
+                style={[
+                  styles.postRect,
+                  {
+                    borderColor: focused
+                      ? theme.tabBarActive
+                      : theme.tabBarInactive,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="add"
+                  size={16}
+                  color={
+                    focused ? theme.tabBarActive : theme.tabBarInactive
+                  }
+                />
+              </View>
             ),
           }}
         />
@@ -175,7 +180,7 @@ export default function AppTabs() {
           name="Trips"
           component={Trips}
           options={{
-            tabBarLabel: "Events",
+            tabBarLabel: "trips",
             tabBarIcon: ({ focused }) => (
               <View style={styles.iconContainer}>
                 <Ionicons
@@ -243,10 +248,10 @@ export default function AppTabs() {
 
 const styles = StyleSheet.create({
   tabLabel: {
-    fontSize: 10,               // ← smaller labels
+    fontSize: 10,
     fontWeight: "700",
     letterSpacing: 0.2,
-    marginBottom: 2,            // tighter spacing
+    marginBottom: 2,
   },
   iconContainer: {
     position: "relative",
@@ -271,6 +276,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   avatar: {
-    borderRadius: 12,           // half of 24
+    borderRadius: 12,
+  },
+  postRect: {
+    width: 28,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.7,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
