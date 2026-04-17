@@ -17,7 +17,7 @@ export default function ProfileTopBar({ userId }) {
   const { dark } = useTheme();
   const insets = useSafeAreaInsets();
 
-  const supportUID = "PdEzQK2PxUccxbJLJo67lRi21NR2";
+  const supportUID = "lhtmGCryMfNNA9suQct1l5PeBSI3";
 
   const handleShare = async () => {
     try {
@@ -45,10 +45,6 @@ export default function ProfileTopBar({ userId }) {
     });
   };
 
-  const handleGoBack = () => {
-    navigation.goBack();
-  };
-
   const iconColor = dark ? "#fff" : "#000";
 
   return (
@@ -67,13 +63,8 @@ export default function ProfileTopBar({ userId }) {
           },
         ]}
       >
-        {/* Back Button - Left Side */}
-        <TouchableOpacity
-          onPress={handleGoBack}
-          style={styles.backButton}
-        >
-          <Ionicons name="arrow-back" size={26} color={iconColor} />
-        </TouchableOpacity>
+        {/* Empty space on the left (to keep balance since back button is removed) */}
+        <View style={styles.leftSpacer} />
 
         {/* Right Side Icons */}
         <View style={styles.icons}>
@@ -81,6 +72,7 @@ export default function ProfileTopBar({ userId }) {
           <TouchableOpacity
             onPress={handleSupportChat}
             style={styles.iconButton}
+            activeOpacity={0.7}
           >
             <Ionicons name="headset-outline" size={26} color={iconColor} />
             <View style={[styles.badge, { borderColor: dark ? "#000" : "#fff" }]}>
@@ -89,7 +81,11 @@ export default function ProfileTopBar({ userId }) {
           </TouchableOpacity>
 
           {/* Share */}
-          <TouchableOpacity onPress={handleShare} style={styles.iconButton}>
+          <TouchableOpacity
+            onPress={handleShare}
+            style={styles.iconButton}
+            activeOpacity={0.7}
+          >
             <Ionicons name="share-social" size={26} color={iconColor} />
           </TouchableOpacity>
         </View>
@@ -107,8 +103,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 10,
   },
-  backButton: {
-    padding: 4,
+  leftSpacer: {
+    width: 34,        // Roughly matches the width of the previous back button
+    height: 34,
   },
   icons: {
     flexDirection: "row",

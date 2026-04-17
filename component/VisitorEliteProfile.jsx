@@ -1,4 +1,4 @@
-// components/EliteProfile.jsx
+// components/VisitorEliteProfile.jsx - VISITOR VERSION (Read-only, no edit buttons)
 import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
@@ -7,15 +7,12 @@ import {
   useColorScheme,
   TouchableOpacity,
   Image,
-  Modal,
-  Alert,
   Dimensions,
   Pressable,
   ScrollView,
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import * as ImagePicker from "expo-image-picker";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import Animated, {
@@ -25,7 +22,7 @@ import Animated, {
   interpolate,
   Extrapolate,
 } from "react-native-reanimated";
-import { doc, updateDoc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useUser } from "../context/UserContext";
 import Avatar from "./avatar";
@@ -33,8 +30,6 @@ import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
 import RedBadge from "../assets/icons/red.svg";
 import Trust from "../component/Trust";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { getAuth } from "firebase/auth";
 
 const { width } = Dimensions.get("window");
 const AVATAR_SIZE = 100;
@@ -43,34 +38,33 @@ const CARD_HEIGHT = 224;
 const FLIP_DURATION = 600;
 const ACCENT_COLOR = "#0055FF";
 
-export default function EliteProfile({ visitedUserListings = [] }) {
+export default function VisitorEliteProfile({ userId: propUserId, visitedUserListings = [] }) {
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
   const navigation = useNavigation();
   const route = useRoute();
-  const { user: currentUser, resetToMyProfile } = useUser();
-  const auth = getAuth();
-  const routeUserId = route?.params?.userId;
+
+  const { user: currentUser } = useUser();
+
+  const routeUserId = route?.params?.userId || propUserId;
 
   const [displayUser, setDisplayUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [headerColor, setHeaderColor] = useState("#0A0E27");
-  const [uploadingCover, setUploadingCover] = useState(false);
-  const [modalVisible, setModalVisible] = useState(false);
 
   const flip = useSharedValue(0);
+
   const currentUserId = currentUser?.id || currentUser?.uid;
+  const viewedUserId = routeUserId || displayUser?.id || displayUser?.uid;
 
-  // Reset to own profile when opening Profile tab (no routeUserId)
-  useEffect(() => {
-    if (!routeUserId) {
-      resetToMyProfile();
-    }
-  }, [routeUserId, resetToMyProfile]);
+  const isOwner = useMemo(() => {
+    if (!currentUserId || !viewedUserId) return false;
+    return currentUserId === viewedUserId;
+  }, [currentUserId, viewedUserId]);
 
-  // Real-time listener
+  // Real-time listener for the visited user
   useEffect(() => {
-    const targetUid = routeUserId || currentUserId;
+    const targetUid = routeUserId || viewedUserId;
     if (!targetUid) {
       setDisplayUser(null);
       setLoadingUser(false);
@@ -78,6 +72,7 @@ export default function EliteProfile({ visitedUserListings = [] }) {
     }
 
     setLoadingUser(true);
+
     const unsub = onSnapshot(
       doc(db, "users", targetUid),
       (snap) => {
@@ -91,84 +86,13 @@ export default function EliteProfile({ visitedUserListings = [] }) {
         setLoadingUser(false);
       },
       (err) => {
-        console.error("[ELITE PROFILE] Snapshot error:", err);
+        console.error("[VISITOR ELITE PROFILE] Snapshot error:", err);
         setLoadingUser(false);
       }
     );
+
     return () => unsub();
-  }, [routeUserId, currentUserId]);
-
-  const isOwner = useMemo(() => {
-    if (!currentUserId || !displayUser) return false;
-    return currentUserId === (displayUser.id || displayUser.uid);
-  }, [currentUserId, displayUser]);
-
-  const updateUserField = async (field, value) => {
-    if (!currentUserId) return;
-    try {
-      await updateDoc(doc(db, "users", currentUserId), { [field]: value });
-      setDisplayUser((prev) => (prev ? { ...prev, [field]: value } : null));
-    } catch (err) {
-      Alert.alert("Error", "Failed to update profile");
-    }
-  };
-
-  const uploadImageToStorage = async (uri, pathPrefix) => {
-    const currentUserAuth = auth.currentUser;
-    if (!currentUserAuth?.uid) throw new Error("Not authenticated");
-
-    const timestamp = Date.now();
-    const fileName = `${pathPrefix}-${currentUserAuth.uid}-${timestamp}.jpg`;
-    const storage = getStorage();
-    const storageRef = ref(storage, `${pathPrefix}_images/${currentUserAuth.uid}/${fileName}`);
-
-    const response = await fetch(uri);
-    const blob = await response.blob();
-    await uploadBytes(storageRef, blob);
-    return await getDownloadURL(storageRef);
-  };
-
-  const changeAvatar = async () => {
-    if (!isOwner) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-    if (result.canceled) return;
-
-    try {
-      const url = await uploadImageToStorage(result.assets[0].uri, "avatar");
-      await updateUserField("avatar", url);
-      Alert.alert("Success", "Profile picture updated!");
-    } catch (err) {
-      Alert.alert("Error", "Failed to upload avatar");
-    }
-  };
-
-  const pickHeaderImage = async () => {
-    if (!isOwner) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [16, 7],
-      quality: 0.9,
-    });
-    if (result.canceled) return;
-
-    setUploadingCover(true);
-    try {
-      const url = await uploadImageToStorage(result.assets[0].uri, "cover");
-      await updateUserField("coverImage", url);
-      Alert.alert("Success", "Cover image updated!");
-    } catch (err) {
-      Alert.alert("Error", "Failed to upload cover image");
-    } finally {
-      setUploadingCover(false);
-      setModalVisible(false);
-    }
-  };
+  }, [routeUserId, viewedUserId]);
 
   const toggleFlip = () => {
     flip.value = withTiming(flip.value === 0 ? 1 : 0, { duration: FLIP_DURATION });
@@ -193,7 +117,7 @@ export default function EliteProfile({ visitedUserListings = [] }) {
   }));
 
   const goToListings = () => {
-    const targetUserId = displayUser?.id || displayUser?.uid;
+    const targetUserId = viewedUserId || routeUserId;
     if (!targetUserId) return;
     navigation.push("ProfileListingsScreen", { userId: targetUserId });
   };
@@ -227,48 +151,22 @@ export default function EliteProfile({ visitedUserListings = [] }) {
   const avatarSource = displayUser?.avatar ? { uri: displayUser.avatar } : null;
   const isUserVerified = displayUser.isVerified === true;
 
-  // Get initials for placeholder
-  const getInitials = () => {
-    if (!displayUser.firstName) return "?";
-    return displayUser.firstName.charAt(0).toUpperCase();
-  };
-
   return (
     <ScrollView style={[styles.container, { backgroundColor: isDark ? "#000" : "#f8f9fa" }]}>
-      {/* Header with cover image */}
-      <TouchableOpacity
-        activeOpacity={isOwner ? 0.88 : 1}
-        onPress={() => isOwner && setModalVisible(true)}
-        disabled={!isOwner}
-      >
-        <View style={styles.header}>
-          {coverSource ? (
-            <Image source={coverSource} style={styles.headerImage} resizeMode="cover" />
-          ) : (
-            <LinearGradient colors={[headerColor, "#1a1a3a"]} style={StyleSheet.absoluteFill} />
-          )}
-          <View style={styles.headerOverlay} />
-          {isOwner && (
-            <TouchableOpacity style={styles.editHeaderButton} onPress={() => setModalVisible(true)}>
-              <Ionicons name="camera" size={22} color="#fff" />
-            </TouchableOpacity>
-          )}
-          {uploadingCover && (
-            <ActivityIndicator size="large" color={ACCENT_COLOR} style={styles.uploadingIndicator} />
-          )}
-        </View>
-      </TouchableOpacity>
+      {/* Header with cover image - NO edit for visitors */}
+      <View style={styles.header}>
+        {coverSource ? (
+          <Image source={coverSource} style={styles.headerImage} resizeMode="cover" />
+        ) : (
+          <LinearGradient colors={[headerColor, "#1a1a3a"]} style={StyleSheet.absoluteFill} />
+        )}
+        <View style={styles.headerOverlay} />
+      </View>
 
       <View style={styles.avatarSection}>
-        <Pressable
-          onPress={toggleFlip}
-          onLongPress={changeAvatar}
-          delayLongPress={500}
-          style={styles.flipWrapper}
-          pointerEvents={isOwner ? "box-only" : "auto"}
-        >
+        <Pressable onPress={toggleFlip} style={styles.flipWrapper}>
           <Animated.View style={[styles.flipCard, animatedContainer, styles.shadow]}>
-            {/* FRONT SIDE */}
+            {/* Front - Avatar */}
             <Animated.View style={[StyleSheet.absoluteFill, frontStyle]}>
               {avatarSource ? (
                 <Image source={avatarSource} style={styles.avatarImage} resizeMode="cover" />
@@ -277,41 +175,19 @@ export default function EliteProfile({ visitedUserListings = [] }) {
               )}
             </Animated.View>
 
-            {/* BACK SIDE - ID Card (FIXED - No more null source warning) */}
+            {/* Back - ID Card */}
             <Animated.View style={[StyleSheet.absoluteFill, backStyle]}>
               <LinearGradient colors={["#0F0F2E", "#1E1E4D", "#017a6b"]} style={styles.idCard}>
                 <View style={styles.idWatermark}>
                   {[...Array(30)].map((_, i) => (
-                    <Text
-                      key={i}
-                      style={[
-                        styles.watermarkText,
-                        { transform: [{ rotate: i % 2 ? "12deg" : "-12deg" }] },
-                      ]}
-                    >
+                    <Text key={i} style={[styles.watermarkText, { transform: [{ rotate: i % 2 ? "12deg" : "-12deg" }] }]}>
                       ROOMLINK
                     </Text>
                   ))}
                 </View>
-
-                {/* Safe Avatar Rendering */}
-                {avatarSource ? (
-                  <Image
-                    source={avatarSource}
-                    style={styles.idAvatar}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={[styles.idAvatar, styles.idAvatarPlaceholder]}>
-                    <Text style={styles.initialsText}>{getInitials()}</Text>
-                  </View>
-                )}
-
-                <Text style={styles.idName}>
-                  {displayUser.firstName} {displayUser.lastName}
-                </Text>
+                <Image source={avatarSource} style={styles.idAvatar} resizeMode="cover" />
+                <Text style={styles.idName}>{displayUser.firstName} {displayUser.lastName}</Text>
                 <Text style={styles.idUsername}>@{displayUser.username}</Text>
-
                 {isUserVerified && (
                   <View style={styles.verifiedBadge}>
                     <Ionicons name="shield-checkmark" size={18} color="#00ff9d" />
@@ -323,7 +199,7 @@ export default function EliteProfile({ visitedUserListings = [] }) {
           </Animated.View>
         </Pressable>
 
-        {/* User Info */}
+        {/* Info Section - No edit buttons for visitors */}
         <View style={styles.infoHeader}>
           <View style={styles.nameRow}>
             <Text style={[styles.name, { color: isDark ? "#fff" : "#000" }]}>
@@ -370,36 +246,17 @@ export default function EliteProfile({ visitedUserListings = [] }) {
             )}
           </View>
 
-          {displayUser.bio && (
-            <Text style={[styles.bio, { color: isDark ? "#ddd" : "#333" }]}>{displayUser.bio}</Text>
-          )}
+          {displayUser.bio && <Text style={[styles.bio, { color: isDark ? "#ddd" : "#333" }]}>{displayUser.bio}</Text>}
         </View>
 
-        {isOwner && (
-          <View style={styles.ctaRow}>
-            <TouchableOpacity
-              style={[styles.ctaButton, styles.editCta]}
-              onPress={() => navigation.navigate("EditProfile")}
-            >
-              <Ionicons name="pencil" size={18} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={styles.editCtaText}>Edit profile</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.ctaButton, styles.premiumCta]}
-              onPress={() => navigation.navigate("GetVerified")}
-            >
-              <Ionicons name="diamond" size={18} color="#000" style={{ marginRight: 8 }} />
-              <Text style={styles.premiumCtaText}>Premium</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
+        {/* Listings Button - Works for visitors too */}
         <TouchableOpacity style={styles.listingsButton} onPress={goToListings}>
           <Ionicons name="home" size={24} color="#000" style={{ marginRight: 12 }} />
-          <Text style={styles.listingsText}>Listings</Text>
+          <Text style={styles.listingsText}>View Listings</Text>
         </TouchableOpacity>
       </View>
 
+      {/* Personal Details */}
       {profileFields.length > 0 && <Text style={styles.personalDetailsLabel}>Personal Details</Text>}
       {profileFields.length > 0 && (
         <View style={styles.detailsCard}>
@@ -413,59 +270,16 @@ export default function EliteProfile({ visitedUserListings = [] }) {
           ))}
         </View>
       )}
-
-      {/* Modal */}
-      <Modal visible={modalVisible} transparent animationType="slide">
-        <Pressable style={styles.modalOverlay} onPress={() => setModalVisible(false)}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Header Style</Text>
-            <TouchableOpacity style={styles.modalOption} onPress={pickHeaderImage}>
-              <Ionicons name="images" size={24} color={ACCENT_COLOR} />
-              <Text style={styles.modalOptionText}>Choose Photo</Text>
-            </TouchableOpacity>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 20 }}>
-              {["#0A0E27", "#e20707", "#aad717", "#004e92", "#2c003e", "#003366", "#888", "#120030"].map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[styles.colorPick, { backgroundColor: c }]}
-                  onPress={async () => {
-                    setHeaderColor(c);
-                    setModalVisible(false);
-                    if (isOwner) {
-                      await updateUserField("headerColor", c);
-                      await updateUserField("coverImage", null);
-                    }
-                  }}
-                />
-              ))}
-            </ScrollView>
-          </View>
-        </Pressable>
-      </Modal>
     </ScrollView>
   );
 }
 
+// Reuse most of your original styles (copy from EliteProfile)
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { height: 110, overflow: "hidden", position: "relative" },
   headerImage: { width: "100%", height: "100%", resizeMode: "cover" },
   headerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.3)" },
-  editHeaderButton: {
-    position: "absolute",
-    top: 5,
-    right: 16,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    borderRadius: 20,
-    padding: 8,
-    zIndex: 10,
-  },
-  uploadingIndicator: {
-    position: "absolute",
-    top: "50%",
-    left: "50%",
-    transform: [{ translateX: -15 }, { translateY: -15 }],
-  },
   avatarSection: { marginTop: -55, paddingHorizontal: 20 },
   flipWrapper: { alignItems: "flex-start", marginBottom: 16 },
   flipCard: { backgroundColor: "#fff", overflow: "hidden" },
@@ -494,24 +308,6 @@ const styles = StyleSheet.create({
   noRatingText: { fontSize: 13, fontStyle: "italic", marginTop: 6 },
   bio: { marginTop: 12, fontSize: 16, lineHeight: 24, fontStyle: "italic" },
   badgeContainer: { marginLeft: 10, marginBottom: -6 },
-  ctaRow: { flexDirection: "row", marginTop: 24, gap: 12 },
-  ctaButton: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 12,
-    flexDirection: "row",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  editCta: { backgroundColor: "#017a6b" },
-  editCtaText: { color: "#fff", fontSize: 15, fontWeight: "700" },
-  premiumCta: { backgroundColor: "#f0f0f0", borderWidth: 1, borderColor: "#017a6b" },
-  premiumCtaText: { color: "#111111", fontSize: 15, fontWeight: "700" },
   listingsButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -538,25 +334,10 @@ const styles = StyleSheet.create({
   },
   detailRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
   detailText: { marginLeft: 14, fontSize: 16 },
-
-  // ID Card Styles
   idCard: { padding: 20, alignItems: "center", justifyContent: "center" },
   idWatermark: { ...StyleSheet.absoluteFillObject, opacity: 0.06, justifyContent: "center", alignItems: "center" },
   watermarkText: { fontSize: 14, color: "#fff", fontWeight: "900", margin: 4 },
   idAvatar: { width: 90, height: 90, borderRadius: 45, borderWidth: 3, borderColor: "#00ff9d", marginBottom: 12 },
-
-  // New placeholder style for when no avatar exists
-  idAvatarPlaceholder: {
-    backgroundColor: "#333",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  initialsText: {
-    color: "#fff",
-    fontSize: 36,
-    fontWeight: "bold",
-  },
-
   idName: { fontSize: 22, fontWeight: "800", color: "#fff" },
   idUsername: { fontSize: 15, color: "#00ff9d", marginBottom: 10 },
   verifiedBadge: {
@@ -568,10 +349,4 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   verifiedText: { color: "#00ff9d", marginLeft: 6, fontWeight: "600" },
-  modalOverlay: { flex: 1, backgroundColor: "#000000CC", justifyContent: "flex-end" },
-  modalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
-  modalTitle: { fontSize: 22, fontWeight: "800", textAlign: "center", color: "#000" },
-  modalOption: { flexDirection: "row", alignItems: "center", paddingVertical: 16 },
-  modalOptionText: { marginLeft: 16, fontSize: 18, color: "#000" },
-  colorPick: { width: 50, height: 50, borderRadius: 25, marginHorizontal: 8, borderWidth: 3, borderColor: "#fff" },
 });

@@ -31,7 +31,7 @@ const darkTheme = {
 // Create the context
 export const ThemeContext = createContext();
 
-// Custom hook for easy access (MUST add this!)
+// Custom hook for easy access
 export const useTheme = () => {
   const context = useContext(ThemeContext);
   if (!context) {
@@ -42,18 +42,30 @@ export const useTheme = () => {
 
 // Provider component
 export const ThemeProvider = ({ children }) => {
-  const [darkMode, setDarkMode] = useState(Appearance.getColorScheme() === "dark");
+  // Fix 1: Initialize using a lazy initializer function to ensure it runs once correctly
+  const [darkMode, setDarkMode] = useState(() => {
+    const initial = Appearance.getColorScheme();
+    return initial === "dark";
+  });
 
   // Listen to system theme changes
   useEffect(() => {
+    // Fix 2: Immediate check on mount to catch any transitions missed during JS boot
+    const currentMode = Appearance.getColorScheme();
+    if (currentMode) {
+      setDarkMode(currentMode === "dark");
+    }
+
+    // Fix 3: Robust listener to handle the 'null' state report from Android
     const listener = Appearance.addChangeListener(({ colorScheme }) => {
-      setDarkMode(colorScheme === "dark");
+      if (colorScheme) { // Guard against null/undefined
+        setDarkMode(colorScheme === "dark");
+      }
     });
 
     return () => listener.remove();
   }, []);
 
-  // Manual toggle (optional — overrides system until next app restart)
   const toggleDarkMode = () => {
     setDarkMode((prev) => !prev);
   };
@@ -62,7 +74,14 @@ export const ThemeProvider = ({ children }) => {
   const theme = darkMode ? darkTheme : lightTheme;
 
   return (
-    <ThemeContext.Provider value={{ darkMode, theme, toggleDarkMode }}>
+    <ThemeContext.Provider 
+      value={{ 
+        darkMode, 
+        isDarkMode: darkMode, // Added this so App.js finds the key it expects
+        theme, 
+        toggleDarkMode 
+      }}
+    >
       {children}
     </ThemeContext.Provider>
   );

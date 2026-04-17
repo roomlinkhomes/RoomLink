@@ -334,50 +334,6 @@ exports.paystackWebhook = functions.https.onRequest(async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// REPORT SYSTEM
-// ──────────────────────────────────────────────
-exports.reportListing = functions.https.onCall(async (data, context) => {
-  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Login required");
-
-  const reporterId = context.auth.uid;
-  const { listingId, reason, comment, imageUrl } = data;
-
-  const listingRef = db.doc(`listings/${listingId}`);
-
-  return db.runTransaction(async (tx) => {
-    const dup = await tx.get(
-      db.collection("reports").where("listingId", "==", listingId).where("reporterId", "==", reporterId).limit(1)
-    );
-
-    if (!dup.empty) throw new functions.https.HttpsError("already-exists", "Already reported");
-
-    const reportsSnap = await tx.get(db.collection("reports").where("listingId", "==", listingId));
-    const newCount = reportsSnap.size + 1;
-
-    const reportRef = db.collection("reports").doc();
-    tx.set(reportRef, {
-      listingId,
-      reporterId,
-      reason,
-      comment: comment || null,
-      imageUrl: imageUrl || null,
-      reportedAt: admin.firestore.FieldValue.serverTimestamp(),
-      status: "pending",
-    });
-
-    if (newCount >= 7) {
-      tx.update(listingRef, {
-        hidden: true,
-        hiddenAt: admin.firestore.FieldValue.serverTimestamp(),
-        hiddenReason: "too_many_reports",
-      });
-    }
-
-    return { success: true };
-  });
-});
-
-// ──────────────────────────────────────────────
 // CHAT PUSH NOTIFICATIONS (using fcmToken)
 // ──────────────────────────────────────────────
 exports.sendChatNotification = functions
@@ -524,8 +480,8 @@ exports.notifyOnNewComment = functions
   });
 
 // ──────────────────────────────────────────────
-// EVENT SCHEDULING NOTIFICATION (NEW)
-// Sends push to host when tenant schedules an event
+// // ──────────────────────────────────────────────
+// EVENT SCHEDULING NOTIFICATION — ONLY TO HOST
 // ──────────────────────────────────────────────
 exports.notifyHostOnEventSchedule = functions
   .region("europe-west2")
@@ -582,6 +538,7 @@ exports.notifyHostOnEventSchedule = functions
           listingId,
           tenantId,
           phoneNumber: phoneNumber || "Not provided",
+          screen: "Notification",   // or whatever screen you use for notifications
         },
         android: { priority: "high" },
         apns: { headers: { "apns-priority": "10" } },
@@ -589,25 +546,10 @@ exports.notifyHostOnEventSchedule = functions
       };
 
       await admin.messaging().send(payload);
-      console.log(`Event schedule notification sent to host ${hostId} for event ${eventId}`);
+      console.log(`✅ Event notification sent ONLY to host ${hostId} for event ${eventId}`);
 
-      // Optional: Confirmation to tenant
-      const tenantSnap = await db.doc(`users/${tenantId}`).get();
-      const tenantToken = tenantSnap.data()?.fcmToken;
+      // NO tenant confirmation push here anymore
 
-      if (tenantToken) {
-        const tenantPayload = {
-          notification: {
-            title: "Event Request Sent",
-            body: `Your viewing request for "${listingTitle}" has been sent to the host!`,
-          },
-          data: { type: "event_sent", eventId },
-          android: { priority: "high" },
-          token: tenantToken,
-        };
-        await admin.messaging().send(tenantPayload);
-        console.log(`Confirmation sent to tenant ${tenantId}`);
-      }
     } catch (error) {
       console.error("Event notification error:", error.code, error.message);
 
@@ -616,7 +558,6 @@ exports.notifyHostOnEventSchedule = functions
         await db.doc(`users/${hostId}`).update({
           fcmToken: admin.firestore.FieldValue.delete()
         });
-        console.log(`Removed invalid fcmToken for host ${hostId}`);
       }
     }
 

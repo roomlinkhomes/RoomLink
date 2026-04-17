@@ -1,4 +1,4 @@
-// screens/Conversation.jsx — FIXED: Re-fetch conversations on real auth user change
+// screens/Conversation.jsx
 import React, { useState, useEffect, useCallback, useContext } from "react";
 import {
   View,
@@ -17,7 +17,7 @@ import {
   RefreshControl,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { AuthContext } from "../context/AuthContext"; // ← FIXED: real auth user
+import { AuthContext } from "../context/AuthContext";
 import {
   collection,
   query,
@@ -34,10 +34,13 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+
 // SVG Badges
 import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
 import RedBadge from "../assets/icons/red.svg";
+
+import Trust from "../component/Trust";
 import { Ionicons } from "@expo/vector-icons";
 
 // ── HELPERS ─────────────────────────────────────────────
@@ -53,19 +56,23 @@ const getFullName = (userData) => {
 
 const formatTimeAgo = (timestamp) => {
   if (!timestamp) return "";
-  const seconds = Math.floor((Date.now() - timestamp.toMillis()) / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d`;
-  return `${Math.floor(seconds / 604800)}w`;
+  try {
+    const date = timestamp?.toDate ? timestamp.toDate() : new Date(timestamp);
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d`;
+    return `${Math.floor(seconds / 604800)}w`;
+  } catch (e) {
+    return "";
+  }
 };
 
-// Cache
 const userCache = new Map();
 
 const fetchRealUser = async (uid) => {
-  if (!uid) return { name: "User", photo: null, verificationType: null };
+  if (!uid) return { name: "User", photo: null, verificationType: null, isVerified: false };
   if (userCache.has(uid)) return userCache.get(uid);
 
   try {
@@ -76,6 +83,7 @@ const fetchRealUser = async (uid) => {
         name: getFullName(data),
         photo: data.photoURL || data.profileImage || data.avatar || null,
         verificationType: data.verificationType || null,
+        isVerified: data.isVerified === true,        // ← Clean & Reliable
       };
       userCache.set(uid, profile);
       return profile;
@@ -84,26 +92,25 @@ const fetchRealUser = async (uid) => {
     console.error("Error fetching user:", err);
   }
 
-  const fallback = { name: "User", photo: null, verificationType: null };
+  const fallback = { name: "User", photo: null, verificationType: null, isVerified: false };
   userCache.set(uid, fallback);
   return fallback;
 };
 
-// Badge
 const VerificationBadge = ({ type }) => {
   if (!type) return null;
-  const badgeStyle = { marginLeft: 8 };
-  if (type === "vendor") return <YellowBadge width={24} height={24} style={badgeStyle} />;
-  if (type === "studentLandlord") return <BlueBadge width={24} height={24} style={badgeStyle} />;
-  if (type === "realEstate") return <RedBadge width={24} height={24} style={badgeStyle} />;
+  const badgeStyle = { marginLeft: 6 };
+  if (type === "vendor") return <YellowBadge width={22} height={22} style={badgeStyle} />;
+  if (type === "studentLandlord") return <BlueBadge width={22} height={22} style={badgeStyle} />;
+  if (type === "realEstate") return <RedBadge width={22} height={22} style={badgeStyle} />;
   return null;
 };
 
 // ── MAIN COMPONENT ─────────────────────────────────────
 export default function Conversation() {
   const navigation = useNavigation();
-  const { user: authUser } = useContext(AuthContext); // ← FIXED: real logged-in user
-  const userId = authUser?.uid; // ← use uid directly
+  const { user: authUser } = useContext(AuthContext);
+  const userId = authUser?.uid;
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
 
@@ -115,21 +122,13 @@ export default function Conversation() {
   const [selectedConvo, setSelectedConvo] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Debug log
-  useEffect(() => {
-    console.log('[CONVERSATION DEBUG] Auth user:', authUser ? authUser.uid : 'NO USER');
-  }, [authUser]);
-
-  // Pinned/Archived listener — re-run on userId change
+  // Pinned/Archived listener
   useEffect(() => {
     if (!userId) {
       setPinnedConvos([]);
       setArchivedConvos([]);
       return;
     }
-
-    console.log('[CONVERSATION] Fetching pinned/archived settings for UID:', userId);
-
     const settingsRef = doc(db, "users", userId, "settings", "conversations");
     const unsub = onSnapshot(settingsRef, (snap) => {
       if (snap.exists()) {
@@ -141,11 +140,9 @@ export default function Conversation() {
         setArchivedConvos([]);
       }
     });
-
     return unsub;
   }, [userId]);
 
-  // Update settings (unchanged)
   const updateConvoSettings = async (field, convoKey, add = true) => {
     if (!userId) return;
     const settingsRef = doc(db, "users", userId, "settings", "conversations");
@@ -160,18 +157,10 @@ export default function Conversation() {
     }
   };
 
-  // Modal handlers (unchanged)
   const handlePin = async () => {
     if (!selectedConvo) return;
     const isPinned = pinnedConvos.includes(selectedConvo.convoKey);
     await updateConvoSettings("pinned", selectedConvo.convoKey, !isPinned);
-    setModalVisible(false);
-  };
-
-  const handleArchive = async () => {
-    if (!selectedConvo) return;
-    const isArchived = archivedConvos.includes(selectedConvo.convoKey);
-    await updateConvoSettings("archived", selectedConvo.convoKey, !isArchived);
     setModalVisible(false);
   };
 
@@ -197,17 +186,15 @@ export default function Conversation() {
           style: "destructive",
           onPress: async () => {
             try {
-              const q = query(
-                collection(db, "messages"),
-                where("listingId", "==", selectedConvo.listingId)
-              );
+              const q = query(collection(db, "messages"), where("listingId", "==", selectedConvo.listingId));
               const snap = await getDocs(q);
               const batch = writeBatch(db);
               snap.forEach((d) => batch.delete(d.ref));
               await batch.commit();
               setConversations((prev) => prev.filter((c) => c.convoKey !== selectedConvo.convoKey));
             } catch (err) {
-              Alert.alert("Error", "Failed to delete");
+              console.error("Delete error:", err);
+              Alert.alert("Error", "Failed to delete conversation");
             }
             setModalVisible(false);
           },
@@ -221,64 +208,62 @@ export default function Conversation() {
     setModalVisible(true);
   };
 
-  // FIXED: Instant navigation + background read marking
   const openChat = useCallback((item) => {
-    console.log("🟢 Opening chat:", item.convoKey, "listingId:", item.listingId);
+    if (!item?.listingId || !item?.otherUserId) {
+      Alert.alert("Error", "Missing conversation data");
+      return;
+    }
 
-    // 1. Optimistic UI: remove unread badge immediately
     setConversations((prev) =>
       prev.map((c) =>
         c.convoKey === item.convoKey ? { ...c, unreadCount: 0 } : c
       )
     );
 
-    // 2. Navigate INSTANTLY
-    navigation.navigate("Message", {
-      listingId: item.listingId,
-      listingOwnerId: item.otherUserId,
-      otherUserName: item.otherUserName,
-      otherUserPhoto: item.otherUserPhoto,
-    });
+    const serializableListing = {
+      id: item.listingId,
+      title: item.listingTitle || "Property Listing",
+      images: Array.isArray(item.listingImages) && item.listingImages.length > 0
+        ? item.listingImages
+        : [],
+      priceMonthly: item.priceMonthly || null,
+      priceYearly: item.priceYearly || null,
+      location: item.location || "Location not specified",
+      description: "",
+      category: null,
+      rented: false,
+      userId: item.otherUserId,
+    };
 
-    // 3. Mark messages as read in background
-    Promise.resolve().then(async () => {
-      try {
-        const unreadQuery = query(
-          collection(db, "messages"),
-          where("listingId", "==", item.listingId),
-          where("receiverId", "==", userId),
-          where("readBy", "not-in", [userId])
-        );
-
-        const snapshot = await getDocs(unreadQuery);
-        console.log("📩 Background: Found", snapshot.size, "unread messages");
-
-        if (!snapshot.empty) {
-          const batch = writeBatch(db);
-          snapshot.docs.forEach((docSnap) => {
-            batch.update(docSnap.ref, {
-              readBy: arrayUnion(userId),
-            });
-          });
-          await batch.commit();
-          console.log("✅ Background: Marked", snapshot.size, "messages as read");
-        }
-      } catch (error) {
-        console.warn("⚠️ Background mark-as-read failed:", error);
-      }
+    navigation.navigate("HomeTabs", {
+      screen: "Messages",
+      params: {
+        screen: "Message",
+        params: {
+          listingId: item.listingId,
+          listingOwnerId: item.otherUserId,
+          tenantId: userId || "",
+          listingTitle: item.listingTitle || "Listing",
+          listing: serializableListing,
+          ownerInfo: {
+            uid: item.otherUserId,
+            name: item.otherUserName || "User",
+            avatar: item.otherUserPhoto,
+            isVerified: item.isVerified,
+            verificationType: item.verificationType,
+          },
+        },
+      },
     });
   }, [navigation, userId]);
 
-  // FIXED: Load conversations with real auth dependency
+  // Load conversations
   const loadConversations = useCallback(() => {
     if (!userId) {
-      console.log('[CONVERSATION] No userId → clearing conversations');
       setConversations([]);
       setLoading(false);
       return () => {};
     }
-
-    console.log('[CONVERSATION] Loading conversations for UID:', userId);
 
     const convoMap = new Map();
 
@@ -292,10 +277,8 @@ export default function Conversation() {
         if (!otherUserId) return;
 
         const convoKey = `${msg.listingId}_${otherUserId}`;
-
         const readBy = msg.readBy || [];
         const isUnread = !isSender && !readBy.includes(userId);
-        const unreadCount = isUnread ? 1 : 0;
 
         if (!convoMap.has(convoKey)) {
           convoMap.set(convoKey, {
@@ -304,47 +287,51 @@ export default function Conversation() {
             otherUserId,
             lastMessage: msg.imageUrl ? "Photo" : msg.content || "Start chatting...",
             lastMessageTime: msg.createdAt,
-            unreadCount,
+            unreadCount: isUnread ? 1 : 0,
+            listingTitle: msg.listingTitle,
+            priceMonthly: msg.priceMonthly,
+            priceYearly: msg.priceYearly,
+            location: msg.location,
+            listingImages: msg.images || msg.listingImages || [],
           });
         } else {
           const existing = convoMap.get(convoKey);
-          if (msg.createdAt.toMillis() > existing.lastMessageTime.toMillis()) {
+          const newTime = msg.createdAt?.toMillis?.() || 0;
+          const existingTime = existing.lastMessageTime?.toMillis?.() || 0;
+
+          if (newTime > existingTime) {
             existing.lastMessageTime = msg.createdAt;
             existing.lastMessage = msg.imageUrl ? "Photo" : msg.content || "Start chatting...";
           }
-          existing.unreadCount += unreadCount;
+          if (isUnread) existing.unreadCount += 1;
         }
       });
 
       const convos = await Promise.all(
         Array.from(convoMap.values()).map(async (c) => {
-          const { name, photo, verificationType } = await fetchRealUser(c.otherUserId);
-          return { ...c, otherUserName: name, otherUserPhoto: photo, verificationType };
+          const { name, photo, verificationType, isVerified } = await fetchRealUser(c.otherUserId);
+          return {
+            ...c,
+            otherUserName: name,
+            otherUserPhoto: photo,
+            verificationType,
+            isVerified,
+          };
         })
       );
 
       let filtered = convos.filter((c) => !archivedConvos.includes(c.convoKey));
-      filtered.sort((a, b) => b.lastMessageTime.toMillis() - a.lastMessageTime.toMillis());
+      filtered.sort((a, b) => (b.lastMessageTime?.toMillis?.() || 0) - (a.lastMessageTime?.toMillis?.() || 0));
 
       const pinned = filtered.filter((c) => pinnedConvos.includes(c.convoKey));
       const unpinned = filtered.filter((c) => !pinnedConvos.includes(c.convoKey));
 
       setConversations([...pinned, ...unpinned]);
       setLoading(false);
-      console.log('[CONVERSATION] Loaded conversations count:', filtered.length);
     };
 
-    const sentQuery = query(
-      collection(db, "messages"),
-      where("senderId", "==", userId),
-      orderBy("createdAt", "desc")
-    );
-
-    const receivedQuery = query(
-      collection(db, "messages"),
-      where("receiverId", "==", userId),
-      orderBy("createdAt", "desc")
-    );
+    const sentQuery = query(collection(db, "messages"), where("senderId", "==", userId), orderBy("createdAt", "desc"));
+    const receivedQuery = query(collection(db, "messages"), where("receiverId", "==", userId), orderBy("createdAt", "desc"));
 
     const unsubSent = onSnapshot(sentQuery, processSnapshot);
     const unsubReceived = onSnapshot(receivedQuery, processSnapshot);
@@ -355,7 +342,6 @@ export default function Conversation() {
     };
   }, [userId, pinnedConvos, archivedConvos]);
 
-  // FIXED: Re-run loadConversations when userId changes
   useEffect(() => {
     const cleanup = loadConversations();
     return cleanup;
@@ -363,11 +349,8 @@ export default function Conversation() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    const cleanup = loadConversations();
-    setTimeout(() => {
-      setRefreshing(false);
-      if (cleanup) cleanup();
-    }, 1000);
+    loadConversations();
+    setTimeout(() => setRefreshing(false), 1200);
   };
 
   const renderItem = ({ item }) => {
@@ -384,52 +367,53 @@ export default function Conversation() {
       >
         <Image
           source={{
-            uri:
-              item.otherUserPhoto ||
-              `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                item.otherUserName
-              )}&background=${isDark ? "1a1a1a" : "f5f5f5"}&color=${
-                isDark ? "0df9a0" : "017a6b"
-              }&bold=true&size=100`,
+            uri: item.otherUserPhoto ||
+              `https://ui-avatars.com/api/?name=${encodeURIComponent(item.otherUserName)}&background=${isDark ? "1a1a1a" : "f5f5f5"}&color=${isDark ? "0df9a0" : "017a6b"}&bold=true&size=100`,
           }}
           style={styles.avatar}
         />
+
         <View style={styles.content}>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Text style={[styles.name, { color: isDark ? "#fff" : "#000" }]}>
+          <View style={styles.nameRow}>
+            <Text 
+              style={[styles.name, { color: isDark ? "#fff" : "#000" }]}
+              numberOfLines={1}
+            >
               {item.otherUserName}
             </Text>
+
+            {/* FIXED: Correct Trust Badge Usage */}
+            {item.isVerified && <Trust text="Verified Host" />}
+
             <VerificationBadge type={item.verificationType} />
           </View>
+
           <Text
             style={[
               styles.preview,
               hasUnread && styles.previewBold,
-              {
-                color: hasUnread
-                  ? isDark ? "#fff" : "#000"
-                  : isDark ? "#aaa" : "#666",
-              },
+              { color: hasUnread ? (isDark ? "#fff" : "#000") : (isDark ? "#aaa" : "#666") },
             ]}
             numberOfLines={1}
           >
             {item.lastMessage}
           </Text>
         </View>
+
         <View style={styles.right}>
           {isPinned && (
-            <Ionicons
-              name="pin"
-              size={16}
-              color="#0df9a0"
-              style={{ transform: [{ rotate: "45deg" }], marginBottom: 4 }}
+            <Ionicons 
+              name="pin" 
+              size={16} 
+              color="#0df9a0" 
+              style={{ transform: [{ rotate: "45deg" }], marginBottom: 4 }} 
             />
           )}
           <Text style={[styles.time, { color: isDark ? "#888" : "#777" }]}>
             {formatTimeAgo(item.lastMessageTime)}
           </Text>
           {hasUnread && (
-            <View style={styles.badge}>
+            <View style={styles.unreadBadge}>
               <Text style={styles.badgeText}>
                 {item.unreadCount > 99 ? "99+" : item.unreadCount}
               </Text>
@@ -443,21 +427,19 @@ export default function Conversation() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? "#000" : "#fff" }}>
       <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+
       <View style={styles.header}>
         <Text style={[styles.title, { color: isDark ? "#fff" : "#000" }]}>Messages</Text>
       </View>
+
       {loading ? (
         <View style={{ flex: 1, justifyContent: "center" }}>
           <ActivityIndicator size="large" color={isDark ? "#0df9a0" : "#017a6b"} />
         </View>
       ) : conversations.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={[styles.emptyTitle, { color: isDark ? "#888" : "#666" }]}>
-            No messages yet
-          </Text>
-          <Text style={[styles.emptySubtitle, { color: isDark ? "#555" : "#888" }]}>
-            Start a conversation!
-          </Text>
+          <Text style={[styles.emptyTitle, { color: isDark ? "#888" : "#666" }]}>No messages yet</Text>
+          <Text style={[styles.emptySubtitle, { color: isDark ? "#555" : "#888" }]}>Start a conversation!</Text>
         </View>
       ) : (
         <FlatList
@@ -466,15 +448,11 @@ export default function Conversation() {
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingTop: 8 }}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-            />
-          }
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         />
       )}
-      {/* LONG PRESS MODAL */}
+
+      {/* Options Modal */}
       <Modal
         visible={modalVisible}
         transparent
@@ -484,28 +462,21 @@ export default function Conversation() {
         <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContent, { backgroundColor: isDark ? "#111" : "#fff" }]}>
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={() => setModalVisible(false)}
-              >
+              <TouchableOpacity style={styles.closeButton} onPress={() => setModalVisible(false)}>
                 <Text style={styles.closeText}>✕</Text>
               </TouchableOpacity>
               <View style={styles.modalHandle} />
+
               <TouchableOpacity style={styles.modalItem} onPress={handlePin}>
                 <Text style={[styles.modalText, { color: isDark ? "#fff" : "#000" }]}>
                   {pinnedConvos.includes(selectedConvo?.convoKey) ? "Unpin" : "Pin"} Conversation
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalItem} onPress={handleArchive}>
-                <Text style={[styles.modalText, { color: isDark ? "#fff" : "#000" }]}>
-                  {archivedConvos.includes(selectedConvo?.convoKey) ? "Unarchive" : "Archive"}
-                </Text>
-              </TouchableOpacity>
+
               <TouchableOpacity style={styles.modalItem} onPress={handleMarkUnread}>
-                <Text style={[styles.modalText, { color: isDark ? "#fff" : "#000" }]}>
-                  Mark as unread
-                </Text>
+                <Text style={[styles.modalText, { color: isDark ? "#fff" : "#000" }]}>Mark as unread</Text>
               </TouchableOpacity>
+
               <TouchableOpacity style={[styles.modalItem, styles.deleteItem]} onPress={handleDelete}>
                 <Text style={{ color: "#ef4444", fontWeight: "600", fontSize: 16 }}>
                   Delete Conversation
@@ -519,90 +490,126 @@ export default function Conversation() {
   );
 }
 
-// ── STYLES ───────────────────────────────────────────── (unchanged)
+// ── STYLES ─────────────────────────────────────────────
 const styles = StyleSheet.create({
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 1,
-    paddingBottom: 12,
+  header: { 
+    paddingHorizontal: 20, 
+    paddingTop: 10, 
+    paddingBottom: 12 
   },
-  title: { fontSize: 34, fontWeight: "800" },
-  thread: {
+  title: { 
+    fontSize: 34, 
+    fontWeight: "800" 
+  },
+  thread: { 
+    flexDirection: "row", 
+    paddingHorizontal: 16, 
+    paddingVertical: 14, 
+    alignItems: "center" 
+  },
+  avatar: { 
+    width: 56, 
+    height: 56, 
+    borderRadius: 28 
+  },
+  content: { 
+    flex: 1, 
+    marginLeft: 14 
+  },
+  nameRow: {
     flexDirection: "row",
-    paddingHorizontal: 16,
-    paddingVertical: 11,
     alignItems: "center",
+    flexWrap: "wrap",
+    gap: 5,
   },
-  avatar: { width: 56, height: 56, borderRadius: 28 },
-  content: { flex: 1, marginLeft: 14 },
-  name: { fontSize: 16.5, fontWeight: "600" },
-  preview: { fontSize: 14.5, marginTop: 2 },
-  previewBold: { fontWeight: "600" },
-  right: {
-    alignItems: "flex-end",
-    justifyContent: "center",
-    width: 70,
+  name: { 
+    fontSize: 16.5, 
+    fontWeight: "600",
+    flexShrink: 1,
   },
-  time: { fontSize: 12.5 },
-  badge: {
-    backgroundColor: "#0df9a0",
-    minWidth: 21,
-    height: 21,
-    borderRadius: 10.5,
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: 4,
+  preview: { 
+    fontSize: 14.5, 
+    marginTop: 3 
   },
-  badgeText: { color: "#000", fontWeight: "bold", fontSize: 11 },
-  empty: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 40,
+  previewBold: { 
+    fontWeight: "600" 
   },
-  emptyTitle: { fontSize: 18, fontWeight: "600", marginBottom: 8 },
-  emptySubtitle: { fontSize: 14 },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
+  right: { 
+    alignItems: "flex-end", 
+    justifyContent: "center", 
+    width: 72 
   },
-  modalContent: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 30,
-    position: "relative",
+  time: { 
+    fontSize: 12.5 
   },
-  modalHandle: {
-    width: 40,
-    height: 5,
-    backgroundColor: "#666",
-    borderRadius: 3,
-    alignSelf: "center",
-    marginBottom: 20,
+  unreadBadge: { 
+    backgroundColor: "#0df9a0", 
+    minWidth: 21, 
+    height: 21, 
+    borderRadius: 10.5, 
+    justifyContent: "center", 
+    alignItems: "center", 
+    marginTop: 4 
   },
-  closeButton: {
-    position: "absolute",
-    top: 16,
-    right: 20,
-    zIndex: 10,
-    padding: 8,
+  badgeText: { 
+    color: "#000", 
+    fontWeight: "bold", 
+    fontSize: 11 
   },
-  closeText: {
-    fontSize: 16,
-    color: "#888",
+  empty: { 
+    flex: 1, 
+    justifyContent: "center", 
+    alignItems: "center", 
+    paddingHorizontal: 40 
   },
-  modalItem: {
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#333",
+  emptyTitle: { 
+    fontSize: 18, 
+    fontWeight: "600", 
+    marginBottom: 8 
   },
-  modalText: {
-    fontSize: 17,
+  emptySubtitle: { 
+    fontSize: 14 
   },
-  deleteItem: {
-    marginTop: 10,
+  modalOverlay: { 
+    flex: 1, 
+    backgroundColor: "rgba(0,0,0,0.5)", 
+    justifyContent: "flex-end" 
+  },
+  modalContent: { 
+    borderTopLeftRadius: 24, 
+    borderTopRightRadius: 24, 
+    paddingHorizontal: 20, 
+    paddingTop: 20, 
+    paddingBottom: 30 
+  },
+  modalHandle: { 
+    width: 40, 
+    height: 5, 
+    backgroundColor: "#666", 
+    borderRadius: 3, 
+    alignSelf: "center", 
+    marginBottom: 20 
+  },
+  closeButton: { 
+    position: "absolute", 
+    top: 16, 
+    right: 20, 
+    zIndex: 10, 
+    padding: 8 
+  },
+  closeText: { 
+    fontSize: 16, 
+    color: "#888" 
+  },
+  modalItem: { 
+    paddingVertical: 16, 
+    borderBottomWidth: StyleSheet.hairlineWidth, 
+    borderBottomColor: "#333" 
+  },
+  modalText: { 
+    fontSize: 17 
+  },
+  deleteItem: { 
+    marginTop: 10 
   },
 });

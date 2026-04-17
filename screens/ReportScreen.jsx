@@ -1,5 +1,6 @@
-// screens/ReportScreen.jsx
-import React, { useState, useContext, useEffect } from "react";
+// screens/ReportScreen.jsx - FINAL FIXED VERSION (Supports General Reports)
+
+import React, { useState, useContext } from "react";
 import {
   View,
   Text,
@@ -25,19 +26,16 @@ export default function ReportScreen() {
   const { user: currentUser } = useContext(UserContext);
   const isDark = useColorScheme() === "dark";
 
-  const { listingId: rawListingId, listingTitle = "This listing" } = route.params || {};
-  const listingId = rawListingId;
+  // Get params - support both listing reports and general reports from HelpSupport
+  const { 
+    listingId, 
+    listingTitle = "General Report", 
+    isGeneralReport = false 
+  } = route.params || {};
 
   const [selectedReason, setSelectedReason] = useState("");
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (!listingId) {
-      Alert.alert("Error", "Invalid listing.");
-      navigation.goBack();
-    }
-  }, [listingId, navigation]);
 
   const reasonsList = [
     "Fake / Scam Listing",
@@ -59,15 +57,10 @@ export default function ReportScreen() {
       return Alert.alert("Required", "Please explain the issue.");
     }
 
-    // Get UID with multiple fallbacks
     const uid = currentUser?.uid || auth.currentUser?.uid;
 
     if (!uid) {
-      Alert.alert(
-        "Not Ready",
-        "Please wait a moment and try again.",
-        [{ text: "OK" }]
-      );
+      Alert.alert("Not Ready", "Please wait a moment and try again.");
       return;
     }
 
@@ -76,8 +69,9 @@ export default function ReportScreen() {
     try {
       await addDoc(collection(db, "reports"), {
         reporterId: uid,
-        reportedListingId: listingId,
+        reportedListingId: listingId || null,        // null = general report
         reportedListingTitle: listingTitle,
+        isGeneralReport: isGeneralReport,
         reason: selectedReason,
         details: comment.trim() || null,
         timestamp: serverTimestamp(),
@@ -97,8 +91,6 @@ export default function ReportScreen() {
     }
   };
 
-  if (!listingId) return null;
-
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: isDark ? "#121212" : "#fafafa" }]}>
       <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
@@ -113,21 +105,24 @@ export default function ReportScreen() {
 
           <View style={styles.headerContent}>
             <Text style={[styles.pageTitle, { color: isDark ? "#e0e0e0" : "#1a1a1a" }]}>
-              Report Listing
+              {isGeneralReport ? "Report a Problem" : "Report Listing"}
             </Text>
             <Text style={[styles.subtitle, { color: isDark ? "#b0b0b0" : "#666" }]}>
-              Help us keep RoomLink safe
+              {isGeneralReport ? "Help us improve RoomLink" : "Help us keep RoomLink safe"}
             </Text>
           </View>
 
           <View style={{ width: 48 }} />
         </View>
 
-        <View style={styles.titleCard}>
-          <Text style={[styles.listingTitle, { color: isDark ? "#e0e0e0" : "#1a1a1a" }]}>
-            {listingTitle}
-          </Text>
-        </View>
+        {/* Show listing title only for listing reports */}
+        {!isGeneralReport && listingId && (
+          <View style={styles.titleCard}>
+            <Text style={[styles.listingTitle, { color: isDark ? "#e0e0e0" : "#1a1a1a" }]}>
+              {listingTitle}
+            </Text>
+          </View>
+        )}
 
         <View style={styles.card}>
           <Text style={[styles.sectionTitle, { color: isDark ? "#e0e0e0" : "#1a1a1a" }]}>
@@ -163,6 +158,7 @@ export default function ReportScreen() {
               placeholder="Explain the issue..."
               placeholderTextColor={isDark ? "#666" : "#999"}
               multiline
+              numberOfLines={4}
               value={comment}
               onChangeText={setComment}
             />

@@ -1,4 +1,4 @@
-// components/SearchHeader.jsx — FIXED & polished (stable animation, safe notch handling)
+// components/SearchHeader.jsx — Modern Redesigned Version
 import React, { useState, useRef, useEffect } from "react";
 import {
   View,
@@ -15,7 +15,7 @@ import { useNavigation, useRoute, useTheme } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 
 const { width } = Dimensions.get("window");
-const STATUS_BAR_HEIGHT = Platform.OS === "android" ? StatusBar.currentHeight || 24 : 0;
+const STATUS_BAR_HEIGHT = Platform.OS === "android" ? StatusBar.currentHeight || 24 : 44;
 
 export default function SearchHeader() {
   const navigation = useNavigation();
@@ -23,43 +23,47 @@ export default function SearchHeader() {
   const { dark } = useTheme();
 
   const initialQuery = route.params?.query || "";
+  
   const [query, setQuery] = useState(initialQuery);
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(!!initialQuery);
 
-  const searchAnim = useRef(new Animated.Value(0)).current;
+  const searchAnim = useRef(new Animated.Value(!!initialQuery ? 1 : 0)).current;
   const inputRef = useRef(null);
 
+  // Handle initial query from navigation params
   useEffect(() => {
     if (initialQuery) {
-      setSearchOpen(true);
+      setIsExpanded(true);
       searchAnim.setValue(1);
       setQuery(initialQuery);
-      setTimeout(() => inputRef.current?.focus(), 100);
+      setTimeout(() => inputRef.current?.focus(), 150);
     }
   }, [initialQuery]);
 
   const handleChange = (text) => {
     setQuery(text);
-    navigation.setParams({ query: text || undefined });
+    navigation.setParams({ query: text.trim() || undefined });
   };
 
   const toggleSearch = () => {
-    if (searchOpen) {
+    if (isExpanded) {
+      // Collapse
       Keyboard.dismiss();
       Animated.timing(searchAnim, {
         toValue: 0,
-        duration: 250,
-        useNativeDriver: false, // Required for width & opacity animation
+        duration: 280,
+        useNativeDriver: false,
       }).start(() => {
-        setSearchOpen(false);
+        setIsExpanded(false);
         setQuery("");
         navigation.setParams({ query: undefined });
       });
     } else {
-      setSearchOpen(true);
+      // Expand
+      setIsExpanded(true);
       Animated.timing(searchAnim, {
         toValue: 1,
-        duration: 250,
+        duration: 280,
         useNativeDriver: false,
       }).start(() => {
         inputRef.current?.focus();
@@ -67,55 +71,55 @@ export default function SearchHeader() {
     }
   };
 
+  // Animations
   const searchWidth = searchAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, width - 160], // Safe width to avoid notch + icons
+    outputRange: [0, width - 110], // Good balance for icon + padding
   });
 
-  const containerOpacity = searchAnim.interpolate({
-    inputRange: [0, 0.3],
-    outputRange: [0, 1],
+  const searchOpacity = searchAnim.interpolate({
+    inputRange: [0, 0.4, 1],
+    outputRange: [0, 0.3, 1],
   });
 
   return (
-    <View
-      style={[
-        styles.container,
-        { paddingTop: STATUS_BAR_HEIGHT }, // Pushes below status bar/notch
-      ]}
-    >
-      {/* Expanding search input */}
+    <View style={[styles.container, { paddingTop: STATUS_BAR_HEIGHT }]}>
+      {/* Expanding Search Bar */}
       <Animated.View
         style={[
           styles.searchContainer,
           {
             width: searchWidth,
-            opacity: containerOpacity,
-            backgroundColor: dark ? "#222" : "#f8f8f8",
-            borderWidth: 1.5,
-            borderColor: dark ? "#444" : "#000",
+            opacity: searchOpacity,
+            backgroundColor: dark ? "#1f1f1f" : "#f5f5f5",
+            borderColor: dark ? "#444" : "#ddd",
           },
         ]}
       >
         <RNTextInput
           ref={inputRef}
-          placeholder="Search homes, listings..."
-          placeholderTextColor={dark ? "#aaa" : "#777"}
-          style={[styles.searchInput, { color: dark ? "#fff" : "#000" }]}
+          placeholder="Search homes, listings, vendors..."
+          placeholderTextColor={dark ? "#888" : "#666"}
+          style={[styles.searchInput, { color: dark ? "#fff" : "#111" }]}
           value={query}
           onChangeText={handleChange}
-          autoFocus={false}
           returnKeyType="search"
           onSubmitEditing={() => Keyboard.dismiss()}
+          clearButtonMode="while-editing"
         />
       </Animated.View>
 
-      {/* Search / Close icon */}
-      <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.iconArea}>
+      {/* Search / Close Button */}
+      <TouchableOpacity
+        onPress={toggleSearch}
+        activeOpacity={0.7}
+        style={styles.iconButton}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      >
         <Ionicons
-          name={searchOpen ? "close" : "search"}
-          size={26}
-          color={dark ? "#fff" : "#000"}
+          name={isExpanded ? "close" : "search"}
+          size={24}
+          color={dark ? "#ffffff" : "#1a1a1a"}
         />
       </TouchableOpacity>
     </View>
@@ -128,30 +132,37 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingBottom: 12,
     backgroundColor: "transparent",
+    height: 70, // Enough space for status bar + content
   },
   searchContainer: {
     position: "absolute",
-    right: 70, // Clears back arrow + icon space
-    height: 44,
-    borderRadius: 22,
-    paddingHorizontal: 16,
+    right: 68,
+    height: 48,
+    borderRadius: 24,
+    paddingHorizontal: 18,
     justifyContent: "center",
-    overflow: "hidden",
+    borderWidth: 1.2,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowRadius: 4,
+    elevation: 3,
+    overflow: "hidden",
   },
   searchInput: {
-    fontSize: 16,
-    height: "100%",
-    width: "100%",
-    paddingLeft: 8,
+    fontSize: 16.5,
+    flex: 1,
+    paddingVertical: 0,
+    includeFontPadding: false,
   },
-  iconArea: {
-    padding: 8,
+  iconButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 22,
+    backgroundColor: "transparent",
   },
 });

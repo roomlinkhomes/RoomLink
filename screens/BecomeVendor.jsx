@@ -1,5 +1,5 @@
 // screens/BecomeVendorScreen.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -23,7 +23,13 @@ import * as ImagePicker from "expo-image-picker";
 
 // Firebase
 import { auth, db } from "../firebaseConfig";
-import { doc, setDoc, onSnapshot, updateDoc } from "firebase/firestore";
+import {
+  doc,
+  setDoc,
+  onSnapshot,
+  updateDoc,
+  getDoc,        // ← Added
+} from "firebase/firestore";
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 const BANK_CODES = {
@@ -93,10 +99,13 @@ export default function BecomeVendorScreen() {
   const [isEditing, setIsEditing] = useState(false);
 
   const storage = getStorage();
+  const snapshotUnsubRef = useRef(null); // To safely cleanup snapshot
 
-  // Real-time listener for vendor application
+  // Real-time listener for vendor application + manual fallback
   useEffect(() => {
-    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+    let authUnsub;
+
+    authUnsub = auth.onAuthStateChanged(async (user) => {
       if (!user) {
         setStatus("error");
         setErrorMsg("Please sign in to continue.");
@@ -105,56 +114,90 @@ export default function BecomeVendorScreen() {
 
       const appRef = doc(db, "vendorApplications", user.uid);
 
-      const unsubSnap = onSnapshot(appRef, (docSnap) => {
+      // Clean previous snapshot if exists
+      if (snapshotUnsubRef.current) {
+        snapshotUnsubRef.current();
+      }
+
+      // Real-time listener
+      snapshotUnsubRef.current = onSnapshot(
+        appRef,
+        (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setStatus(data.status || "pending");
+            setRole(data.role || "Host");
+            setFullName(data.fullName || "");
+            setBusinessName(data.businessName || "");
+            setEmail(data.email || user.email || "");
+            setPhoneNumber(data.phoneNumber || "");
+            setBankName(data.bankName || "");
+            setBankCode(data.bankCode || "");
+            setAccountNumber(data.accountNumber || "");
+            setAccountHolderName(data.accountHolderName || "");
+            setGovernmentIdUrl(data.governmentIdUrl || null);
+            setGovernmentIdUri(data.governmentIdUrl || null);
+            setLivePhotoUrl(data.livePhotoUrl || null);
+            setLivePhotoUri(data.livePhotoUrl || null);
+            setAgreedToTerms(true);
+          } else {
+            setStatus("not_submitted");
+            setEmail(user.email || "");
+            setFullName("");
+            setBusinessName("");
+            setPhoneNumber("");
+            setBankName("");
+            setBankCode("");
+            setAccountNumber("");
+            setAccountHolderName("");
+            setGovernmentIdUri(null);
+            setGovernmentIdUrl(null);
+            setLivePhotoUri(null);
+            setLivePhotoUrl(null);
+            setAgreedToTerms(false);
+          }
+        },
+        (error) => {
+          console.error("Firestore snapshot error:", error);
+          setStatus("error");
+          setErrorMsg("Failed to load application data. Please try again.");
+        }
+      );
+
+      // Manual fetch as fallback (Critical for production builds)
+      try {
+        const docSnap = await getDoc(appRef);
         if (docSnap.exists()) {
           const data = docSnap.data();
           setStatus(data.status || "pending");
-          setRole(data.role || "Host");
-          setFullName(data.fullName || "");
-          setBusinessName(data.businessName || "");
-          setEmail(data.email || user.email || "");
-          setPhoneNumber(data.phoneNumber || "");
-          setBankName(data.bankName || "");
-          setBankCode(data.bankCode || "");
-          setAccountNumber(data.accountNumber || "");
-          setAccountHolderName(data.accountHolderName || "");
-          setGovernmentIdUrl(data.governmentIdUrl || null);
-          setGovernmentIdUri(data.governmentIdUrl || null);
-          setLivePhotoUrl(data.livePhotoUrl || null);
-          setLivePhotoUri(data.livePhotoUrl || null);
-          setAgreedToTerms(true);
+          // You can also populate other fields here if needed
         } else {
           setStatus("not_submitted");
-          setEmail(user.email || "");
-          setFullName("");
-          setBusinessName("");
-          setPhoneNumber("");
-          setBankName("");
-          setBankCode("");
-          setAccountNumber("");
-          setAccountHolderName("");
-          setGovernmentIdUri(null);
-          setGovernmentIdUrl(null);
-          setLivePhotoUri(null);
-          setLivePhotoUrl(null);
-          setAgreedToTerms(false);
         }
-      });
-
-      return () => unsubSnap();
+      } catch (err) {
+        console.error("Manual getDoc fallback failed:", err);
+      }
     });
 
-    return unsubscribeAuth;
+    // Cleanup function
+    return () => {
+      if (authUnsub) authUnsub();
+      if (snapshotUnsubRef.current) {
+        snapshotUnsubRef.current();
+        snapshotUnsubRef.current = null;
+      }
+    };
   }, []);
 
-  // When application is approved → update main user document so flip card shows "Verified"
+  // When application is approved → update main user document
   useEffect(() => {
     if (status === "approved" && auth.currentUser?.uid) {
       const userRef = doc(db, "users", auth.currentUser.uid);
       updateDoc(userRef, {
         isVerified: true,
-        // Do NOT set verificationType here (to avoid showing premium badge)
-      }).catch((err) => console.error("Failed to update verification status:", err));
+      }).catch((err) => {
+        console.error("Failed to update verification status:", err);
+      });
     }
   }, [status]);
 
@@ -349,6 +392,7 @@ export default function BecomeVendorScreen() {
         </View>
 
         <ScrollView contentContainerStyle={{ padding: 20 }}>
+          {/* Rest of your form UI remains exactly the same */}
           <View style={styles.roleToggle}>
             <TouchableOpacity
               onPress={() => setRole("Host")}
@@ -419,11 +463,11 @@ export default function BecomeVendorScreen() {
             <Text style={[styles.sectionTitle, { color: theme.text }]}>Rules & Agreement</Text>
             <ScrollView style={styles.termsBox} nestedScrollEnabled>
               <Text style={[styles.termsText, { color: theme.textSecondary }]}>
-                • Payouts processed 24h after confirmation{'\n\n'}
-                • RoomLink commission: 10-15% + transaction fees{'\n\n'}
-                • You agree to RoomLink Terms, Privacy Policy & Community Guidelines{'\n\n'}
-                • Accurate information required – false details = rejection{'\n\n'}
-                • Review time: 48-72 hours
+                • Payouts are processed within 24 hours after booking confirmation{'\n\n'}
+                • Vendors are charged only a 2% transaction fee, no additional commission{'\n\n'}
+                • By proceeding, you agree to the RoomLink Terms, Privacy Policy, and Community Guidelines{'\n\n'}
+                • All submitted information must be accurate; false details may result in application rejection{'\n\n'}
+                • Verification review time is typically 48–72 hours{'\n\n'}
               </Text>
             </ScrollView>
             <View style={styles.checkboxRow}>

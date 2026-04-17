@@ -59,7 +59,6 @@ export default function GetVerified() {
 
   const [selectedOption, setSelectedOption] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const [activeBadge, setActiveBadge] = useState(null);
   const [offerings, setOfferings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(false);
@@ -68,29 +67,32 @@ export default function GetVerified() {
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
 
+  // Initialize RevenueCat + Fetch Offerings
   useEffect(() => {
     let isMounted = true;
 
     const initializeRevenueCat = async () => {
       try {
-        setErrorMessage("");
         setLoading(true);
+        setErrorMessage("");
 
-        const GOOGLE_API_KEY = "goog_LdPWuZBMhUKwayGKKouYdMmaBGG";
-
-        Purchases.setLogLevel("VERBOSE");
-        await Purchases.configure({ apiKey: GOOGLE_API_KEY });
-
-        const appUserID = currentUser?.uid || null;
-        if (appUserID) await Purchases.identify(appUserID);
+        // No need to configure again — it's already done in App.js
+        // Just identify the user if logged in
+        if (currentUser?.uid) {
+          await Purchases.identify(currentUser.uid);
+        }
 
         const offeringsData = await Purchases.getOfferings();
-        if (isMounted) setOfferings(offeringsData);
+        
+        if (isMounted) {
+          setOfferings(offeringsData);
+          console.log("✅ Offerings loaded:", JSON.stringify(offeringsData?.current, null, 2));
+        }
       } catch (err) {
         console.error("RevenueCat Error:", err);
-        const msg = err.message || "Failed to initialize RevenueCat";
+        const msg = err.message || "Failed to load subscription plans";
         setErrorMessage(msg);
-        if (isMounted) Alert.alert("RevenueCat Error", msg);
+        Alert.alert("Error", msg);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -98,8 +100,9 @@ export default function GetVerified() {
 
     initializeRevenueCat();
 
+    // Listen for customer info updates
     const listener = Purchases.addCustomerInfoUpdateListener((customerInfo) => {
-      console.log("Customer info updated:", customerInfo);
+      console.log("CustomerInfo updated:", customerInfo);
     });
 
     return () => {
@@ -110,7 +113,7 @@ export default function GetVerified() {
 
   const handleSubscribe = (option) => {
     if (!offerings) {
-      Alert.alert("Error", "Subscription options are still loading. Please wait.");
+      Alert.alert("Error", "Please wait while plans are loading...");
       return;
     }
     setSelectedOption(option);
@@ -119,7 +122,7 @@ export default function GetVerified() {
 
   const handlePay = async () => {
     if (!selectedOption || !offerings?.current) {
-      Alert.alert("Error", "Offerings not loaded yet.");
+      Alert.alert("Error", "No subscription plan found. Please check RevenueCat dashboard.");
       return;
     }
 
@@ -127,19 +130,25 @@ export default function GetVerified() {
 
     try {
       const currentOffering = offerings.current;
-      const packageToBuy = currentOffering.monthly || currentOffering.availablePackages?.[0];
+
+      // Try to find a package — adjust this based on your RevenueCat setup
+      const packageToBuy = 
+        currentOffering.availablePackages?.[0] || 
+        currentOffering.monthly || 
+        currentOffering.yearly;
 
       if (!packageToBuy) {
-        Alert.alert("Error", "No package found for this plan. Check RevenueCat dashboard.");
+        Alert.alert("Error", "No active package found for this plan.\n\nPlease make sure you have configured Offerings + Packages in RevenueCat dashboard.");
         return;
       }
 
       const { customerInfo } = await Purchases.purchasePackage(packageToBuy);
+
+      // Save to Firestore
       await activatePremium(selectedOption, customerInfo);
 
-      Alert.alert("Success", `${selectedOption.title} activated successfully!`);
+      Alert.alert("Success", `${selectedOption.title} has been activated!`);
 
-      setActiveBadge({ type: selectedOption.type });
       updateUser({
         badge: selectedOption.type,
         isPremium: true,
@@ -147,12 +156,13 @@ export default function GetVerified() {
       });
 
       setModalVisible(false);
+      setActiveBadge({ type: selectedOption.type }); // Optional: for UI feedback
     } catch (err) {
       console.error("Purchase error:", err);
       if (err.userCancelled) {
-        Alert.alert("Cancelled", "Purchase was cancelled.");
+        Alert.alert("Cancelled", "You cancelled the purchase.");
       } else {
-        Alert.alert("Purchase Failed", err.message || "Something went wrong.");
+        Alert.alert("Purchase Failed", err.message || "Something went wrong. Please try again.");
       }
     } finally {
       setPurchasing(false);
@@ -161,6 +171,7 @@ export default function GetVerified() {
 
   const activatePremium = async (option, customerInfo) => {
     if (!currentUser?.uid) return;
+
     const userRef = doc(db, "users", currentUser.uid);
     await updateDoc(userRef, {
       verificationType: option.type,
@@ -172,20 +183,22 @@ export default function GetVerified() {
     });
   };
 
+  // Loading State
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: isDark ? "#000" : "#fff", justifyContent: "center", alignItems: "center" }]}>
         <ActivityIndicator size="large" color="#017a6b" />
-        <Text style={{ marginTop: 16, color: isDark ? "#aaa" : "#666" }}>Connecting to RevenueCat...</Text>
+        <Text style={{ marginTop: 16, color: isDark ? "#aaa" : "#666" }}>Loading subscription plans...</Text>
       </View>
     );
   }
 
+  // Error State
   if (errorMessage) {
     return (
       <View style={[styles.container, { backgroundColor: isDark ? "#000" : "#fff", justifyContent: "center", padding: 30, alignItems: "center" }]}>
         <Ionicons name="alert-circle-outline" size={70} color="#ff4444" />
-        <Text style={{ fontSize: 18, fontWeight: "bold", color: "#ff4444", marginTop: 20, textAlign: "center" }}>Failed to Load Plans</Text>
+        <Text style={{ fontSize: 18, fontWeight: "bold", color: "#ff4444", marginTop: 20 }}>Failed to Load Plans</Text>
         <Text style={{ color: isDark ? "#ddd" : "#333", marginTop: 12, textAlign: "center" }}>{errorMessage}</Text>
         <TouchableOpacity
           style={[styles.subscribeButton, { marginTop: 30, backgroundColor: "#017a6b" }]}
@@ -223,7 +236,6 @@ export default function GetVerified() {
             style={[
               styles.card,
               { backgroundColor: isDark ? "#121212" : "#f9f9f9" },
-              activeBadge?.type === option.type && { borderColor: option.borderColor, borderWidth: 3 },
             ]}
           >
             <View style={styles.titleRow}>
@@ -250,7 +262,7 @@ export default function GetVerified() {
         ))}
       </ScrollView>
 
-      {/* Confirmation Modal */}
+      {/* Purchase Confirmation Modal */}
       <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
         <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
           <View style={styles.modalOverlay}>
@@ -261,15 +273,19 @@ export default function GetVerified() {
                 </Text>
 
                 <TouchableOpacity
-                  style={[styles.subscribeButton, { backgroundColor: isDark ? "#a8c8fb" : "#036dd6", marginTop: 20 }]}
+                  style={[styles.subscribeButton, { backgroundColor: "#017a6b", marginTop: 20 }]}
                   onPress={handlePay}
                   disabled={purchasing}
                 >
-                  {purchasing ? <ActivityIndicator color="#fff" /> : <Text style={styles.subscribeButtonText}>Pay & Subscribe Now</Text>}
+                  {purchasing ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.subscribeButtonText}>Pay & Activate Now</Text>
+                  )}
                 </TouchableOpacity>
 
                 <Text style={styles.disclaimer}>
-                  Payment will be charged to your Google Play account. Subscription renews automatically unless canceled.
+                  Payment will be charged via Google Play. Subscription auto-renews unless cancelled.
                 </Text>
               </View>
             </TouchableWithoutFeedback>
@@ -284,7 +300,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   headerContainer: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingTop: 50, paddingBottom: 32 },
   header: { fontSize: 18, fontWeight: "bold" },
-  card: { width: SCREEN_WIDTH - 100, borderRadius: 16, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, elevation: 5 },
+  card: { width: SCREEN_WIDTH - 100, borderRadius: 16, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, elevation: 5, marginRight: 20 },
   titleRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
   title: { fontSize: 18, fontWeight: "700", marginLeft: 8, flex: 1 },
   features: { marginBottom: 24 },
@@ -292,8 +308,8 @@ const styles = StyleSheet.create({
   featureItem: { fontSize: 14.5, flex: 1 },
   subscribeButton: { paddingVertical: 14, borderRadius: 30, alignItems: "center" },
   subscribeButtonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
   modalContent: { padding: 24, borderTopLeftRadius: 24, borderTopRightRadius: 24 },
-  modalTitle: { fontSize: 20, fontWeight: "700", marginBottom: 12 },
+  modalTitle: { fontSize: 20, fontWeight: "700", marginBottom: 20 },
   disclaimer: { fontSize: 12.5, color: "#888", marginTop: 20, lineHeight: 17, textAlign: "center" },
 });

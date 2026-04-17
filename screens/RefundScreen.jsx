@@ -147,7 +147,6 @@ export default function RefundScreen() {
 
       console.log("Submitting refund for booking:", selectedBooking.id);
 
-      // Add refund request document
       await addDoc(collection(db, "refunds"), {
         bookingId: selectedBooking.id,
         userId: currentUser.uid,
@@ -163,7 +162,6 @@ export default function RefundScreen() {
         createdAt: serverTimestamp(),
       });
 
-      // Update booking (consistent with BecomeVendorScreen: setDoc + merge)
       const bookingRef = doc(db, "bookings", selectedBooking.id);
       await setDoc(
         bookingRef,
@@ -283,9 +281,11 @@ export default function RefundScreen() {
             <Text style={[styles.noBookingsSubText, isDark && styles.textMuted]}>
               You can only request refunds for upcoming stays or bookings ended within the last 24 hours.
             </Text>
+            
+            {/* FIXED NAVIGATION HERE */}
             <TouchableOpacity
               style={styles.backHomeButton}
-              onPress={() => navigation.navigate("Home")}
+              onPress={() => navigation.navigate("HomeTabs", { screen: "Home" })}
             >
               <Text style={styles.backHomeText}>Back to Home</Text>
             </TouchableOpacity>
@@ -389,7 +389,6 @@ export default function RefundScreen() {
   );
 }
 
-// styles remain unchanged (your original ones are fine)
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
   containerDark: { backgroundColor: "#0f1117" },

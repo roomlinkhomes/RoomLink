@@ -1,3 +1,4 @@
+// screens/AdsZone.jsx — FIXED: Help button opens WhatsApp (same icon + badge)
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -10,6 +11,7 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -31,7 +33,7 @@ const CLOUD_NAME = "drserbss8";
 const UPLOAD_PRESET = "roomlink_preset";
 
 const MAX_TOTAL_ADS = 35;
-const FINANCIAL_SUPPORT_UID = "e12i0xwZ5mfXzpgQUcwsLMZlApq2";
+const WHATSAPP_NUMBER = "08133648709";   // Your WhatsApp number
 
 const PENDING_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -47,7 +49,7 @@ export default function AdsZone() {
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [image, setImage] = useState(null);
   const [link, setLink] = useState("");
-  const [uploading, setUploading] = useState(false); // now also used for payment
+  const [uploading, setUploading] = useState(false);
   const [activeAd, setActiveAd] = useState(null);
   const [pendingAd, setPendingAd] = useState(null);
   const [approvedAd, setApprovedAd] = useState(null);
@@ -65,7 +67,7 @@ export default function AdsZone() {
     return Date.now() - createdTime < PENDING_TIMEOUT_MS;
   };
 
-  // Your existing useEffects (unchanged)
+  // Existing useEffects (unchanged)
   useEffect(() => {
     if (!user) return;
 
@@ -143,10 +145,7 @@ export default function AdsZone() {
         body: data,
       });
 
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Upload failed: ${errText}`);
-      }
+      if (!res.ok) throw new Error("Upload failed");
 
       const json = await res.json();
       return json.secure_url;
@@ -157,7 +156,6 @@ export default function AdsZone() {
     }
   };
 
-  // ==================== UPDATED handlePayment (Same logic as GuestDetails) ====================
   const handlePayment = async () => {
     if (!selectedPlan) return Alert.alert("Select Plan", "Please choose a plan first.");
     if (!user?.email) return Alert.alert("Login Required", "You need to be logged in with an email.");
@@ -165,7 +163,6 @@ export default function AdsZone() {
     setUploading(true);
 
     try {
-      // 1. Create ad document first
       const adRef = await addDoc(collection(db, "ads"), {
         userId: user.uid,
         fullName: user.displayName || "User",
@@ -180,7 +177,6 @@ export default function AdsZone() {
 
       const adId = adRef.id;
 
-      // 2. Initialize Paystack (exactly like in GuestDetails)
       const response = await fetch(
         "https://us-central1-roomlink-homes.cloudfunctions.net/initializePaystack",
         {
@@ -188,30 +184,19 @@ export default function AdsZone() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             email: user.email,
-            amount: selectedPlan.price * 100, // in kobo
+            amount: selectedPlan.price * 100,
             reference: `ad_${adId}_${Date.now()}`,
             adId: adId,
           }),
         }
       );
 
-      if (!response.ok) {
-        let errorData;
-        try {
-          errorData = await response.json();
-        } catch {
-          errorData = { error: await response.text() };
-        }
-        throw new Error(errorData.error || `HTTP ${response.status} - Payment init failed`);
-      }
+      if (!response.ok) throw new Error("Payment initialization failed");
 
       const data = await response.json();
 
-      if (!data?.url) {
-        throw new Error(data?.message || "No payment URL received from server");
-      }
+      if (!data?.url) throw new Error("No payment URL received");
 
-      // 3. Navigate to PaystackWebView
       navigation.navigate("PaystackWebView", {
         url: data.url,
         adId: adId,
@@ -221,21 +206,20 @@ export default function AdsZone() {
       Toast.show({
         type: "info",
         text1: "Opening Payment",
-        text2: "Please complete payment to activate your ad slot.\nIt may take a few seconds to confirm.",
+        text2: "Please complete payment to activate your ad slot.",
         visibilityTime: 6000,
       });
 
       setModalVisible(false);
       setSelectedPlan(null);
     } catch (err) {
-      console.error("=== ADS PAYMENT ERROR ===", err);
-      Alert.alert("Payment Error", err.message || "Could not start payment. Please try again.");
+      console.error("Payment Error:", err);
+      Alert.alert("Payment Error", err.message || "Could not start payment.");
     } finally {
       setUploading(false);
     }
   };
 
-  // ==================== Rest of your code unchanged ====================
   const uploadBanner = async () => {
     if (!image) return Alert.alert("Image Required", "Please pick a banner image first.");
     if (link && !/^https?:\/\//i.test(link)) return Alert.alert("Invalid Link", "Link must start with http:// or https://");
@@ -270,22 +254,21 @@ export default function AdsZone() {
       setImage(null);
       setLink("");
     } catch (err) {
-      console.error("Publish banner error:", err);
-      Alert.alert("Error", "Failed to publish banner. Please try again.");
+      Alert.alert("Error", "Failed to publish banner.");
     }
   };
 
   const openModal = (plan) => {
     if (billboardFull) {
-      Alert.alert("Billboard Full", `Maximum ${MAX_TOTAL_ADS} active ads reached. Try again later.`);
+      Alert.alert("Billboard Full", `Maximum ${MAX_TOTAL_ADS} active ads reached.`);
       return;
     }
     if (activeAd) {
-      Alert.alert("Already Active", `Your ${activeAd.plan} ad is live until ${activeAd.endDate?.toLocaleDateString() || "—"}`);
+      Alert.alert("Already Active", `Your ${activeAd.plan} ad is live.`);
       return;
     }
     if (pendingAd && isPendingRecent(pendingAd)) {
-      Alert.alert("Payment Pending", "Your payment is being processed.\nPlease wait a moment or check later.\nContact support if it takes too long.");
+      Alert.alert("Payment Pending", "Your payment is being processed.");
       return;
     }
     if (approvedAd) {
@@ -297,25 +280,20 @@ export default function AdsZone() {
     setModalVisible(true);
   };
 
-  const openSupport = () => {
-    Toast.show({
-      type: "info",
-      text1: "Payment Support",
-      text2: "Send proof of payment or ask questions to RoomLink Financial",
-      position: "bottom",
-      visibilityTime: 7000,
-    });
+  // ==================== OPEN WHATSAPP (with same headset icon) ====================
+  const openWhatsApp = () => {
+    const message = "Hello, I need help with my Ad payment on RoomLink.";
+    const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
 
-    navigation.navigate("HomeTabs", {
-      screen: "Messages",
-      params: {
-        screen: "Message",
-        params: {
-          recipientUID: FINANCIAL_SUPPORT_UID,
-          otherUserName: "RoomLink Financial",
-        },
-      },
-    });
+    Linking.canOpenURL(url)
+      .then((supported) => {
+        if (supported) {
+          Linking.openURL(url);
+        } else {
+          Alert.alert("WhatsApp Not Found", "Please install WhatsApp to contact support.");
+        }
+      })
+      .catch(() => Alert.alert("Error", "Could not open WhatsApp."));
   };
 
   return (
@@ -339,7 +317,7 @@ export default function AdsZone() {
               It may take up to 1–2 minutes after payment.
             </Text>
             <TouchableOpacity 
-              onPress={openSupport}
+              onPress={openWhatsApp}
               style={{ marginTop: 12, alignItems: "center" }}
             >
               <Text style={{ color: "#c2410c", fontWeight: "600" }}>
@@ -388,7 +366,7 @@ export default function AdsZone() {
         </View>
 
         <Text style={styles.footer}>
-          Having issues? Contact support after payment (headset icon below)
+          Having issues? Contact support after payment
         </Text>
       </ScrollView>
 
@@ -460,7 +438,8 @@ export default function AdsZone() {
         </View>
       </Modal>
 
-      <TouchableOpacity style={styles.fab} onPress={openSupport}>
+      {/* Floating Help Button - Same icon & badge, but opens WhatsApp */}
+      <TouchableOpacity style={styles.fab} onPress={openWhatsApp}>
         <Ionicons name="headset-outline" size={26} color="#fff" />
         <View style={styles.helpBadge}>
           <Text style={styles.badgeText}>Help</Text>
@@ -470,9 +449,7 @@ export default function AdsZone() {
   );
 }
 
-// Styles remain exactly the same (no changes needed)
 const styles = StyleSheet.create({
-  // ... your existing styles (copy-paste as is)
   container: { padding: 20, flexGrow: 1, backgroundColor: "#f9fafb" },
   header: { fontSize: 24, fontWeight: "700", textAlign: "center", marginBottom: 8 },
   subText: { textAlign: "center", color: "#666", marginBottom: 24 },

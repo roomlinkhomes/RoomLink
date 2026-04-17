@@ -1,4 +1,4 @@
-// screens/ListingDetails.jsx — FIXED: Allow comments even with temporary user context issues
+// screens/ListingDetails.jsx — FINAL CLEAN VERSION (Long Press + Cold Start Fix)
 import React, { useContext, useState, useEffect, useCallback } from "react";
 import {
   View,
@@ -33,10 +33,12 @@ import {
   addDoc,
   serverTimestamp,
   setDoc,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useFocusEffect } from "@react-navigation/native";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import * as Clipboard from "expo-clipboard";
 
 // SVG Badges
 import BlueBadge from "../assets/icons/blue.svg";
@@ -51,20 +53,14 @@ const safeCategory = (cat) => {
   return cat?.name || "Not specified";
 };
 
-const useRecordView = (listingId, ownerId) => {
-  const { user: currentUser } = useContext(UserContext);
-  useFocusEffect(
-    useCallback(() => {
-      if (!currentUser || !listingId || currentUser.uid === ownerId) return;
-      const record = async () => {
-        try {
-          const viewRef = doc(db, "listings", listingId, "views", currentUser.uid);
-          await setDoc(viewRef, { timestamp: Date.now() }, { merge: true });
-        } catch (e) {}
-      };
-      record();
-    }, [currentUser?.uid, listingId, ownerId])
-  );
+const getFullName = (userData) => {
+  if (!userData) return "Anonymous";
+  if (userData.displayName?.trim()) return userData.displayName.trim();
+  if (userData.firstName && userData.lastName)
+    return `${userData.firstName.trim()} ${userData.lastName.trim()}`;
+  if (userData.name?.trim()) return userData.name.trim();
+  if (userData.username) return userData.username;
+  return "Anonymous";
 };
 
 const getImageUri = (img) => {
@@ -74,16 +70,6 @@ const getImageUri = (img) => {
   if (img._url) return img._url;
   if (img.url) return img.url;
   return "https://via.placeholder.com/400x300.png?text=Error";
-};
-
-const getFullName = (userData) => {
-  if (!userData) return "Anonymous";
-  if (userData.displayName?.trim()) return userData.displayName.trim();
-  if (userData.firstName && userData.lastName)
-    return `${userData.firstName.trim()} ${userData.lastName.trim()}`;
-  if (userData.name?.trim()) return userData.name.trim();
-  if (userData.username) return userData.username;
-  return "Anonymous";
 };
 
 const VerificationBadge = ({ type }) => {
@@ -99,10 +85,10 @@ export default function ListingDetails() {
   const route = useRoute();
   const navigation = useNavigation();
   const { listing } = route.params || {};
-  const { user, getUserById } = useContext(UserContext);
-  const posterId = listing?.userId || listing?.posterId || listing?.ownerId;
 
-  useRecordView(listing?.id, posterId);
+  const { user: currentUser, loading: userLoading, getUserById } = useContext(UserContext);
+
+  const posterId = listing?.userId || listing?.posterId || listing?.ownerId || listing?.authorId;
 
   const [poster, setPoster] = useState({
     name: "Loading...",
@@ -126,6 +112,10 @@ export default function ListingDetails() {
   const [mainImageIndex, setMainImageIndex] = useState(0);
   const [sendStatus, setSendStatus] = useState("idle");
 
+  // Long press menu
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [selectedComment, setSelectedComment] = useState(null);
+
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
 
@@ -141,30 +131,35 @@ export default function ListingDetails() {
     inputBg: isDark ? "#1e1e1e" : "#f8f8f8",
   };
 
-  const bgColor = theme.background;
-  const textColor = theme.text;
-  const secondaryText = theme.textSecondary;
-  const borderColor = theme.border;
-
-  const getTotalCommentsCount = (comments) => {
-    return comments.reduce((total, comment) => {
+  // Helper functions
+  const getTotalCommentsCount = (commentsList) => {
+    return commentsList.reduce((total, comment) => {
       return total + 1 + (comment.children?.length || 0);
     }, 0);
   };
 
   const rootComments = comments.filter((c) => !c.replyToCommentId);
-  const hasSellerRating = poster.averageRating > 0 || poster.reviewCount > 0;
 
-  // Fetch poster with rating info
+  // Record view
+  useFocusEffect(
+    useCallback(() => {
+      if (!currentUser || !listing?.id || 
+          currentUser.id === posterId || currentUser.uid === posterId) return;
+
+      const recordView = async () => {
+        try {
+          const viewRef = doc(db, "listings", listing.id, "views", currentUser.id || currentUser.uid);
+          await setDoc(viewRef, { timestamp: Date.now() }, { merge: true });
+        } catch (e) {}
+      };
+      recordView();
+    }, [currentUser, listing?.id, posterId])
+  );
+
+  // Fetch poster
   useEffect(() => {
     if (!posterId) {
-      setPoster({
-        name: "User",
-        avatar: null,
-        verificationType: null,
-        averageRating: 0,
-        reviewCount: 0,
-      });
+      setPoster({ name: "User", avatar: null, verificationType: null, averageRating: 0, reviewCount: 0 });
       setLoadingSeller(false);
       return;
     }
@@ -178,50 +173,30 @@ export default function ListingDetails() {
           const snap = await getDoc(doc(db, "users", posterId));
           userData = snap.exists() ? snap.data() : null;
         }
-        if (isMounted) {
-          if (userData) {
-            setPoster({
-              name: getFullName(userData),
-              avatar: userData.photoURL || userData.profileImage || userData.avatar || null,
-              verificationType: userData.verificationType || null,
-              averageRating: userData.averageRating || 0,
-              reviewCount: userData.reviewCount || 0,
-            });
-          } else {
-            setPoster({
-              name: "User",
-              avatar: null,
-              verificationType: null,
-              averageRating: 0,
-              reviewCount: 0,
-            });
-          }
+        if (isMounted && userData) {
+          setPoster({
+            name: getFullName(userData),
+            avatar: userData.photoURL || userData.profileImage || userData.avatar || null,
+            verificationType: userData.verificationType || null,
+            averageRating: userData.averageRating || 0,
+            reviewCount: userData.reviewCount || 0,
+          });
         }
       } catch (e) {
         console.error("Poster fetch failed:", e);
-        if (isMounted) {
-          setPoster({
-            name: "User",
-            avatar: null,
-            verificationType: null,
-            averageRating: 0,
-            reviewCount: 0,
-          });
-        }
       } finally {
         if (isMounted) setLoadingSeller(false);
       }
     };
     fetchPoster();
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
   }, [posterId, getUserById]);
 
-  // Comments fetching
+  // Comments listener
   useEffect(() => {
     if (!listing?.id) return;
     setLoadingComments(true);
+
     const q = query(collection(db, "listings", listing.id, "comments"), orderBy("timestamp", "asc"));
     const unsub = onSnapshot(q, async (snap) => {
       try {
@@ -230,41 +205,43 @@ export default function ListingDetails() {
           setLoadingComments(false);
           return;
         }
-        const userIds = snap.docs.map((doc) => doc.data().userId).filter(Boolean);
+
+        const userIds = snap.docs.map((d) => d.data().userId).filter(Boolean);
         const uniqueUserIds = [...new Set(userIds)];
         const newUserCache = { ...userCache };
-        const missingUserIds = uniqueUserIds.filter((id) => !userCache[id]);
-        if (missingUserIds.length > 0) {
-          const userPromises = missingUserIds.map((id) => getDoc(doc(db, "users", id)).catch(() => null));
-          const userSnaps = await Promise.all(userPromises);
-          userSnaps.forEach((userSnap, index) => {
-            const userId = missingUserIds[index];
-            if (userSnap?.exists()) {
-              const userData = userSnap.data();
-              newUserCache[userId] = {
-                name: getFullName(userData),
-                avatar: userData.photoURL || userData.profileImage || userData.avatar || null,
-                verificationType: userData.verificationType || null,
+
+        const missing = uniqueUserIds.filter((id) => !userCache[id]);
+        if (missing.length > 0) {
+          const promises = missing.map((id) => getDoc(doc(db, "users", id)).catch(() => null));
+          const snaps = await Promise.all(promises);
+          snaps.forEach((snap, i) => {
+            if (snap?.exists()) {
+              const data = snap.data();
+              newUserCache[missing[i]] = {
+                name: getFullName(data),
+                avatar: data.photoURL || data.profileImage || data.avatar,
+                verificationType: data.verificationType,
               };
             }
           });
           setUserCache(newUserCache);
         }
+
         const commentMap = {};
         const roots = [];
         snap.docs.forEach((docSnap) => {
           const data = docSnap.data();
-          const userId = data.userId;
-          const cachedUser = newUserCache[userId] || userCache[userId];
+          const cached = newUserCache[data.userId] || userCache[data.userId];
           const comment = {
             id: docSnap.id,
             ...data,
-            userName: cachedUser?.name || data.userName || "Anonymous",
-            userAvatar: cachedUser?.avatar || data.userAvatar || null,
-            verificationType: cachedUser?.verificationType || null,
+            userName: cached?.name || data.userName || "Anonymous",
+            userAvatar: cached?.avatar || data.userAvatar,
+            verificationType: cached?.verificationType,
             children: [],
           };
           commentMap[comment.id] = comment;
+
           if (data.replyToCommentId) {
             const parent = commentMap[data.replyToCommentId];
             if (parent) parent.children.push(comment);
@@ -273,9 +250,11 @@ export default function ListingDetails() {
             roots.push(comment);
           }
         });
-        const sortByTime = (a, b) => (a.timestamp?.toDate() || 0) - (b.timestamp?.toDate() || 0);
+
+        const sortByTime = (a, b) => (a.timestamp?.toDate?.() || 0) - (b.timestamp?.toDate?.() || 0);
         roots.sort(sortByTime);
-        roots.forEach((root) => root.children.sort(sortByTime));
+        roots.forEach(root => root.children.sort(sortByTime));
+
         setComments(roots);
       } catch (error) {
         console.error("Comments fetch error:", error);
@@ -283,8 +262,137 @@ export default function ListingDetails() {
         setLoadingComments(false);
       }
     });
+
     return () => unsub();
   }, [listing?.id]);
+
+  // Long press handler
+  const handleLongPressComment = (comment) => {
+    setSelectedComment(comment);
+    setMenuVisible(true);
+  };
+
+  // Delete own comment
+  const deleteComment = async (commentId) => {
+    if (!commentId) return;
+    Alert.alert(
+      "Delete Comment",
+      "Are you sure you want to delete this comment?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, "listings", listing.id, "comments", commentId));
+              setMenuVisible(false);
+              Alert.alert("Success", "Comment deleted");
+            } catch (err) {
+              Alert.alert("Error", "Failed to delete comment");
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Copy comment
+  const copyComment = async (text) => {
+    if (!text) return;
+    await Clipboard.setStringAsync(text);
+    setMenuVisible(false);
+    Alert.alert("Copied", "Comment copied to clipboard");
+  };
+
+  // Reply to comment
+  const replyToComment = (comment) => {
+    setReplyToUser(comment.userName);
+    setReplyToCommentId(comment.id);
+    setMenuVisible(false);
+    setShowCommentModal(true);
+  };
+
+  // Cold-start safe comment submission
+  const handleSendComment = async () => {
+    const text = newComment.trim();
+    if (!text && !attachedImage) return;
+
+    if (userLoading || !currentUser) {
+      Alert.alert("Please wait", "Your account is still loading...");
+      return;
+    }
+
+    setSendStatus("sending");
+    let imageUrl = null;
+
+    try {
+      if (attachedImage) {
+        const response = await fetch(attachedImage);
+        const blob = await response.blob();
+        const timestamp = Date.now();
+        const fileName = `comment-image-${currentUser.id || currentUser.uid}-${timestamp}.jpg`;
+        const storage = getStorage();
+        const storageRef = ref(storage, `comment_images/${listing.id}/${fileName}`);
+        await uploadBytes(storageRef, blob);
+        imageUrl = await getDownloadURL(storageRef);
+      }
+
+      const commentData = {
+        userId: currentUser.id || currentUser.uid,
+        userName: getFullName(currentUser),
+        userAvatar: currentUser.photoURL || currentUser.profileImage || currentUser.avatar || null,
+        text,
+        image: imageUrl,
+        timestamp: serverTimestamp(),
+        replyToUser: replyToUser || null,
+        replyToCommentId: replyToCommentId || null,
+      };
+
+      await addDoc(collection(db, "listings", listing.id, "comments"), commentData);
+
+      await triggerCommentNotification(listing.id, currentUser.id || currentUser.uid, text);
+
+      setNewComment("");
+      setReplyToUser(null);
+      setReplyToCommentId(null);
+      setAttachedImage(null);
+      Keyboard.dismiss();
+      setSendStatus("success");
+
+      setTimeout(() => setSendStatus("idle"), 2000);
+    } catch (error) {
+      console.error("Comment send failed:", error);
+      Alert.alert("Error", "Failed to send comment. Please try again.");
+      setSendStatus("idle");
+    }
+  };
+
+  const triggerCommentNotification = async (listingId, commenterId, commentText) => {
+    try {
+      const listingSnap = await getDoc(doc(db, "listings", listingId));
+      if (!listingSnap.exists()) return;
+
+      const listingData = listingSnap.data();
+      const ownerId = listingData.authorId || listingData.userId || listingData.ownerId || listingData.posterId;
+
+      if (!ownerId || ownerId === commenterId) return;
+
+      await addDoc(collection(db, "notifications"), {
+        userId: ownerId,
+        type: "comment",
+        title: "New Comment",
+        message: "Someone commented on your listing",
+        listingId,
+        commenterId,
+        commentSnippet: commentText.length > 80 ? commentText.substring(0, 80) + "..." : commentText,
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Failed to send comment notification:", err);
+    }
+  };
 
   const goToProfile = (userId) => {
     if (!userId) return;
@@ -302,88 +410,10 @@ export default function ListingDetails() {
         copyToCacheDirectory: true,
         multiple: false,
       });
-      console.log("Comment image picker result:", JSON.stringify(result, null, 2));
-      if (result.canceled) {
-        console.log("Comment image picker canceled by user");
-        return;
-      }
-      if (!result.assets || !result.assets[0]?.uri) {
-        console.log("No image selected from picker");
-        Alert.alert("No Image", "Couldn't load the selected image. Try again.");
-        return;
-      }
-      const uri = result.assets[0].uri;
-      console.log("Selected comment image URI:", uri);
-      setAttachedImage(uri);
+      if (result.canceled) return;
+      setAttachedImage(result.assets[0].uri);
     } catch (err) {
-      console.error("Comment image picker error:", err);
-      Alert.alert(
-        "Gallery Error",
-        "Failed to open gallery.\n\nTry:\n1. Restart app\n2. Settings > Apps > YourApp > Permissions > Photos > Allow all"
-      );
-    }
-  };
-
-  const handleSendComment = async () => {
-    const text = newComment.trim();
-    if (!text && !attachedImage) return;
-
-    setSendStatus("sending");
-    let imageUrl = null;
-
-    try {
-      // Upload image if attached
-      if (attachedImage) {
-        console.log("Uploading comment image to Firebase Storage...");
-        const response = await fetch(attachedImage);
-        const blob = await response.blob();
-        const timestamp = Date.now();
-        const fileName = `comment-image-${user?.uid || "anon"}-${timestamp}.jpg`;
-        const storage = getStorage();
-        const storageRef = ref(storage, `comment_images/${listing.id}/${fileName}`);
-        await uploadBytes(storageRef, blob);
-        imageUrl = await getDownloadURL(storageRef);
-        console.log("Comment image uploaded → public URL:", imageUrl);
-      }
-
-      // Prepare comment data – no hard requirement for user.uid
-      const isLoggedIn = !!user?.uid;
-      const fullName = getFullName(user);
-      const photoURL = user?.photoURL || user?.profileImage || user?.avatar || null;
-
-      const commentData = {
-        userId: isLoggedIn ? user.uid : null,
-        userName: fullName,
-        userAvatar: photoURL,
-        text,
-        image: imageUrl,
-        timestamp: serverTimestamp(),
-        replyToUser: replyToUser || null,
-        replyToCommentId: replyToCommentId || null,
-        isGuest: !isLoggedIn, // optional flag
-      };
-
-      // Save to Firestore
-      await addDoc(collection(db, "listings", listing.id, "comments"), commentData);
-      console.log("Comment sent successfully");
-
-      // Reset UI
-      setNewComment("");
-      setReplyToUser(null);
-      setReplyToCommentId(null);
-      setAttachedImage(null);
-      Keyboard.dismiss();
-      setSendStatus("success");
-      setTimeout(() => setSendStatus("idle"), 2000);
-    } catch (error) {
-      console.error("Comment send failed:", error);
-      Alert.alert(
-        "Error",
-        "Failed to send comment" +
-          (attachedImage ? " (image upload failed)" : "") +
-          ". Try again."
-      );
-      setSendStatus("idle");
+      Alert.alert("Error", "Failed to pick image");
     }
   };
 
@@ -397,81 +427,80 @@ export default function ListingDetails() {
     setMainImageIndex(idx);
   };
 
+  // Render comment with long press
   const renderComment = (comment, depth = 0) => {
     const isExpanded = !!expandedComments[comment.id];
-    const hasReplies = comment.children.length > 0;
+    const hasReplies = comment.children?.length > 0 || false;
     const avatarSize = depth === 0 ? 44 : 36;
+    const isOwnComment = currentUser && 
+      (comment.userId === currentUser.id || comment.userId === currentUser.uid);
 
     return (
-      <View key={comment.id} style={[styles.commentContainer, { marginVertical: depth === 0 ? 16 : 12 }]}>
-        <View style={styles.commentRow}>
-          <TouchableOpacity onPress={() => goToProfile(comment.userId)}>
-            <Avatar uri={comment.userAvatar} size={avatarSize} />
-          </TouchableOpacity>
-          <View style={styles.commentContent}>
-            <View style={styles.commentHeader}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Text style={[styles.commentUser, { color: theme.text }]}>
-                  {comment.userName}
-                </Text>
-                {comment.isGuest && (
-                  <Text style={{ fontSize: 11, color: theme.textSecondary, marginLeft: 6 }}>
-                    • Guest
+      <TouchableOpacity 
+        key={comment.id} 
+        activeOpacity={0.9}
+        onLongPress={() => handleLongPressComment(comment)}
+        delayLongPress={300}
+      >
+        <View style={[styles.commentContainer, { marginVertical: depth === 0 ? 16 : 12 }]}>
+          <View style={styles.commentRow}>
+            <TouchableOpacity onPress={() => goToProfile(comment.userId)}>
+              <Avatar uri={comment.userAvatar} size={avatarSize} />
+            </TouchableOpacity>
+            <View style={styles.commentContent}>
+              <View style={styles.commentHeader}>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Text style={[styles.commentUser, { color: theme.text }]}>
+                    {comment.userName}
+                  </Text>
+                  {comment.isGuest && (
+                    <Text style={{ fontSize: 11, color: theme.textSecondary, marginLeft: 6 }}>• Guest</Text>
+                  )}
+                  <VerificationBadge type={comment.verificationType} />
+                </View>
+                {comment.replyToUser && (
+                  <Text style={[styles.replyIndicator, { color: theme.primary }]}>
+                    {" "}→ {comment.replyToUser}
                   </Text>
                 )}
-                <VerificationBadge type={comment.verificationType} />
               </View>
-              {comment.replyToUser && (
-                <Text style={[styles.replyIndicator, { color: theme.primary }]}>
-                  {" "}→ {comment.replyToUser}
+              {comment.text && (
+                <Text style={[styles.commentText, { color: theme.textSecondary }]}>
+                  {comment.text}
                 </Text>
               )}
-            </View>
-
-            {comment.text && (
-              <Text style={[styles.commentText, { color: theme.textSecondary }]}>
-                {comment.text}
-              </Text>
-            )}
-
-            {comment.image && (
-              <TouchableOpacity onPress={() => openImageViewer(getImageUri(comment.image))}>
-                <Image source={{ uri: getImageUri(comment.image) }} style={styles.commentImage} />
-              </TouchableOpacity>
-            )}
-
-            <View style={styles.commentFooter}>
-              <Text style={[styles.commentTime, { color: theme.textSecondary }]}>
-                {comment.timestamp ? timeAgo(comment.timestamp.toDate()) : "Just now"}
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setReplyToUser(comment.userName);
-                  setReplyToCommentId(comment.id);
-                }}
-              >
-                <Text style={[styles.replyButton, { color: theme.primary }]}>Reply</Text>
-              </TouchableOpacity>
-              {depth === 0 && hasReplies && (
-                <TouchableOpacity onPress={() => toggleExpanded(comment.id)}>
-                  <View style={styles.repliesButton}>
-                    <Text style={[styles.repliesText, { color: theme.primary }]}>
-                      {isExpanded ? "Hide" : `${comment.children.length} ${comment.children.length === 1 ? "reply" : "replies"}`}
-                    </Text>
-                    <Ionicons
-                      name={isExpanded ? "chevron-up" : "chevron-down"}
-                      size={14}
-                      color={theme.primary}
-                    />
-                  </View>
+              {comment.image && (
+                <TouchableOpacity onPress={() => openImageViewer(getImageUri(comment.image))}>
+                  <Image source={{ uri: getImageUri(comment.image) }} style={styles.commentImage} />
                 </TouchableOpacity>
               )}
+              <View style={styles.commentFooter}>
+                <Text style={[styles.commentTime, { color: theme.textSecondary }]}>
+                  {comment.timestamp ? timeAgo(comment.timestamp.toDate()) : "Just now"}
+                </Text>
+                <TouchableOpacity onPress={() => replyToComment(comment)}>
+                  <Text style={[styles.replyButton, { color: theme.primary }]}>Reply</Text>
+                </TouchableOpacity>
+                {depth === 0 && hasReplies && (
+                  <TouchableOpacity onPress={() => toggleExpanded(comment.id)}>
+                    <View style={styles.repliesButton}>
+                      <Text style={[styles.repliesText, { color: theme.primary }]}>
+                        {isExpanded ? "Hide" : `${comment.children.length} ${comment.children.length === 1 ? "reply" : "replies"}`}
+                      </Text>
+                      <Ionicons
+                        name={isExpanded ? "chevron-up" : "chevron-down"}
+                        size={14}
+                        color={theme.primary}
+                      />
+                    </View>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {isExpanded && comment.children.map((child) => renderComment(child, depth + 1))}
             </View>
-
-            {isExpanded && comment.children.map((child) => renderComment(child, depth + 1))}
           </View>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -490,9 +519,58 @@ export default function ListingDetails() {
     ))
   );
 
+  // Long press menu
+  const renderMenuOptions = () => {
+    if (!selectedComment) return null;
+
+    const isOwnComment = currentUser && 
+      (selectedComment.userId === currentUser.id || selectedComment.userId === currentUser.uid);
+
+    return (
+      <Modal visible={menuVisible} transparent animationType="fade">
+        <TouchableOpacity style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
+          <View style={styles.menuContainer}>
+            <TouchableOpacity style={styles.menuItem} onPress={() => replyToComment(selectedComment)}>
+              <Ionicons name="arrow-undo" size={20} color="#017a6b" />
+              <Text style={styles.menuText}>Reply</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => copyComment(selectedComment.text || "")}>
+              <Ionicons name="copy-outline" size={20} color="#017a6b" />
+              <Text style={styles.menuText}>Copy</Text>
+            </TouchableOpacity>
+
+            {isOwnComment && (
+              <TouchableOpacity 
+                style={[styles.menuItem, { borderTopWidth: 1, borderTopColor: "#eee" }]} 
+                onPress={() => deleteComment(selectedComment.id)}
+              >
+                <Ionicons name="trash-outline" size={20} color="#ef4444" />
+                <Text style={[styles.menuText, { color: "#ef4444" }]}>Delete</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => setMenuVisible(false)}>
+              <Text style={[styles.menuText, { color: "#888" }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    );
+  };
+
+  if (!listing) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <Text>Listing not found</Text>
+      </View>
+    );
+  }
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: bgColor }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+        {/* Image Carousel */}
         <View style={styles.imageWrapper}>
           <ScrollView
             horizontal
@@ -517,67 +595,50 @@ export default function ListingDetails() {
         </View>
 
         <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-          <Text style={[styles.title, { color: textColor }]}>{listing?.title || "No title"}</Text>
+          <Text style={[styles.title, { color: theme.text }]}>{listing?.title || "No title"}</Text>
           {listing?.price && <Text style={styles.price}>₦{Number(listing.price).toLocaleString()}</Text>}
           {listing?.category && (
-            <Text style={[styles.category, { color: secondaryText }]}>
-              Category: {safeCategory(listing.category)}
-            </Text>
+            <Text style={[styles.category, { color: theme.textSecondary }]}>Category: {safeCategory(listing.category)}</Text>
           )}
-          {listing?.description && <Text style={[styles.description, { color: secondaryText }]}>{listing.description}</Text>}
+          {listing?.description && <Text style={[styles.description, { color: theme.textSecondary }]}>{listing.description}</Text>}
         </View>
 
-        {/* Seller section */}
-        <TouchableOpacity
-          onPress={() => goToProfile(posterId)}
-          style={[styles.vendorBox, { borderColor }]}
-        >
+        {/* Seller Section */}
+        <TouchableOpacity onPress={() => goToProfile(posterId)} style={[styles.vendorBox, { borderColor: theme.border }]}>
           <Avatar uri={poster.avatar} size={50} />
           <View style={{ marginLeft: 12, flex: 1 }}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Text style={[styles.vendorName, { color: textColor }]}>{poster.name}</Text>
+              <Text style={[styles.vendorName, { color: theme.text }]}>{poster.name}</Text>
               <VerificationBadge type={poster.verificationType} />
             </View>
             {loadingSeller ? (
               <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 6 }} />
-            ) : hasSellerRating ? (
+            ) : poster.averageRating > 0 || poster.reviewCount > 0 ? (
               <View style={styles.ratingRow}>
                 {[1, 2, 3, 4, 5].map((s) => (
                   <Ionicons
                     key={s}
-                    name={
-                      s <= Math.floor(poster.averageRating || 0)
-                        ? "star"
-                        : s <= (poster.averageRating || 0)
-                        ? "star-half"
-                        : "star-outline"
-                    }
+                    name={s <= Math.floor(poster.averageRating || 0) ? "star" : s <= (poster.averageRating || 0) ? "star-half" : "star-outline"}
                     size={13}
                     color={s <= (poster.averageRating || 0) ? "#FFA41C" : "#888"}
                     style={{ marginRight: 2 }}
                   />
                 ))}
-                <Text style={styles.ratingNumber}>
-                  {poster.averageRating?.toFixed(1) || "0.0"}
-                </Text>
-                <Text style={styles.reviewCountText}>
-                  • ({poster.reviewCount || 0})
-                </Text>
+                <Text style={styles.ratingNumber}>{poster.averageRating?.toFixed(1) || "0.0"}</Text>
+                <Text style={styles.reviewCountText}>• ({poster.reviewCount || 0})</Text>
               </View>
             ) : (
-              <Text style={{ fontSize: 13, color: secondaryText, fontStyle: "italic", marginTop: 6 }}>
-                No ratings yet
-              </Text>
+              <Text style={{ fontSize: 13, color: theme.textSecondary, fontStyle: "italic", marginTop: 6 }}>No ratings yet</Text>
             )}
-            <Text style={{ color: secondaryText }}>Tap to view profile</Text>
+            <Text style={{ color: theme.textSecondary }}>Tap to view profile</Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color={secondaryText} />
+          <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
         </TouchableOpacity>
 
         <View style={styles.inlineStats}>
           <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Ionicons name="chatbubble-outline" size={16} color={textColor} style={{ marginRight: 6 }} />
-            <Text style={{ color: textColor }}>
+            <Ionicons name="chatbubble-outline" size={16} color={theme.text} style={{ marginRight: 6 }} />
+            <Text style={{ color: theme.text }}>
               {loadingComments ? "Loading..." : `${getTotalCommentsCount(comments)} Comments`}
             </Text>
           </View>
@@ -585,14 +646,10 @@ export default function ListingDetails() {
 
         {/* Comments Preview */}
         <View style={{ paddingHorizontal: 16 }}>
-          {loadingComments ? (
-            renderSkeletonComments()
-          ) : rootComments.length === 0 ? (
+          {loadingComments ? renderSkeletonComments() : rootComments.length === 0 ? (
             <View style={styles.noCommentsPreview}>
-              <Ionicons name="chatbubble-outline" size={48} color={secondaryText} />
-              <Text style={[styles.noCommentsText, { color: secondaryText }]}>
-                No comments yet
-              </Text>
+              <Ionicons name="chatbubble-outline" size={48} color={theme.textSecondary} />
+              <Text style={[styles.noCommentsText, { color: theme.textSecondary }]}>No comments yet</Text>
             </View>
           ) : (
             rootComments.slice(0, 2).map((c) => (
@@ -602,60 +659,52 @@ export default function ListingDetails() {
                 </TouchableOpacity>
                 <View style={{ marginLeft: 12, flex: 1 }}>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <Text style={{ fontWeight: "600", color: textColor, fontSize: 15 }}>{c.userName}</Text>
+                    <Text style={{ fontWeight: "600", color: theme.text, fontSize: 15 }}>{c.userName}</Text>
                     <VerificationBadge type={c.verificationType} />
                   </View>
-                  {c.text && <Text style={{ color: secondaryText, marginTop: 4, lineHeight: 20 }}>{c.text}</Text>}
-                  <Text style={{ fontSize: 11, color: secondaryText, marginTop: 6 }}>
+                  {c.text && <Text style={{ color: theme.textSecondary, marginTop: 4, lineHeight: 20 }}>{c.text}</Text>}
+                  <Text style={{ fontSize: 11, color: theme.textSecondary, marginTop: 6 }}>
                     {c.timestamp ? timeAgo(c.timestamp.toDate()) : "Just now"}
                   </Text>
-                  {c.children.length > 0 && (
-                    <Text style={{ fontSize: 12, color: theme.primary, marginTop: 6, fontWeight: "500" }}>
-                      View {c.children.length} {c.children.length === 1 ? "reply" : "replies"}
-                    </Text>
-                  )}
                 </View>
               </View>
             ))
           )}
         </View>
 
-        {/* Fixed CTA row */}
-        <View style={[styles.actionRowFixed, { borderTopColor: borderColor }]}>
-          <TouchableOpacity
-            style={styles.actionButtonFixed}
-            onPress={() => {
-              if (!posterId) {
-                Alert.alert("Hold on", "Seller info is still loading, try again in a second.");
-                return;
-              }
-              navigation.navigate("RatingScreen", { targetUserId: posterId });
-            }}
-          >
+                {/* CTA Row - Updated: Comment shows actual count */}
+        <View style={[styles.actionRowFixed, { borderTopColor: theme.border }]}>
+          <TouchableOpacity style={styles.actionButtonFixed} onPress={() => posterId && navigation.navigate("RatingScreen", { targetUserId: posterId })}>
             <View style={styles.ctaPill}>
               <Ionicons name="star-outline" size={18} color="#888" />
               <Text style={styles.ctaText}>Rating</Text>
             </View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButtonFixed} onPress={() => setShowCommentModal(true)}>
+
+          <TouchableOpacity 
+            style={styles.actionButtonFixed} 
+            onPress={() => setShowCommentModal(true)}
+          >
             <View style={styles.ctaPill}>
               <Ionicons name="chatbubble-outline" size={18} color="#888" />
-              <Text style={styles.ctaText}>Comment</Text>
+              <Text style={styles.ctaText}>
+                {loadingComments ? "..." : getTotalCommentsCount(comments)}
+              </Text>
             </View>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionButtonFixed}
-            onPress={() => navigation.navigate("ReportScreen", { listingId: listing?.id, title: listing?.title })}
-          >
+
+          <TouchableOpacity style={styles.actionButtonFixed} onPress={() => navigation.navigate("ReportScreen", { listingId: listing?.id, title: listing?.title })}>
             <View style={styles.ctaPill}>
               <Ionicons name="flag-outline" size={18} color="#888" />
               <Text style={styles.ctaText}>Report</Text>
             </View>
           </TouchableOpacity>
         </View>
+
+
       </ScrollView>
 
-      {/* Full Comment Modal */}
+      {/* Comment Modal */}
       <Modal visible={showCommentModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setShowCommentModal(false)} />
@@ -681,17 +730,11 @@ export default function ListingDetails() {
                 enableOnAndroid={true}
                 extraScrollHeight={20}
               >
-                {loadingComments ? (
-                  renderSkeletonComments()
-                ) : comments.length === 0 ? (
+                {loadingComments ? renderSkeletonComments() : comments.length === 0 ? (
                   <View style={styles.noCommentsContainer}>
                     <Ionicons name="chatbubble-outline" size={64} color={theme.textSecondary} />
-                    <Text style={[styles.noCommentsTitle, { color: theme.textSecondary }]}>
-                      No comments yet
-                    </Text>
-                    <Text style={[styles.noCommentsSubtitle, { color: theme.textSecondary }]}>
-                      Be the first to comment on this listing!
-                    </Text>
+                    <Text style={[styles.noCommentsTitle, { color: theme.textSecondary }]}>No comments yet</Text>
+                    <Text style={[styles.noCommentsSubtitle, { color: theme.textSecondary }]}>Be the first to comment on this listing!</Text>
                   </View>
                 ) : (
                   comments.map((comment) => renderComment(comment))
@@ -700,7 +743,6 @@ export default function ListingDetails() {
               </KeyboardAwareScrollView>
             </View>
 
-            {/* Input section */}
             <View style={[styles.commentInputSectionFixed, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
               {sendStatus === "success" && (
                 <View style={[styles.successMessage, { backgroundColor: `rgba(0,255,127,0.1)` }]}>
@@ -712,13 +754,8 @@ export default function ListingDetails() {
               {replyToUser && (
                 <View style={[styles.replyIndicatorContainer, { backgroundColor: `rgba(1,122,107,0.1)` }]}>
                   <Ionicons name="arrow-undo" size={16} color={theme.primary} />
-                  <Text style={[styles.replyIndicatorText, { color: theme.primary }]}>
-                    Replying to {replyToUser}
-                  </Text>
-                  <TouchableOpacity onPress={() => {
-                    setReplyToUser(null);
-                    setReplyToCommentId(null);
-                  }}>
+                  <Text style={[styles.replyIndicatorText, { color: theme.primary }]}>Replying to {replyToUser}</Text>
+                  <TouchableOpacity onPress={() => { setReplyToUser(null); setReplyToCommentId(null); }}>
                     <Ionicons name="close-outline" size={18} color={theme.textSecondary} />
                   </TouchableOpacity>
                 </View>
@@ -739,14 +776,7 @@ export default function ListingDetails() {
                 </TouchableOpacity>
 
                 <TextInput
-                  style={[
-                    styles.commentInput,
-                    {
-                      backgroundColor: theme.inputBg,
-                      borderColor: theme.border,
-                      color: theme.text,
-                    },
-                  ]}
+                  style={[styles.commentInput, { backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.text }]}
                   placeholder={replyToUser ? `Reply to ${replyToUser}...` : "Add a comment..."}
                   placeholderTextColor={theme.textSecondary}
                   value={newComment}
@@ -756,23 +786,14 @@ export default function ListingDetails() {
                 />
 
                 <TouchableOpacity
-                  style={[
-                    styles.sendButton,
-                    (newComment.trim() || attachedImage)
-                      ? [styles.sendButtonActive, { backgroundColor: theme.primary }]
-                      : [styles.sendButtonInactive, { backgroundColor: theme.border }],
-                  ]}
+                  style={[styles.sendButton, (newComment.trim() || attachedImage) ? styles.sendButtonActive : styles.sendButtonInactive]}
                   onPress={handleSendComment}
                   disabled={sendStatus === "sending" || (!newComment.trim() && !attachedImage)}
                 >
                   {sendStatus === "sending" ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <Ionicons
-                      name="send"
-                      size={24}
-                      color={(newComment.trim() || attachedImage) ? "#fff" : theme.textSecondary}
-                    />
+                    <Ionicons name="send" size={24} color={(newComment.trim() || attachedImage) ? "#fff" : theme.textSecondary} />
                   )}
                 </TouchableOpacity>
               </View>
@@ -781,26 +802,63 @@ export default function ListingDetails() {
         </View>
       </Modal>
 
+      {/* Long Press Menu */}
+      {renderMenuOptions()}
+
       {/* Image Viewer Modal */}
       <Modal visible={imageViewerVisible} transparent>
         <View style={{ flex: 1, backgroundColor: "#000" }}>
-          <TouchableOpacity
-            style={{ position: "absolute", top: 50, right: 20, zIndex: 10 }}
-            onPress={() => setImageViewerVisible(false)}
-          >
+          <TouchableOpacity style={{ position: "absolute", top: 50, right: 20, zIndex: 10 }} onPress={() => setImageViewerVisible(false)}>
             <Ionicons name="close" size={40} color="#fff" />
           </TouchableOpacity>
           {imageViewerUri && (
-            <Image
-              source={{ uri: getImageUri(imageViewerUri) }}
-              style={{ width, height, resizeMode: "contain" }}
-            />
+            <Image source={{ uri: getImageUri(imageViewerUri) }} style={{ width, height, resizeMode: "contain" }} />
           )}
         </View>
       </Modal>
     </SafeAreaView>
   );
 }
+
+// Long press menu renderer
+const renderMenuOptions = () => {
+  if (!selectedComment) return null;
+
+  const isOwnComment = currentUser && 
+    (selectedComment.userId === currentUser.id || selectedComment.userId === currentUser.uid);
+
+  return (
+    <Modal visible={menuVisible} transparent animationType="fade">
+      <TouchableOpacity style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
+        <View style={styles.menuContainer}>
+          <TouchableOpacity style={styles.menuItem} onPress={() => replyToComment(selectedComment)}>
+            <Ionicons name="arrow-undo" size={20} color="#017a6b" />
+            <Text style={styles.menuText}>Reply</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.menuItem} onPress={() => copyComment(selectedComment.text || "")}>
+            <Ionicons name="copy-outline" size={20} color="#017a6b" />
+            <Text style={styles.menuText}>Copy</Text>
+          </TouchableOpacity>
+
+          {isOwnComment && (
+            <TouchableOpacity 
+              style={[styles.menuItem, { borderTopWidth: 1, borderTopColor: "#eee" }]} 
+              onPress={() => deleteComment(selectedComment.id)}
+            >
+              <Ionicons name="trash-outline" size={20} color="#ef4444" />
+              <Text style={[styles.menuText, { color: "#ef4444" }]}>Delete</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={styles.menuItem} onPress={() => setMenuVisible(false)}>
+            <Text style={[styles.menuText, { color: "#888" }]}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
 
 const styles = StyleSheet.create({
   imageWrapper: {
@@ -973,4 +1031,28 @@ const styles = StyleSheet.create({
   sendButton: { width: 54, height: 54, borderRadius: 27, justifyContent: "center", alignItems: "center" },
   sendButtonActive: { shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 12, elevation: 6 },
   sendButtonInactive: {},
+
+  // Long press menu styles
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  menuContainer: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingVertical: 8,
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+  },
+  menuText: {
+    fontSize: 17,
+    marginLeft: 16,
+    color: "#333",
+  },
 });

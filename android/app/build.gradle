@@ -1,6 +1,7 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
+
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
 react {
@@ -34,14 +35,25 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
     namespace 'com.roomlink.app'
+
     defaultConfig {
         missingDimensionStrategy "store", "play"
         applicationId 'com.roomlink.app'
-        minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "1.0.0"  // <-- Optional, update for clarity
+
+        // ⚡ Updated minSdkVersion to 24 to fix datetimepicker crash
+        minSdkVersion 24
+        targetSdkVersion 35
+        versionCode 8
+        versionName "1.0.5"
     }
+
+    // prevent Play Store device filtering
+    splits {
+        abi {
+            enable false
+        }
+    }
+
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -56,6 +68,7 @@ android {
             keyPassword MYAPP_UPLOAD_KEY_PASSWORD
         }
     }
+
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
@@ -70,11 +83,13 @@ android {
             crunchPngs true
         }
     }
+
     packagingOptions {
         jniLibs {
             useLegacyPackaging (findProperty('expo.useLegacyPackaging')?.toBoolean() ?: false)
         }
     }
+
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
@@ -114,7 +129,6 @@ dependencies {
         implementation jscFlavor
     }
 
-    // Google Play Billing Library (Added for RoomLink Pro subscription)
     implementation "com.android.billingclient:billing:7.0.0"
 }
 

@@ -1,5 +1,5 @@
-// context/NotificationContext.jsx — PRODUCTION SAFE
-import React, { createContext, useContext, useEffect, useState } from "react";
+// context/NotificationContext.jsx - FIXED FOR COLD START (New Accounts + Reopen)
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import {
   collection,
   query,
@@ -9,6 +9,8 @@ import {
   doc,
   updateDoc,
   serverTimestamp,
+  getDocs,
+  limit,
 } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useUser } from "./UserContext";
@@ -16,78 +18,124 @@ import { useUser } from "./UserContext";
 export const NotificationContext = createContext();
 
 export const NotificationProvider = ({ children }) => {
-  const { user } = useUser(); // Firebase auth user
+  const { user, loading: userLoading } = useUser();
+
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // 🔒 AUTH GUARD
-    if (!user?.uid) {
+    // Wait until UserContext is fully ready
+    if (userLoading) {
+      console.log("⏳ NotificationContext waiting for user...");
       setNotifications([]);
       setUnreadCount(0);
       return;
     }
 
+    const userId = user?.id || user?.uid;
+    if (!userId) {
+      console.log("⚠️ No userId in NotificationContext");
+      setNotifications([]);
+      setUnreadCount(0);
+      setLoading(false);
+      return;
+    }
+
+    console.log("✅ Starting notifications for user:", userId);
+
+    setLoading(true);
+
     const q = query(
       collection(db, "notifications"),
-      where("userId", "==", user.uid),
-      orderBy("createdAt", "desc")
+      where("userId", "==", userId),
+      orderBy("createdAt", "desc"),
+      limit(50)
     );
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const notifs = snapshot.docs.map(d => ({
+    // Initial fetch (very important for cold start)
+    const doInitialFetch = async (attempt = 1) => {
+      try {
+        const snapshot = await getDocs(q);
+        const notifs = snapshot.docs.map((d) => ({
           id: d.id,
           ...d.data(),
         }));
 
         setNotifications(notifs);
-        setUnreadCount(notifs.filter(n => !n.read).length);
+        setUnreadCount(notifs.filter((n) => !n.read).length);
+        console.log(`✅ Initial notifications loaded: ${notifs.length}`);
+      } catch (err) {
+        console.error(`Initial fetch attempt ${attempt} failed:`, err);
+        if (attempt < 3) {
+          setTimeout(() => doInitialFetch(attempt + 1), 800);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    doInitialFetch();
+
+    // Real-time listener
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const notifs = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+        setNotifications(notifs);
+        setUnreadCount(notifs.filter((n) => !n.read).length);
+        setLoading(false);
+        console.log(`📡 Live update: ${notifs.length} notifications`);
       },
       (error) => {
         console.error("Notification listener error:", error);
+        setLoading(false);
       }
     );
 
     return () => unsubscribe();
-  }, [user?.uid]);
+  }, [user?.id, user?.uid, userLoading]);   // Important: depend on userLoading too
 
-  const markAsRead = async (id) => {
-    if (!user?.uid) return;
-
+  const markAsRead = useCallback(async (id) => {
+    const userId = user?.id || user?.uid;
+    if (!userId) return;
     try {
       await updateDoc(doc(db, "notifications", id), {
         read: true,
         readAt: serverTimestamp(),
       });
-
-      setNotifications(prev =>
-        prev.map(n => (n.id === id ? { ...n, read: true } : n))
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read: true } : n))
       );
     } catch (e) {
       console.error("Failed to mark as read", e);
     }
-  };
+  }, [user?.id, user?.uid]);
 
-  const markAllAsRead = async () => {
-    if (!user?.uid) return;
-
+  const refreshNotifications = useCallback(async () => {
+    const userId = user?.id || user?.uid;
+    if (!userId) return;
+    setLoading(true);
     try {
-      await Promise.all(
-        notifications
-          .filter(n => !n.read)
-          .map(n =>
-            updateDoc(doc(db, "notifications", n.id), {
-              read: true,
-              readAt: serverTimestamp(),
-            })
-          )
+      const q = query(
+        collection(db, "notifications"),
+        where("userId", "==", userId),
+        orderBy("createdAt", "desc"),
+        limit(50)
       );
+      const snapshot = await getDocs(q);
+      const notifs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setNotifications(notifs);
+      setUnreadCount(notifs.filter((n) => !n.read).length);
     } catch (e) {
-      console.error("Failed to mark all as read", e);
+      console.error("Refresh failed", e);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [user?.id, user?.uid]);
 
   return (
     <NotificationContext.Provider
@@ -95,7 +143,8 @@ export const NotificationProvider = ({ children }) => {
         notifications,
         unreadCount,
         markAsRead,
-        markAllAsRead,
+        refreshNotifications,
+        loading,
       }}
     >
       {children}
@@ -103,5 +152,4 @@ export const NotificationProvider = ({ children }) => {
   );
 };
 
-// Optional hook
 export const useNotifications = () => useContext(NotificationContext);

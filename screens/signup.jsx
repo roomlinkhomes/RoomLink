@@ -22,9 +22,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { AuthContext } from "../context/AuthContext";
 import { countries } from "../constants/countries";
 import { db } from "../firebaseConfig";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { useNavigation } from "@react-navigation/native";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import notifee, { AndroidImportance } from '@notifee/react-native';
 
 const functions = getFunctions();
 
@@ -83,23 +84,19 @@ export default function Signup() {
     const timer = setTimeout(() => {
       setDebouncedUsername(username.trim().toLowerCase());
     }, 600);
-
     return () => clearTimeout(timer);
   }, [username]);
 
   // Username availability check
   useEffect(() => {
     const clean = debouncedUsername;
-
     if (clean.length < 5) {
       setUsernameAvailable(null);
       setCheckingUsername(false);
       return;
     }
-
     setCheckingUsername(true);
     setUsernameAvailable(null);
-
     const checkUsername = async () => {
       try {
         const usernameRef = doc(db, "usernames", clean);
@@ -112,7 +109,6 @@ export default function Signup() {
         setCheckingUsername(false);
       }
     };
-
     checkUsername();
   }, [debouncedUsername]);
 
@@ -150,20 +146,69 @@ export default function Signup() {
       tempErrors.password = "1 uppercase, 1 number, 1 special, min 6";
 
     if (password !== confirmPassword) tempErrors.confirmPassword = "No match";
-
     if (!agree) tempErrors.agree = "Agree to terms";
-
     if (!selectedCountry) tempErrors.country = "Select country";
 
     setErrors(tempErrors);
     return Object.keys(tempErrors).length === 0;
   };
 
+  const saveUserProfile = async (uid) => {
+    try {
+      const userRef = doc(db, "users", uid);
+      await setDoc(userRef, {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        fullName: `${firstName.trim()} ${lastName.trim()}`,
+        username: username.trim().toLowerCase(),
+        email: email.trim().toLowerCase(),
+        country: selectedCountry?.code || "NG",
+        currency: selectedCountry?.symbol || "₦",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      console.log("✅ User profile saved to Firestore for UID:", uid);
+    } catch (error) {
+      console.error("Failed to save user profile:", error);
+    }
+  };
+
+  const showAccountCreatedNotification = async () => {
+    const displayName = firstName.trim() ? firstName.trim() : "there";
+    try {
+      const channelId = await notifee.createChannel({
+        id: 'signup_channel',
+        name: 'Signup Notifications',
+        importance: AndroidImportance.HIGH,
+        sound: 'default',
+        vibration: true,
+        lights: true,
+        lightColor: '#017a6b',
+      });
+      await notifee.displayNotification({
+        title: `✅ Welcome, ${displayName}!`,
+        body: "Your account has been created successfully. Please check your email for the OTP verification code to verify your email and proceed to login.",
+        android: {
+          channelId,
+          importance: AndroidImportance.HIGH,
+          smallIcon: 'ic_launcher',
+          pressAction: { id: 'default' },
+        },
+        ios: {
+          sound: 'default',
+        },
+      });
+    } catch (error) {
+      console.error("Failed to show notification:", error);
+      Alert.alert(`Welcome, ${displayName}!`, "Your account has been created successfully. Please check your email for the OTP code.");
+    }
+  };
+
   const handleSendOTP = async () => {
     if (!validate() || usernameAvailable !== true) return;
 
     setLoading(true);
-
     try {
       const sendSignupOTP = httpsCallable(functions, "sendSignupOTP");
       await sendSignupOTP({
@@ -171,14 +216,19 @@ export default function Signup() {
         name: `${firstName.trim()} ${lastName.trim()}`,
       });
 
-      navigation.navigate("OtpVerification", {
-        email: email.trim(),
-        password: password.trim(),
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        username: username.trim().toLowerCase(),
-        country: selectedCountry,
-      });
+      await showAccountCreatedNotification();
+
+      setTimeout(() => {
+        navigation.navigate("OtpVerification", {
+          email: email.trim(),
+          password: password.trim(),
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          username: username.trim().toLowerCase(),
+          country: selectedCountry,
+          onSaveProfile: saveUserProfile,
+        });
+      }, 1600);
     } catch (error) {
       console.error("OTP send failed:", error);
       let msg = "Failed to send OTP. Try again.";
@@ -196,7 +246,6 @@ export default function Signup() {
     setCountryModalVisible(false);
   };
 
-  // Open Privacy Policy
   const openPrivacyPolicy = () => {
     Linking.openURL("https://roomlink.homes/privacy").catch((err) => {
       console.error("Failed to open privacy policy:", err);
@@ -237,7 +286,6 @@ export default function Signup() {
             >
               <Text style={[styles.rlText, { color: theme.primary }]}>RL</Text>
             </View>
-
             <View style={styles.headerContent}>
               <Text style={[styles.welcomeTitle, { color: theme.text }]}>
                 Create Account
@@ -267,6 +315,8 @@ export default function Signup() {
                 placeholder="Select country"
                 placeholderTextColor={theme.textSecondary}
                 editable={false}
+                selectTextOnFocus={false}
+                contextMenuHidden={true}
                 outlineColor={errors.country ? theme.error : theme.border}
                 activeOutlineColor={errors.country ? theme.error : theme.primary}
                 style={{ backgroundColor: "transparent" }}
@@ -294,6 +344,8 @@ export default function Signup() {
                 label="First Name"
                 placeholder="Your first name"
                 placeholderTextColor={theme.textSecondary}
+                selectTextOnFocus={false}
+                contextMenuHidden={true}
                 outlineColor={errors.firstName ? theme.error : theme.border}
                 activeOutlineColor={errors.firstName ? theme.error : theme.primary}
                 style={{ backgroundColor: "transparent" }}
@@ -319,6 +371,8 @@ export default function Signup() {
                 label="Last Name"
                 placeholder="Your last name"
                 placeholderTextColor={theme.textSecondary}
+                selectTextOnFocus={false}
+                contextMenuHidden={true}
                 outlineColor={errors.lastName ? theme.error : theme.border}
                 activeOutlineColor={errors.lastName ? theme.error : theme.primary}
                 style={{ backgroundColor: "transparent" }}
@@ -345,6 +399,8 @@ export default function Signup() {
                 placeholder="e.g. roomlink_bro"
                 placeholderTextColor={theme.textSecondary}
                 autoCapitalize="none"
+                selectTextOnFocus={false}
+                contextMenuHidden={true}
                 outlineColor={
                   checkingUsername ? theme.primary :
                   usernameAvailable === true ? theme.success :
@@ -394,6 +450,8 @@ export default function Signup() {
                 placeholderTextColor={theme.textSecondary}
                 keyboardType="email-address"
                 autoCapitalize="none"
+                selectTextOnFocus={false}
+                contextMenuHidden={true}
                 outlineColor={errors.email ? theme.error : theme.border}
                 activeOutlineColor={errors.email ? theme.error : theme.primary}
                 style={{ backgroundColor: "transparent" }}
@@ -420,6 +478,10 @@ export default function Signup() {
                 label="Password"
                 placeholder="••••••••"
                 placeholderTextColor={theme.textSecondary}
+                selectTextOnFocus={false}
+                contextMenuHidden={true}
+                autoComplete="off"
+                textContentType="oneTimeCode"
                 outlineColor={errors.password ? theme.error : theme.border}
                 activeOutlineColor={errors.password ? theme.error : theme.primary}
                 style={{ backgroundColor: "transparent" }}
@@ -453,6 +515,10 @@ export default function Signup() {
                 label="Confirm Password"
                 placeholder="••••••••"
                 placeholderTextColor={theme.textSecondary}
+                selectTextOnFocus={false}
+                contextMenuHidden={true}
+                autoComplete="off"
+                textContentType="oneTimeCode"
                 outlineColor={errors.confirmPassword ? theme.error : theme.border}
                 activeOutlineColor={errors.confirmPassword ? theme.error : theme.primary}
                 style={{ backgroundColor: "transparent" }}
@@ -548,7 +614,6 @@ export default function Signup() {
                     <Ionicons name="close" size={24} color={theme.primary} />
                   </TouchableOpacity>
                 </View>
-
                 <TextInput
                   value={search}
                   onChangeText={setSearch}
@@ -558,6 +623,8 @@ export default function Signup() {
                   style={[styles.searchInput, { color: theme.text }]}
                   outlineColor={theme.border}
                   activeOutlineColor={theme.primary}
+                  selectTextOnFocus={false}
+                  contextMenuHidden={true}
                   theme={{
                     colors: {
                       onSurfaceVariant: theme.textSecondary,
@@ -567,7 +634,6 @@ export default function Signup() {
                   }}
                   left={<TextInput.Icon icon="magnify" color={theme.primary} />}
                 />
-
                 <FlatList
                   data={filteredCountries}
                   keyExtractor={(item) => item.code}

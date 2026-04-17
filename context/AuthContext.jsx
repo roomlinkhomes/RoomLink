@@ -1,18 +1,9 @@
 // context/AuthContext.jsx
-// FIXED: Removed old Expo Notifications push token logic
-// Now relies on utils/pushNotifications.js (FCM) for push token handling
-
 import React, { createContext, useContext, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { auth, db } from "../firebaseConfig";
-import {
-  onAuthStateChanged,
-  signOut,
-  reauthenticateWithCredential,
-  EmailAuthProvider,
-  updatePassword,
-} from "firebase/auth";
+import { onAuthStateChanged, signOut, reauthenticateWithCredential, EmailAuthProvider, updatePassword } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "../firebaseConfig";
 
 export const AuthContext = createContext();
 
@@ -22,12 +13,15 @@ export const AuthProvider = ({ children }) => {
   const [userCountry, setUserCountry] = useState("NG");
   const [userCurrency, setUserCurrency] = useState("₦");
 
-  // Core: Listen to Firebase auth state (real long-term persistence)
+  // ==================== MAIN AUTH LISTENER ====================
   useEffect(() => {
+    console.log("🔥 AuthProvider: Starting onAuthStateChanged listener");
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log("📡 Auth state changed →", firebaseUser ? `UID: ${firebaseUser.uid}` : "NULL (no user)");
+
       if (firebaseUser) {
         try {
-          // Fetch latest profile from Firestore
           const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
           const profile = userDoc.exists() ? userDoc.data() : {};
 
@@ -42,38 +36,41 @@ export const AuthProvider = ({ children }) => {
             role: profile.role || "tenant",
             phone: profile.phone || null,
             avatar: profile.avatar || null,
-            // Add more fields from Firestore as needed
           };
 
           setUser(enhancedUser);
+          console.log("✅ User successfully restored with profile");
 
-          // Optional: backup minimal non-sensitive data locally
-          await AsyncStorage.setItem("user", JSON.stringify(enhancedUser));
+          // Backup to AsyncStorage as fallback
+          await AsyncStorage.setItem("persistedUser", JSON.stringify(enhancedUser));
         } catch (err) {
-          console.error("Failed to load profile:", err);
+          console.error("❌ Failed to load user profile from Firestore:", err);
           setUser(null);
         }
       } else {
+        console.log("❌ No authenticated user from Firebase");
         setUser(null);
-        await AsyncStorage.removeItem("user");
+        await AsyncStorage.removeItem("persistedUser");
       }
 
-      setLoading(false); // Only hide splash/loading after real state is known
+      setLoading(false);
     });
 
-    return () => unsubscribe();
+    // Safety net: Force stop loading if listener takes too long
+    const timeout = setTimeout(() => {
+      if (loading) {
+        console.warn("⏰ Auth loading timeout - forcing loading = false");
+        setLoading(false);
+      }
+    }, 3500);
+
+    return () => {
+      unsubscribe();
+      clearTimeout(timeout);
+    };
   }, []);
 
-  // Save country/currency changes (non-auth related)
-  useEffect(() => {
-    if (userCountry) AsyncStorage.setItem("userCountry", userCountry);
-  }, [userCountry]);
-
-  useEffect(() => {
-    if (userCurrency) AsyncStorage.setItem("userCurrency", userCurrency);
-  }, [userCurrency]);
-
-  // Load extras on mount
+  // ==================== COUNTRY & CURRENCY ====================
   useEffect(() => {
     const loadExtras = async () => {
       try {
@@ -88,14 +85,23 @@ export const AuthProvider = ({ children }) => {
     loadExtras();
   }, []);
 
+  useEffect(() => {
+    if (userCountry) AsyncStorage.setItem("userCountry", userCountry);
+  }, [userCountry]);
+
+  useEffect(() => {
+    if (userCurrency) AsyncStorage.setItem("userCurrency", userCurrency);
+  }, [userCurrency]);
+
+  // ==================== AUTH FUNCTIONS ====================
   const logout = async () => {
     try {
-      await signOut(auth); // Triggers listener → user = null
+      await signOut(auth);
       setUser(null);
       setUserCountry("NG");
       setUserCurrency("₦");
-      await AsyncStorage.multiRemove(["user", "userCountry", "userCurrency"]);
-      console.log("Logout complete");
+      await AsyncStorage.multiRemove(["user", "persistedUser", "userCountry", "userCurrency"]);
+      console.log("✅ Logout completed");
     } catch (error) {
       console.error("Logout failed:", error);
       throw error;
@@ -112,12 +118,9 @@ export const AuthProvider = ({ children }) => {
     return "Password changed successfully!";
   };
 
-  // Optional: update profile fields (call after Firestore update if needed)
   const updateUser = (updatedFields) => {
     if (!user) return;
     setUser((prev) => ({ ...prev, ...updatedFields }));
-    // Optional AsyncStorage backup
-    AsyncStorage.setItem("user", JSON.stringify({ ...user, ...updatedFields }));
   };
 
   return (
@@ -125,6 +128,7 @@ export const AuthProvider = ({ children }) => {
       value={{
         user,
         loading,
+        isAuthenticated: !!user && !loading,     // ← Very important
         logout,
         changePassword,
         updateUser,
@@ -139,4 +143,10 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+};

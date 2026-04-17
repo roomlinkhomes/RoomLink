@@ -1,6 +1,5 @@
-// screens/Home.jsx — FIXED: Trust Badge added (identical to HotelFeed)
-
-import React, { useState, useEffect, useContext, useMemo, useRef, useCallback } from "react";
+// screens/Home.jsx
+import React, { useState, useEffect, useContext, useMemo, useRef, memo, useCallback } from "react";
 import {
   View,
   Text,
@@ -31,12 +30,9 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useListingTab } from "../context/ListingTabContext";
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
 
-// Trust Badge
-import Trust from "../component/Trust";   // ← Added
-
-// SVG badges
+// Trust Badge & SVGs
+import Trust from "../component/Trust";
 import BlueBadge from "../assets/icons/blue.svg";
 import YellowBadge from "../assets/icons/yellow.svg";
 import RedBadge from "../assets/icons/red.svg";
@@ -87,12 +83,272 @@ const safeString = (value, fallback = "Not specified") => {
   return value?.name || fallback;
 };
 
+const getDefaultAvatar = (name) => (!name ? "U" : name.charAt(0).toUpperCase());
+
+// Memoized Post Item
+const PostItem = memo(({
+  item,
+  index,
+  menuVisible,
+  setMenuVisible,
+  userInfoMap,
+  authUser,
+  dynamicStyles,
+  navigation
+}) => {
+  const isMyPost = item.userId === authUser?.uid;
+  const ownerId = item.userId || item.user?.id || item.user?._id || item.author;
+  const userInfo = userInfoMap[ownerId] || {};
+
+  let avatarUri = item.userAvatar;
+  if (!avatarUri) {
+    avatarUri = userInfo.avatar || (isMyPost ? authUser?.avatar || authUser?.photoURL : null);
+  }
+
+  const fullName = userInfo.name || getFullName(authUser) || "User";
+  const isVerified = userInfo.isVerified === true;
+  const verificationType = userInfo.verificationType;
+  const hasRating = userInfo.averageRating > 0 || userInfo.reviewCount > 0;
+
+  // Extract images properly
+  const images = Array.isArray(item.images) && item.images.length > 0
+    ? item.images
+    : item.image ? [item.image] : [];
+
+  const firstImage = images[0] || null;
+
+  const hasMultiple = images.length > 1;
+  const imageCount = images.length;
+  const isBoosted = item.boostedUntil && new Date(item.boostedUntil) > new Date();
+
+  const handlePressListing = () => {
+    if (authUser && authUser.uid !== ownerId) {
+      const viewRef = doc(db, "listings", item.id, "views", authUser.uid);
+      setDoc(viewRef, { timestamp: Date.now() }, { merge: true }).catch(() => {});
+    }
+    navigation.navigate("ListingDetails", { listing: item });
+  };
+
+  const handleMessageHost = () => {
+    if (!ownerId) {
+      return Alert.alert("Error", "Cannot message: User not found");
+    }
+
+    const serializableListing = {
+      id: item.id,
+      title: item.title,
+      images: images,
+      priceMonthly: item.priceMonthly,
+      priceYearly: item.priceYearly,
+      location: item.location,
+      description: item.description || "",
+      category: item.category?.name || item.category || null,
+      rented: item.rented || false,
+      userId: ownerId,
+      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    };
+
+    navigation.navigate("Messages", {
+      screen: "Message",
+      params: {
+        listingId: item.id,
+        listingOwnerId: ownerId,
+        tenantId: authUser?.uid || "",
+        listingTitle: item.title,
+        listing: serializableListing,
+        ownerInfo: {
+          uid: ownerId,
+          name: fullName,
+          avatar: avatarUri,
+          isVerified: isVerified,
+          verificationType: verificationType,
+        }
+      },
+    });
+  };
+
+  const handleShare = async () => {
+    try {
+      await Share.share({
+        message: `Check this listing: ${item.title}\nhttps://roomlink.homes/listing/${item.id || ""}`,
+      });
+    } catch (err) {}
+    setMenuVisible(null);
+  };
+
+  const handleCopy = async () => {
+    await Clipboard.setStringAsync(`https://roomlink.homes/listing/${item.id || ""}`);
+    Alert.alert("Link copied!");
+    setMenuVisible(null);
+  };
+
+  return (
+    <TouchableWithoutFeedback onPress={() => menuVisible !== null && setMenuVisible(null)}>
+      <View style={[styles.card, dynamicStyles.cardBg, dynamicStyles.cardBorder]}>
+        <View style={styles.userRow}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => {
+              if (!ownerId) return Alert.alert("Error", "User profile not available");
+              if (global.lastProfileTap && Date.now() - global.lastProfileTap < 500) return;
+              global.lastProfileTap = Date.now();
+              navigation.navigate("Profile", { userId: ownerId });
+            }}
+          >
+            {avatarUri ? (
+              <Image source={{ uri: avatarUri }} style={styles.avatar} resizeMode="cover" />
+            ) : userInfoMap[ownerId] ? (
+              <View style={[styles.avatar, styles.defaultAvatar]}>
+                <Text style={styles.defaultAvatarText}>{getDefaultAvatar(fullName)}</Text>
+              </View>
+            ) : (
+              <View style={[styles.avatar, dynamicStyles.skeletonBg]} />
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.nameContainer}>
+            <View style={styles.nameRow}>
+              <Text style={[styles.userName, dynamicStyles.textColor]}>{fullName}</Text>
+              {isVerified && <Trust text="Verified Host" />}
+              {verificationType === "vendor" && <YellowBadge width={24} height={24} style={{ marginLeft: 6 }} />}
+              {verificationType === "studentLandlord" && <BlueBadge width={24} height={24} style={{ marginLeft: 6 }} />}
+              {verificationType === "realEstate" && <RedBadge width={24} height={24} style={{ marginLeft: 6 }} />}
+            </View>
+
+            <View style={styles.secondaryRow}>
+              {hasRating && (
+                <View style={styles.ratingRow}>
+                  {[1, 2, 3, 4, 5].map((s) => (
+                    <Ionicons
+                      key={s}
+                      name={s <= Math.floor(userInfo.averageRating || 0) ? "star" : s <= (userInfo.averageRating || 0) ? "star-half" : "star-outline"}
+                      size={11}
+                      color={s <= (userInfo.averageRating || 0) ? "#017a6b" : "#888"}
+                      style={{ marginRight: 1 }}
+                    />
+                  ))}
+                  <Text style={styles.ratingText}>{userInfo.averageRating?.toFixed(1) || "0.0"}</Text>
+                </View>
+              )}
+              <Text style={[dynamicStyles.secondaryText, styles.timestamp]}>
+                {timeAgo(item.createdAt)}
+                {hasRating && " • "}
+                {hasRating && <Text style={styles.reviewCount}>({userInfo.reviewCount})</Text>}
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            onPress={() => setMenuVisible(menuVisible === index ? null : index)}
+            style={styles.menuButton}
+            hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color={dynamicStyles.textColor.color} />
+          </TouchableOpacity>
+
+          {menuVisible === index && (
+            <View style={[styles.dropdownContainer, dynamicStyles.dropdownBg]}>
+              <TouchableOpacity onPress={handleShare}>
+                <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Share</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleCopy}>
+                <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Copy Link</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        <TouchableOpacity activeOpacity={0.95} onPress={handlePressListing}>
+          {isBoosted && (
+            <View style={styles.boostedBadge}>
+              <Ionicons name="flame" size={16} color="#FF9500" />
+              <Text style={styles.boostedBadgeText}>Boosted</Text>
+            </View>
+          )}
+
+          {images.length > 0 ? (
+            <View style={styles.imagesContainer}>
+              <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={styles.imageScroll}>
+                {images.map((imgUri, imgIndex) => (
+                  <View key={imgIndex} style={styles.imageWrapper}>
+                    <Image source={{ uri: imgUri }} style={styles.postImage} resizeMode="cover" />
+                    {hasMultiple && imgIndex === 0 && (
+                      <View style={styles.imageCountBadge}>
+                        <Ionicons name="camera-outline" size={14} color="#fff" style={{ marginRight: 4 }} />
+                        <Text style={styles.imageCountText}>{imageCount}</Text>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          ) : (
+            <View style={[styles.postImage, dynamicStyles.noImageBg, { justifyContent: "center", alignItems: "center" }]}>
+              <Text style={{ color: dynamicStyles.secondaryText.color }}>No Media</Text>
+            </View>
+          )}
+
+          <View style={styles.listingInfo}>
+            {item.rented && (
+              <View style={styles.rentedBadge}>
+                <Text style={styles.rentedText}>RENTED</Text>
+              </View>
+            )}
+            <Text style={[styles.listingTitle, dynamicStyles.textColor]}>{item.title}</Text>
+            <Text style={[styles.price, dynamicStyles.priceColor]}>
+              {formatPrice(item.priceMonthly, item.priceYearly)}
+            </Text>
+
+            {/* FIXED: Location now wraps to new line */}
+            <View style={styles.locationRow}>
+              <Ionicons 
+                name="location-outline" 
+                size={16} 
+                color={dynamicStyles.secondaryText.color} 
+                style={styles.locationIcon} 
+              />
+              <Text 
+                style={[dynamicStyles.secondaryText, { flex: 1, flexWrap: "wrap" }]} 
+                numberOfLines={2}
+              >
+                {safeString(item.location)}
+              </Text>
+            </View>
+
+            <View style={styles.ctaContainer}>
+              <TouchableOpacity style={styles.messageHostButton} onPress={handleMessageHost}>
+                <Ionicons name="chatbubble-ellipses-outline" size={18} color="#888" />
+                <Text style={styles.messageHostText}>Message Host</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.scheduleVisitButton}
+                onPress={() => {
+                  navigation.navigate("EventScheduler", {
+                    listingId: item.id,
+                    listingTitle: item.title,
+                    ownerId,
+                    listingImage: firstImage,
+                  });
+                }}
+              >
+                <Ionicons name="calendar-outline" size={18} color="#888" />
+                <Text style={styles.scheduleVisitText}>Schedule Visit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </View>
+    </TouchableWithoutFeedback>
+  );
+});
+
 export default function Home({ navigation }) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const { listings = [], loading: contextLoading } = useContext(ListingContext) || {};
   const { user: authUser } = useContext(AuthContext);
-  const { activeTab, setActiveTab } = useListingTab();
+  const { activeTab } = useListingTab();
   const insets = useSafeAreaInsets();
 
   const [posts, setPosts] = useState([]);
@@ -102,106 +358,29 @@ export default function Home({ navigation }) {
   const [userInfoMap, setUserInfoMap] = useState({});
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [hasNewPosts, setHasNewPosts] = useState(false);
+  const [isAtTop, setIsAtTop] = useState(true);
+
   const scrollY = useRef(new Animated.Value(0)).current;
+  const flatListRef = useRef(null);
+  const previousPostCount = useRef(0);
 
-  useEffect(() => {
-    console.log('[HOME DEBUG] Auth user:', authUser ? authUser.uid : 'NO USER');
-  }, [authUser]);
+  const handleHomeTap = useCallback(() => {
+    if (!flatListRef.current || activeTab === "hotels") return;
 
-  useEffect(() => {
-    console.log('[HOME] Triggering post update → user:', authUser?.uid || 'none');
-
-    if (!authUser?.uid || contextLoading) {
-      console.log('[HOME] No user or loading → clearing posts');
-      setPosts([]);
-      return;
+    if (isAtTop) {
+      setRefreshing(true);
+      const filtered = listings.filter((l) => l.listingType !== "hotels");
+      setPosts(filtered);
+      setHasNewPosts(false);
+      setTimeout(() => setRefreshing(false), 1200);
+    } else {
+      flatListRef.current.scrollToOffset({ offset: 0, animated: true });
     }
-
-    let filtered = listings.filter((l) => l.listingType !== "hotels");
-
-    if (activeTab === "hotels") {
-      filtered = [];
-      console.log('[HOME] Active tab is hotels → cleared posts');
-    }
-
-    if (activeCategory !== "All") {
-      const search = activeCategory.toString().toLowerCase();
-      filtered = filtered.filter((item) => {
-        const title = (item.title || "").toLowerCase();
-        const desc = (item.description || "").toLowerCase();
-        const catName = (item.category?.name || item.category || "").toLowerCase();
-        return title.includes(search) || desc.includes(search) || catName === search;
-      });
-      console.log('[HOME] Applied category filter:', activeCategory, '→', filtered.length, 'posts');
-    }
-
-    console.log('[HOME] Final filtered posts count:', filtered.length);
-    setPosts(filtered);
-  }, [listings, authUser?.uid, activeTab, activeCategory, contextLoading]);
-
-  // Fetch user info including isVerified for Trust badge
-  useEffect(() => {
-    const fetchMissingUserInfo = async () => {
-      const uniqueUserIds = [...new Set(posts.map((p) => p.userId).filter(Boolean))];
-      const missingIds = uniqueUserIds.filter((uid) => !userInfoMap[uid]);
-
-      if (missingIds.length === 0) return;
-
-      const newInfo = { ...userInfoMap };
-
-      await Promise.all(
-        missingIds.map(async (uid) => {
-          try {
-            const userDoc = await getDoc(doc(db, "users", uid));
-            if (userDoc.exists()) {
-              const data = userDoc.data();
-              newInfo[uid] = {
-                name: getFullName(data),
-                avatar: data.avatar || data.photoURL || data.profileImage || null,
-                isVerified: data.isVerified === true || data.verificationStatus === "approved", // ← Trust badge control
-                verificationType: data.verificationType || null,
-                averageRating: data.averageRating || 0,
-                reviewCount: data.reviewCount || 0,
-              };
-            } else {
-              newInfo[uid] = { 
-                name: "User", 
-                avatar: null, 
-                isVerified: false, 
-                verificationType: null, 
-                averageRating: 0, 
-                reviewCount: 0 
-              };
-            }
-          } catch (err) {
-            console.warn(`Failed to fetch user ${uid}:`, err);
-            newInfo[uid] = { 
-              name: "User", 
-              avatar: null, 
-              isVerified: false, 
-              verificationType: null, 
-              averageRating: 0, 
-              reviewCount: 0 
-            };
-          }
-        })
-      );
-
-      setUserInfoMap((prev) => ({ ...prev, ...newInfo }));
-    };
-
-    if (posts.length > 0) {
-      fetchMissingUserInfo();
-    }
-  }, [posts]);
+  }, [isAtTop, listings, activeTab]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setShowSkeleton(false), 3000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    global.scrollToTop = () => {};
+    global.scrollToTop = handleHomeTap;
     global.openFilter = () => setFilterVisible(true);
     global.applyCategory = (category) => {
       setActiveCategory(category || "All");
@@ -217,264 +396,94 @@ export default function Home({ navigation }) {
       }
       setPosts(filtered);
     };
+
     return () => {
-      delete global.applyCategory;
-      delete global.openFilter;
       delete global.scrollToTop;
+      delete global.openFilter;
+      delete global.applyCategory;
     };
-  }, [listings, activeTab]);
+  }, [handleHomeTap, listings]);
 
-  const dynamicStyles = useMemo(
-    () => ({
-      containerBg: { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
-      cardBg: { backgroundColor: isDark ? "#2a2a2a" : "#fff" },
-      cardBorder: { borderBottomColor: isDark ? "#444" : "#ddd" },
-      textColor: { color: isDark ? "#fff" : "#000" },
-      secondaryText: { color: isDark ? "#aaa" : "gray" },
-      priceColor: { color: isDark ? "#aaa" : "#888" },
-      noImageBg: { backgroundColor: isDark ? "#3a3a3a" : "#eee" },
-      dropdownBg: { backgroundColor: isDark ? "#333" : "#fff" },
-      dropdownText: { color: isDark ? "#fff" : "#111" },
-      skeletonBg: { backgroundColor: isDark ? "#333" : "#eee" },
-    }),
-    [isDark]
-  );
-
-  const getDefaultAvatar = (name) => (!name ? "U" : name.charAt(0).toUpperCase());
-
-  const handleShare = async (item) => {
-    try {
-      await Share.share({
-        message: `Check this listing: ${item.title}\nhttps://roomlink.homes/listing/${item.id || ""}`,
-      });
-    } catch (err) {}
-    setMenuVisible(null);
-  };
-
-  const handleCopy = async (item) => {
-    await Clipboard.setStringAsync(`https://roomlink.homes/listing/${item.id || ""}`);
-    Alert.alert("Link copied!");
-    setMenuVisible(null);
-  };
-
-  const SkeletonPost = () => (
-    <View style={[styles.card, dynamicStyles.cardBg, dynamicStyles.cardBorder]}>
-      <View style={styles.userRow}>
-        <View style={[styles.avatar, dynamicStyles.skeletonBg]} />
-        <View style={{ marginLeft: 10, flex: 1 }}>
-          <View style={{ width: 140, height: 16, backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 8 }} />
-          <View style={{ width: 80, height: 12, backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 6, marginTop: 6 }} />
-        </View>
-      </View>
-      <View style={{ width: SCREEN_WIDTH, height: 250, backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 12 }} />
-      <View style={{ padding: 10 }}>
-        <View style={{ height: 20, width: "80%", backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 8, marginBottom: 8 }} />
-        <View style={{ height: 24, width: "60%", backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 8, marginBottom: 8 }} />
-        <View style={{ height: 16, width: "40%", backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 6 }} />
-      </View>
-    </View>
-  );
-
-  const renderPost = ({ item, index }) => {
-    const isMyPost = item.userId === authUser?.uid;
-    const ownerId = item.userId || item.user?.id || item.user?._id || item.author;
-    const userInfo = userInfoMap[ownerId] || {};
-
-    let avatarUri = item.userAvatar;
-    if (!avatarUri) {
-      avatarUri = userInfo.avatar || (isMyPost ? authUser?.avatar || authUser?.photoURL : null);
+  useEffect(() => {
+    if (posts.length > previousPostCount.current && !isAtTop) {
+      setHasNewPosts(true);
     }
-    if (avatarUri) avatarUri = `${avatarUri}?v=${Date.now()}`;
+    previousPostCount.current = posts.length;
+  }, [posts.length, isAtTop]);
 
-    const fullName = userInfo.name || getFullName(authUser) || "User";
-    const isVerified = userInfo.isVerified === true;                    // ← Trust badge control
-    const verificationType = userInfo.verificationType;
-    const hasRating = userInfo.averageRating > 0 || userInfo.reviewCount > 0;
+  useEffect(() => {
+    if (!authUser?.uid || contextLoading) {
+      setPosts([]);
+      return;
+    }
 
-    const images = Array.isArray(item.images) && item.images.length > 0
-      ? item.images
-      : item.image ? [item.image] : [];
-    const hasMultiple = images.length > 1;
-    const imageCount = images.length;
+    let filtered = listings.filter((l) => l.listingType !== "hotels");
 
-    const isBoosted = item.boostedUntil && new Date(item.boostedUntil) > new Date();
+    if (activeTab === "hotels") filtered = [];
 
-    const handlePressListing = () => {
-      if (authUser && authUser.uid !== ownerId) {
-        const viewRef = doc(db, "listings", item.id, "views", authUser.uid);
-        setDoc(viewRef, { timestamp: Date.now() }, { merge: true }).catch(() => {});
-      }
-      navigation.navigate("ListingDetails", { listing: item });
+    if (activeCategory !== "All") {
+      const search = activeCategory.toString().toLowerCase();
+      filtered = filtered.filter((item) => {
+        const title = (item.title || "").toLowerCase();
+        const desc = (item.description || "").toLowerCase();
+        const catName = (item.category?.name || item.category || "").toLowerCase();
+        return title.includes(search) || desc.includes(search) || catName === search;
+      });
+    }
+
+    setPosts(filtered);
+  }, [listings, authUser?.uid, activeTab, activeCategory, contextLoading]);
+
+  useEffect(() => {
+    const fetchMissingUserInfo = async () => {
+      const uniqueUserIds = [...new Set(posts.map((p) => p.userId).filter(Boolean))];
+      const missingIds = uniqueUserIds.filter((uid) => !userInfoMap[uid]);
+      if (missingIds.length === 0) return;
+
+      const newInfo = { ...userInfoMap };
+      await Promise.all(
+        missingIds.map(async (uid) => {
+          try {
+            const userDoc = await getDoc(doc(db, "users", uid));
+            if (userDoc.exists()) {
+              const data = userDoc.data();
+              newInfo[uid] = {
+                name: getFullName(data),
+                avatar: data.avatar || data.photoURL || data.profileImage || null,
+                isVerified: data.isVerified === true,
+                verificationType: data.verificationType || null,
+                averageRating: data.averageRating || 0,
+                reviewCount: data.reviewCount || 0,
+              };
+            }
+          } catch (err) {
+            console.warn(`Failed to fetch user ${uid}:`, err);
+          }
+        })
+      );
+      setUserInfoMap((prev) => ({ ...prev, ...newInfo }));
     };
 
-    return (
-      <TouchableWithoutFeedback onPress={() => menuVisible !== null && setMenuVisible(null)}>
-        <View style={[styles.card, dynamicStyles.cardBg, dynamicStyles.cardBorder]}>
-          <View style={styles.userRow}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => {
-                if (!ownerId) return Alert.alert("Error", "User profile not available");
-                if (global.lastProfileTap && Date.now() - global.lastProfileTap < 500) return;
-                global.lastProfileTap = Date.now();
-                navigation.navigate("Profile", { userId: ownerId });
-              }}
-            >
-              {avatarUri ? (
-                <Image source={{ uri: avatarUri }} style={styles.avatar} resizeMode="cover" defaultSource={require('../assets/default-avatar.png')} />
-              ) : userInfoMap[ownerId] ? (
-                <View style={[styles.avatar, styles.defaultAvatar]}>
-                  <Text style={styles.defaultAvatarText}>{getDefaultAvatar(fullName)}</Text>
-                </View>
-              ) : (
-                <View style={[styles.avatar, dynamicStyles.skeletonBg]} />
-              )}
-            </TouchableOpacity>
+    if (posts.length > 0) fetchMissingUserInfo();
+  }, [posts]);
 
-            <View style={styles.nameContainer}>
-              <View style={styles.nameRow}>
-                <Text style={[styles.userName, dynamicStyles.textColor]}>{fullName}</Text>
+  useEffect(() => {
+    const timer = setTimeout(() => setShowSkeleton(false), 3000);
+    return () => clearTimeout(timer);
+  }, []);
 
-                {/* Trust Badge - Only for verified hosts (exactly like HotelFeed) */}
-                {isVerified && <Trust text="Verified Host" />}
-
-                {/* Colored badges */}
-                {verificationType === "vendor" && <YellowBadge width={24} height={24} style={{ marginLeft: 6 }} />}
-                {verificationType === "studentLandlord" && <BlueBadge width={24} height={24} style={{ marginLeft: 6 }} />}
-                {verificationType === "realEstate" && <RedBadge width={24} height={24} style={{ marginLeft: 6 }} />}
-              </View>
-
-              <View style={styles.secondaryRow}>
-                {hasRating && (
-                  <View style={styles.ratingRow}>
-                    {[1, 2, 3, 4, 5].map((s) => (
-                      <Ionicons
-                        key={s}
-                        name={s <= Math.floor(userInfo.averageRating || 0) ? "star" : s <= (userInfo.averageRating || 0) ? "star-half" : "star-outline"}
-                        size={11}
-                        color={s <= (userInfo.averageRating || 0) ? "#017a6b" : "#888"}
-                        style={{ marginRight: 1 }}
-                      />
-                    ))}
-                    <Text style={styles.ratingText}>{userInfo.averageRating?.toFixed(1) || "0.0"}</Text>
-                  </View>
-                )}
-                <Text style={[dynamicStyles.secondaryText, styles.timestamp]}>
-                  {timeAgo(item.createdAt)}
-                  {hasRating && " • "}
-                  {hasRating && <Text style={styles.reviewCount}>({userInfo.reviewCount})</Text>}
-                </Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              onPress={() => setMenuVisible(menuVisible === index ? null : index)}
-              style={styles.menuButton}
-              hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}
-            >
-              <Ionicons name="ellipsis-vertical" size={20} color={isDark ? "#fff" : "#000"} />
-            </TouchableOpacity>
-
-            {menuVisible === index && (
-              <View style={[styles.dropdownContainer, dynamicStyles.dropdownBg]}>
-                <TouchableOpacity onPress={() => handleShare(item)}>
-                  <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Share</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleCopy(item)}>
-                  <Text style={[styles.dropdownItem, dynamicStyles.dropdownText]}>Copy Link</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-
-          <TouchableOpacity activeOpacity={0.95} onPress={handlePressListing}>
-            {isBoosted && (
-              <View style={styles.boostedBadge}>
-                <Ionicons name="flame" size={16} color="#FF9500" />
-                <Text style={styles.boostedBadgeText}>Boosted</Text>
-              </View>
-            )}
-
-            {images.length > 0 ? (
-              <View style={styles.imagesContainer}>
-                <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={styles.imageScroll}>
-                  {images.map((imgUri, imgIndex) => (
-                    <View key={imgIndex} style={styles.imageWrapper}>
-                      <Image source={{ uri: imgUri }} style={styles.postImage} resizeMode="cover" />
-
-                      {hasMultiple && imgIndex === 0 && (
-                        <View style={styles.imageCountBadge}>
-                          <Ionicons name="camera-outline" size={14} color="#fff" style={{ marginRight: 4 }} />
-                          <Text style={styles.imageCountText}>{imageCount}</Text>
-                        </View>
-                      )}
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-            ) : (
-              <View style={[styles.postImage, dynamicStyles.noImageBg, { justifyContent: "center", alignItems: "center" }]}>
-                <Text style={{ color: isDark ? "#ccc" : "gray" }}>No Media</Text>
-              </View>
-            )}
-
-            <View style={styles.listingInfo}>
-              {item.rented && (
-                <View style={styles.rentedBadge}>
-                  <Text style={styles.rentedText}>RENTED</Text>
-                </View>
-              )}
-              <Text style={[styles.listingTitle, dynamicStyles.textColor]}>{item.title}</Text>
-              <Text style={[styles.price, dynamicStyles.priceColor]}>
-                {formatPrice(item.priceMonthly, item.priceYearly)}
-              </Text>
-              <View style={styles.locationRow}>
-                <Ionicons name="location-outline" size={16} color={isDark ? "#aaa" : "#666"} style={styles.locationIcon} />
-                <Text style={dynamicStyles.secondaryText} numberOfLines={1}>
-                  {safeString(item.location)}
-                </Text>
-              </View>
-
-              <View style={styles.ctaContainer}>
-                <TouchableOpacity
-                  style={styles.messageHostButton}
-                  onPress={() => {
-                    if (!ownerId) return Alert.alert("Error", "Cannot message: User not found");
-                    navigation.navigate("Messages", {
-                      screen: "Message",
-                      params: {
-                        listingId: item.id,
-                        listingOwnerId: ownerId,
-                        tenantId: authUser?.uid || "",
-                        listingTitle: item.title,
-                      },
-                    });
-                  }}
-                >
-                  <Ionicons name="chatbubble-ellipses-outline" size={18} color="#888" />
-                  <Text style={styles.messageHostText}>Message Host</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.scheduleVisitButton}
-                  onPress={() => {
-                    navigation.navigate("EventScheduler", {
-                      listingId: item.id,
-                      listingTitle: item.title,
-                      ownerId,
-                    });
-                  }}
-                >
-                  <Ionicons name="calendar-outline" size={18} color="#888" />
-                  <Text style={styles.scheduleVisitText}>Schedule Visit</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </TouchableOpacity>
-        </View>
-      </TouchableWithoutFeedback>
-    );
-  };
+  const dynamicStyles = useMemo(() => ({
+    containerBg: { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
+    cardBg: { backgroundColor: isDark ? "#2a2a2a" : "#fff" },
+    cardBorder: { borderBottomColor: isDark ? "#444" : "#ddd" },
+    textColor: { color: isDark ? "#fff" : "#000" },
+    secondaryText: { color: isDark ? "#aaa" : "gray" },
+    priceColor: { color: isDark ? "#aaa" : "#888" },
+    noImageBg: { backgroundColor: isDark ? "#3a3a3a" : "#eee" },
+    dropdownBg: { backgroundColor: isDark ? "#333" : "#fff" },
+    dropdownText: { color: isDark ? "#fff" : "#111" },
+    skeletonBg: { backgroundColor: isDark ? "#333" : "#eee" },
+  }), [isDark]);
 
   const headerTranslateY = scrollY.interpolate({
     inputRange: [0, 180],
@@ -490,7 +499,17 @@ export default function Home({ navigation }) {
 
   const onScroll = Animated.event(
     [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-    { useNativeDriver: true }
+    {
+      useNativeDriver: true,
+      listener: (event) => {
+        const offsetY = event.nativeEvent.contentOffset.y;
+        const currentlyAtTop = offsetY < 60;
+        if (currentlyAtTop !== isAtTop) {
+          setIsAtTop(currentlyAtTop);
+          if (currentlyAtTop) setHasNewPosts(false);
+        }
+      },
+    }
   );
 
   const panResponder = useRef(
@@ -513,6 +532,7 @@ export default function Home({ navigation }) {
     if (activeTab !== "hotels") {
       const filtered = listings.filter((l) => l.listingType !== "hotels");
       setPosts(filtered);
+      setHasNewPosts(false);
     }
     setTimeout(() => setRefreshing(false), 1200);
   };
@@ -555,12 +575,12 @@ export default function Home({ navigation }) {
           </Animated.View>
 
           {activeTab === "hotels" ? (
-            <HotelFeed navigation={navigation} scrollY={scrollY} onScroll={onScroll} />
+            <HotelFeed navigation={navigation} scrollY={scrollY} />
           ) : showSkeleton ? (
             <AnimatedFlatList
               data={Array(6).fill({})}
               keyExtractor={(_, i) => `skeleton-${i}`}
-              renderItem={() => <SkeletonPost />}
+              renderItem={() => <SkeletonPost dynamicStyles={dynamicStyles} />}
               contentContainerStyle={{ paddingTop: insets.top + 180, paddingBottom: insets.bottom + 40 }}
               onScroll={onScroll}
               scrollEventThrottle={16}
@@ -577,9 +597,25 @@ export default function Home({ navigation }) {
             />
           ) : (
             <AnimatedFlatList
+              ref={flatListRef}
               data={posts}
-              keyExtractor={(item, index) => `${item.id || "unknown"}-${index}`}
-              renderItem={renderPost}
+              keyExtractor={(item) => item.id || `post-${Math.random().toString(36).substr(2, 9)}`}
+              renderItem={({ item, index }) => (
+                <PostItem
+                  item={item}
+                  index={index}
+                  menuVisible={menuVisible}
+                  setMenuVisible={setMenuVisible}
+                  userInfoMap={userInfoMap}
+                  authUser={authUser}
+                  dynamicStyles={dynamicStyles}
+                  navigation={navigation}
+                />
+              )}
+              initialNumToRender={8}
+              maxToRenderPerBatch={10}
+              windowSize={21}
+              removeClippedSubviews={true}
               refreshing={refreshing}
               onRefresh={onRefresh}
               contentContainerStyle={{ paddingTop: insets.top + 180, paddingBottom: insets.bottom + 40 }}
@@ -614,8 +650,26 @@ export default function Home({ navigation }) {
   );
 }
 
+// Skeleton Component
+const SkeletonPost = ({ dynamicStyles }) => (
+  <View style={[styles.card, dynamicStyles.cardBg, dynamicStyles.cardBorder]}>
+    <View style={styles.userRow}>
+      <View style={[styles.avatar, dynamicStyles.skeletonBg]} />
+      <View style={{ marginLeft: 10, flex: 1 }}>
+        <View style={{ width: 140, height: 16, backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 8 }} />
+        <View style={{ width: 80, height: 12, backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 6, marginTop: 6 }} />
+      </View>
+    </View>
+    <View style={{ width: SCREEN_WIDTH, height: 250, backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 12 }} />
+    <View style={{ padding: 10 }}>
+      <View style={{ height: 20, width: "80%", backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 8, marginBottom: 8 }} />
+      <View style={{ height: 24, width: "60%", backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 8, marginBottom: 8 }} />
+      <View style={{ height: 16, width: "40%", backgroundColor: dynamicStyles.skeletonBg.backgroundColor, borderRadius: 6 }} />
+    </View>
+  </View>
+);
+
 const styles = StyleSheet.create({
-  // ... your existing styles (unchanged)
   container: { flex: 1 },
   stickyHeader: {
     position: "absolute",
@@ -632,7 +686,6 @@ const styles = StyleSheet.create({
   },
   billboardWrapper: { marginHorizontal: 16, marginVertical: 10 },
   card: { marginBottom: 15, borderBottomWidth: 3, paddingBottom: 10, borderRadius: 12 },
-
   userRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -643,11 +696,9 @@ const styles = StyleSheet.create({
   avatar: { width: 44, height: 44, borderRadius: 22 },
   defaultAvatar: { backgroundColor: "#017a6b", justifyContent: "center", alignItems: "center" },
   defaultAvatarText: { color: "#fff", fontWeight: "bold", fontSize: 20 },
-
   nameContainer: { marginLeft: 12, flex: 1 },
   nameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap" },
   userName: { fontWeight: "700", fontSize: 15.5 },
-
   secondaryRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -659,18 +710,14 @@ const styles = StyleSheet.create({
   ratingText: { marginLeft: 4, fontSize: 11.5, fontWeight: "600", color: "#333" },
   reviewCount: { fontSize: 10, color: "#777", fontWeight: "400" },
   timestamp: { fontSize: 12 },
-
   menuButton: { padding: 8, marginLeft: 8, borderRadius: 20 },
-
   listingInfo: { padding: 10 },
   listingTitle: { fontSize: 18, fontWeight: "800", lineHeight: 24, marginBottom: 8 },
   price: { fontSize: 14, fontWeight: "500", letterSpacing: 0.2, marginBottom: 4 },
-
   imagesContainer: { position: "relative" },
   imageScroll: { width: SCREEN_WIDTH, height: 250 },
   imageWrapper: { width: SCREEN_WIDTH, height: 250 },
   postImage: { width: "100%", height: "100%" },
-
   imageCountBadge: {
     position: "absolute",
     top: 12,
@@ -685,8 +732,16 @@ const styles = StyleSheet.create({
   },
   imageCountText: { color: "#fff", fontSize: 13, fontWeight: "600" },
 
-  locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
-  locationIcon: { marginRight: 6 },
+  // Updated locationRow for multi-line support
+  locationRow: { 
+    flexDirection: "row", 
+    alignItems: "flex-start", 
+    marginBottom: 8 
+  },
+  locationIcon: { 
+    marginRight: 6,
+    marginTop: 2,        // Better alignment when text wraps
+  },
 
   ctaContainer: {
     flexDirection: "row",
@@ -694,7 +749,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     gap: 12,
   },
-
   messageHostButton: {
     flex: 1,
     flexDirection: "row",
@@ -707,7 +761,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   messageHostText: { color: "#000", fontWeight: "600", fontSize: 15 },
-
   scheduleVisitButton: {
     flex: 1,
     flexDirection: "row",
@@ -722,7 +775,6 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   scheduleVisitText: { color: "#000", fontWeight: "600", fontSize: 15 },
-
   dropdownContainer: {
     position: "absolute",
     top: 44,
@@ -738,7 +790,6 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   dropdownItem: { paddingVertical: 8, fontSize: 16 },
-
   rentedBadge: {
     backgroundColor: "red",
     paddingVertical: 3,
@@ -748,7 +799,6 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   rentedText: { color: "#fff", fontWeight: "bold", fontSize: 12 },
-
   boostedBadge: {
     flexDirection: "row",
     alignItems: "center",

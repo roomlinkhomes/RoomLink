@@ -1,4 +1,4 @@
-// screens/Trips.jsx
+// screens/Trips.jsx — Added back navigation arrow
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -12,13 +12,16 @@ import {
   useColorScheme,
   Image,
   Modal,
+  StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native'; // ← Added
 import { collection, query, where, onSnapshot, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebaseConfig';
-import * as Sharing from 'expo-sharing'; // ← Added this import
+import * as Sharing from 'expo-sharing';
 
 export default function Trips() {
+  const navigation = useNavigation(); // ← Added
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [celebrateModal, setCelebrateModal] = useState(null);
@@ -113,15 +116,6 @@ export default function Trips() {
 
   const renderBooking = ({ item }) => {
     const checkInPossible = canCheckIn(item);
-
-    // Debug log (remove after testing)
-    console.log('Trips debug:', {
-      bookingId: item.id,
-      title: item.listingTitle,
-      listingImagesCount: item.listingImages?.length || 0,
-      firstUrl: item.listingImages?.[0] || 'no images',
-    });
-
     const images = item.listingImages || item.images || item.listing?.images || [];
 
     return (
@@ -234,6 +228,7 @@ export default function Trips() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.container, isDark && styles.containerDark]}>
+        <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
         <ActivityIndicator size="large" color="#017a6b" style={{ marginTop: 100 }} />
       </SafeAreaView>
     );
@@ -241,9 +236,26 @@ export default function Trips() {
 
   return (
     <SafeAreaView style={[styles.container, isDark && styles.containerDark]}>
-      <Text style={[styles.screenTitle, isDark && styles.textLight]}>
-        My Trips & Memories
-      </Text>
+      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+
+      {/* Header with Back Button */}
+      <View style={styles.header}>
+        <TouchableOpacity 
+          onPress={() => navigation.goBack()} 
+          style={styles.backButton}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons 
+            name="arrow-back" 
+            size={28} 
+            color={isDark ? '#fff' : '#111'} 
+          />
+        </TouchableOpacity>
+        
+        <Text style={[styles.screenTitle, isDark && styles.textLight]}>
+         Trips & Memories
+        </Text>
+      </View>
 
       {bookings.length === 0 ? (
         <View style={styles.emptyContainer}>
@@ -261,9 +273,11 @@ export default function Trips() {
           renderItem={renderBooking}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
         />
       )}
 
+      {/* Celebration Modal */}
       <Modal
         visible={!!celebrateModal?.visible}
         transparent
@@ -312,7 +326,6 @@ export default function Trips() {
                   <Text style={styles.flower}>🌺 🌼 🌸 🌷 🌻</Text>
                 </View>
 
-                {/* Real share button */}
                 <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
                   <Ionicons name="share-social" size={20} color="#fff" />
                   <Text style={styles.shareButtonText}>Share this moment</Text>
@@ -338,13 +351,26 @@ const styles = StyleSheet.create({
   containerDark: {
     backgroundColor: '#0f1117',
   },
+
+  // New Header Styles
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 16,
+  },
+  backButton: {
+    marginRight: 12,
+    padding: 4,
+  },
   screenTitle: {
     fontSize: 28,
     fontWeight: '700',
     color: '#111',
-    padding: 20,
-    paddingBottom: 10,
+    flex: 1,
   },
+
   listContent: {
     paddingHorizontal: 16,
     paddingBottom: 30,

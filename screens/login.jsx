@@ -85,20 +85,16 @@ export default function Login() {
     setLoading(true);
 
     try {
-      // 1. Sign in
       const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
       const user = userCredential.user;
 
       console.log("[Login] Sign in successful:", user.uid);
 
-      // 2. Ensure profile exists (fast)
       const userData = await ensureUserProfile(user.uid, user.email);
       setUser(userData);
 
-      // 3. Save FCM Token in background (NON-BLOCKING)
       saveFCMTokenInBackground(user.uid);
 
-      // 4. Navigate immediately
       navigation.replace("HomeTabs");
 
     } catch (error) {
@@ -129,7 +125,6 @@ export default function Login() {
     }
   };
 
-  // Run FCM token saving without blocking login
   const saveFCMTokenInBackground = async (uid) => {
     try {
       const messaging = getMessaging();
@@ -183,6 +178,7 @@ export default function Login() {
 
           {/* Login Card */}
           <View style={[styles.loginCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            {/* Email Field */}
             <View style={styles.inputContainer}>
               <TextInput
                 value={email}
@@ -192,6 +188,8 @@ export default function Login() {
                 placeholder="your@email.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
+                selectTextOnFocus={false}
+                contextMenuHidden={true}
                 outlineColor={emailError ? theme.error : theme.border}
                 activeOutlineColor={emailError ? theme.error : theme.primary}
                 left={<TextInput.Icon icon="email-outline" color={theme.primary} />}
@@ -200,6 +198,7 @@ export default function Login() {
               {emailError && <Text style={[styles.errorText, { color: theme.error }]}>{emailError}</Text>}
             </View>
 
+            {/* Password Field */}
             <View style={styles.inputContainer}>
               <TextInput
                 value={password}
@@ -208,10 +207,20 @@ export default function Login() {
                 mode="outlined"
                 label="Password"
                 placeholder="••••••••"
+                selectTextOnFocus={false}
+                contextMenuHidden={true}
+                autoComplete="off"
+                textContentType="oneTimeCode"
                 outlineColor={passwordError ? theme.error : theme.border}
                 activeOutlineColor={passwordError ? theme.error : theme.primary}
                 left={<TextInput.Icon icon="lock-outline" color={theme.primary} />}
-                right={<TextInput.Icon icon={showPassword ? "eye-off" : "eye"} onPress={() => setShowPassword(!showPassword)} color={theme.primary} />}
+                right={
+                  <TextInput.Icon
+                    icon={showPassword ? "eye-off" : "eye"}
+                    onPress={() => setShowPassword(!showPassword)}
+                    color={theme.primary}
+                  />
+                }
                 error={!!passwordError}
               />
               {passwordError && <Text style={[styles.errorText, { color: theme.error }]}>{passwordError}</Text>}
@@ -254,7 +263,6 @@ export default function Login() {
   );
 }
 
-// Styles remain the same
 const styles = StyleSheet.create({
   container: { flex: 1 },
   keyboardView: { flex: 1 },

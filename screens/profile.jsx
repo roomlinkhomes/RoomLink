@@ -1,53 +1,83 @@
-// screens/ProfileScreen.jsx
-import React, { useContext, useEffect, useState } from "react";
-import { View, ActivityIndicator, Alert, useColorScheme } from "react-native";
-import { UserContext } from "../context/UserContext";
+// screens/ProfileScreen.jsx - FIXED (Always show owner profile on Profile tab)
+
+import React, { useEffect, useState, useCallback } from "react";
+import { View, ActivityIndicator, useColorScheme, Text } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
+
+import { useUser } from "../context/UserContext";
 import { useListing } from "../context/ListingContext";
-import ProfileLayout from "../component/ProfileLayout";
+
+import EliteProfile from "../components/EliteProfile";
+import VisitorEliteProfile from "../components/VisitorEliteProfile";
 
 export default function ProfileScreen({ route, navigation }) {
-  const { user, getUserById } = useContext(UserContext);
-  const { listings } = useListing(); // all listings from context
-  const { userId: routeUserId } = route.params || {};
+  const { user: currentUser, loading: userLoading, resetToMyProfile } = useUser();
+  const { listings } = useListing();
 
-  const [visitedUser, setVisitedUser] = useState(null);
+  // ✅ safer param handling
+  const routeUserId = route?.params?.userId ?? null;
+
+  const [displayUser, setDisplayUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const scheme = useColorScheme();
   const spinnerColor = scheme === "dark" ? "#fff" : "#1A237E";
 
-  useEffect(() => {
-    const fetchUser = async () => {
-      setLoading(true);
-      try {
-        let fetchedUser = null;
+  const currentUserId = currentUser?.id || currentUser?.uid;
 
-        if (routeUserId && routeUserId !== user?.id) {
-          // Fetch another user's profile
-          fetchedUser = await getUserById(routeUserId);
-        } else {
-          // Current logged-in user
-          fetchedUser = user;
-        }
+  // ✅ CRITICAL FIX: runs every time screen is focused (tab click, reopen app, etc.)
+  useFocusEffect(
+    useCallback(() => {
+      // If NO userId → this is Profile tab → force reset
+      if (!routeUserId) {
+        resetToMyProfile();
 
-        if (!fetchedUser) {
-          Alert.alert("Error", "User not found.");
-          return;
-        }
-
-        setVisitedUser(fetchedUser);
-      } catch (err) {
-        console.error("Error fetching user:", err);
-        Alert.alert("Error", "Unable to load profile.");
-      } finally {
-        setLoading(false);
+        // also clear any stale params from navigation
+        navigation.setParams({ userId: null });
       }
-    };
+    }, [routeUserId, resetToMyProfile, navigation])
+  );
 
-    fetchUser();
-  }, [routeUserId, getUserById, user]);
+  // Determine which user to display
+  useEffect(() => {
+    setLoading(true);
 
-  if (loading) {
+    // If no routeUserId → always use current logged-in user
+    const targetId = routeUserId || currentUserId;
+
+    if (!targetId) {
+      setDisplayUser(null);
+      setLoading(false);
+      return;
+    }
+
+    setDisplayUser({
+      id: targetId,
+      uid: targetId,
+    });
+
+    setLoading(false);
+  }, [routeUserId, currentUserId]);
+
+  // isOwner logic
+  const isOwner =
+    !routeUserId ||
+    currentUserId === routeUserId ||
+    currentUserId === displayUser?.id ||
+    currentUserId === displayUser?.uid;
+
+  // Filter listings
+  const userListings = listings.filter((listing) => {
+    const listingOwner =
+      listing.authorId ||
+      listing.userId ||
+      listing.ownerId ||
+      listing.uid;
+
+    return listingOwner === (routeUserId || currentUserId);
+  });
+
+  if (loading || userLoading) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ActivityIndicator size="large" color={spinnerColor} />
@@ -55,25 +85,20 @@ export default function ProfileScreen({ route, navigation }) {
     );
   }
 
-  if (!visitedUser) {
+  if (!displayUser) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <Alert title="Error" message="User not found." />
+        <Text>User not found</Text>
       </View>
     );
   }
 
-  // Filter listings for visited user using authorId
-  const visitedUserListings = listings.filter(
-    (listing) => listing.authorId === visitedUser.id
-  );
-
-  return (
-    <ProfileLayout
-      navigation={navigation}
-      visitedUser={visitedUser}
-      visitedUserListings={visitedUserListings}
-      currentUser={user} // pass current user to help UserListings detect ownership
+  return isOwner ? (
+    <EliteProfile visitedUserListings={userListings} />
+  ) : (
+    <VisitorEliteProfile
+      userId={routeUserId}
+      visitedUserListings={userListings}
     />
   );
 }

@@ -1,11 +1,15 @@
-// firebaseConfig.js — ONLY import this file ONCE in your app (e.g., in App.js or a top-level context)
+// firebaseConfig.js — Import this file ONLY ONCE in your app (e.g. in App.js)
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { 
-  initializeAuth, 
-  getReactNativePersistence, 
-  getAuth  // add this for fallback
+import {
+  initializeAuth,
+  getReactNativePersistence,
+  getAuth,
 } from "firebase/auth";
-import { getFirestore, serverTimestamp } from "firebase/firestore";
+import { 
+  getFirestore, 
+  initializeFirestore, 
+  serverTimestamp 
+} from "firebase/firestore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const firebaseConfig = {
@@ -17,12 +21,10 @@ const firebaseConfig = {
   appId: "1:796064439495:web:6b99c970d933238967f2e2",
 };
 
-// Singleton pattern — initialize only if none exist
-const app = !getApps().length 
-  ? initializeApp(firebaseConfig) 
-  : getApp();  // Reuse existing default app
+// Singleton: Initialize app only once
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Auth: Initialize with persistence, fallback if already done
+// Initialize Auth with persistence
 let auth;
 try {
   auth = initializeAuth(app, {
@@ -30,13 +32,30 @@ try {
   });
 } catch (e) {
   if (e.code?.includes('already-initialized') || e.message?.includes('already exists')) {
-    auth = getAuth(app);  // Safe fallback
+    auth = getAuth(app);
   } else {
     console.error("Auth init failed:", e);
     throw e;
   }
 }
 
-const db = getFirestore(app);
+// === FIXED Firestore Initialization (Safe for Release Build) ===
+let db;
+try {
+  // Try to initialize with production settings (long polling helps release builds)
+  db = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+    ignoreUndefinedProperties: true,
+  });
+} catch (e) {
+  // If already initialized (with or without settings), just get the existing instance
+  if (e.message?.includes("already been called") || e.code?.includes("already-initialized")) {
+    db = getFirestore(app);
+    console.warn("Firestore already initialized. Using existing instance.");
+  } else {
+    console.error("Firestore init failed:", e);
+    throw e;
+  }
+}
 
 export { app, auth, db, serverTimestamp };
